@@ -81,11 +81,16 @@ export async function retryDisbursement(
       })
       .where(eq(refundDisbursements.id, input.disbursementId));
 
-    // Roll up: are all disbursements for this refund succeeded?
+    // Roll up: are all *leaf* disbursements for this refund succeeded?
+    // A leaf is one that is not superseded by a later retry in the chain.
     const allDisb = await tx.query.refundDisbursements.findMany({
       where: eq(refundDisbursements.refundId, d.refundId),
     });
-    const allSucceeded = allDisb.every((x) => x.status === 'succeeded' || x.id === d.id);
+    const supersededIds = new Set(
+      allDisb.map((x) => x.previousDisbursementId).filter(Boolean),
+    );
+    const leafDisb = allDisb.filter((x) => !supersededIds.has(x.id));
+    const allSucceeded = leafDisb.every((x) => x.status === 'succeeded' || x.id === d.id);
     if (allSucceeded) {
       await tx
         .update(refunds)
