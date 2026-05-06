@@ -70,10 +70,16 @@ export function buildApp() {
     void reply.status(500).send(fail('internal_error', 'Internal server error'));
   });
 
-  // CORS — tighten in production via env-driven origins.
-  void app.register(cors, {
-    origin: env.NODE_ENV === 'production' ? false : true,
-  });
+  // CORS:
+  // - dev: allow any origin (so the local dashboard on :5173, curl, Postman, etc. all work)
+  // - prod: allow only origins explicitly listed in CORS_ORIGIN (comma-separated).
+  //   If CORS_ORIGIN is unset in prod, CORS is OFF — same-origin only.
+  const corsOrigin = (() => {
+    if (env.NODE_ENV !== 'production') return true;
+    if (!env.CORS_ORIGIN) return false;
+    return env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
+  })();
+  void app.register(cors, { origin: corsOrigin, credentials: true });
 
   // Multipart parser — only activates on `multipart/form-data` requests, leaves the
   // Zod-validated JSON routes untouched. Cap each upload at 25 MB.

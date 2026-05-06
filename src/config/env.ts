@@ -30,6 +30,11 @@ const EnvSchema = z.object({
   // Seed defaults — only consumed by the seed CLI (`npm run db:seed`).
   ADMIN_SEED_EMAIL: z.string().email().default('admin@closetx.local'),
   ADMIN_SEED_PASSWORD: z.string().min(4).default('admin1234'),
+
+  // CORS allowlist for production. Comma-separated list of origins that may call the API.
+  // Leave unset in dev — when NODE_ENV=development, all origins are allowed.
+  // Example for prod: CORS_ORIGIN=https://closetx-frontend.vercel.app,https://admin.closetx.in
+  CORS_ORIGIN: z.string().optional(),
 });
 
 const parsed = EnvSchema.safeParse(process.env);
