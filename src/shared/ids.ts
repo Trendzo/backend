@@ -24,4 +24,18 @@ export const IdPrefix = {
   WalletTx: 'wtx',
   LoyaltyTx: 'lty',
   ClubbingRule: 'clb',
+  // Orders
+  Order: 'ord',
+  OrderGroup: 'og',
+  OrderItem: 'oi',
+  OrderTransition: 'ot',
+  Payment: 'pay',
+  DeliveryAttempt: 'da',
+  Address: 'addr',
+  // Returns + held + refunds
+  Return: 'rtn',
+  HeldItem: 'hld',
+  Refund: 'rfd',
+  RefundLine: 'rfl',
+  RefundDisbursement: 'rdb',
 } as const;

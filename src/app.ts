@@ -21,6 +21,12 @@ import adminClubbingRoutes from '@/modules/admin/clubbing/routes.js';
 import adminLoyaltyRoutes from '@/modules/admin/loyalty/routes.js';
 import adminSimulateRoutes from '@/modules/admin/simulate/routes.js';
 import retailerPromotionRoutes from '@/modules/retailer/promotions/routes.js';
+import adminOrderRoutes from '@/modules/admin/orders/routes.js';
+import adminTestConsumerRoutes from '@/modules/admin/consumers/test-consumers.js';
+import retailerOrderRoutes from '@/modules/retailer/orders/routes.js';
+import retailerInventoryRoutes from '@/modules/retailer/inventory/routes.js';
+import adminReturnsRoutes from '@/modules/admin/returns/routes.js';
+import retailerReturnsRoutes from '@/modules/retailer/returns/routes.js';
 
 /**
  * Build a Fastify app with strict TypeScript routing via the Zod type provider.
@@ -112,6 +118,12 @@ export function buildApp() {
       await api.register(adminClubbingRoutes, { prefix: '/admin/clubbing-matrix' });
       await api.register(adminLoyaltyRoutes, { prefix: '/admin/loyalty' });
       await api.register(adminSimulateRoutes, { prefix: '/admin' });
+      await api.register(adminOrderRoutes, { prefix: '/admin' });
+      await api.register(adminTestConsumerRoutes, { prefix: '/admin/consumers' });
+      await api.register(retailerOrderRoutes, { prefix: '/retailer/orders' });
+      await api.register(retailerInventoryRoutes, { prefix: '/retailer/inventory' });
+      await api.register(adminReturnsRoutes, { prefix: '/admin' });
+      await api.register(retailerReturnsRoutes, { prefix: '/retailer' });
       await api.register(uploadRoutes, { prefix: '/uploads' });
     },
     { prefix: '/api/v1' },

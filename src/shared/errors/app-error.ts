@@ -58,6 +58,37 @@ export const ErrorCode = {
   AlreadyClaimed: 'already_claimed',
   AlreadySpun: 'already_spun',
   AlreadyEntered: 'already_entered',
+  IdempotencyConflict: 'idempotency_conflict',
+
+  // Orders
+  OrderNotFound: 'order_not_found',
+  OrderTransitionInvalid: 'order_transition_invalid',
+  OrderStockUnavailable: 'order_stock_unavailable',
+  OrderStoreUnavailable: 'order_store_unavailable',
+  OrderRetryBudgetExhausted: 'order_retry_budget_exhausted',
+  OrderCancellationNotAllowed: 'order_cancellation_not_allowed',
+
+  // Door visit (Try-and-Buy)
+  DoorVisitInvalidItem: 'door_visit_invalid_item',
+  DoorVisitMustChooseAllItems: 'door_visit_must_choose_all_items',
+  DoorVisitExtensionExhausted: 'door_visit_extension_exhausted',
+  DoorVisitRefuseRequiresEvidence: 'door_visit_refuse_requires_evidence',
+
+  // Returns
+  ReturnNotFound: 'return_not_found',
+  ReturnWindowExpired: 'return_window_expired',
+  ReturnInvalidState: 'return_invalid_state',
+  ReturnAlreadyDecided: 'return_already_decided',
+
+  // Refunds
+  RefundNotFound: 'refund_not_found',
+  DisbursementNotFound: 'disbursement_not_found',
+  DisbursementAlreadyTerminal: 'disbursement_already_terminal',
+
+  // Held items
+  HeldItemNotFound: 'held_item_not_found',
+  HeldItemNotHolding: 'held_item_not_holding',
+  HeldExtensionAlreadyUsed: 'held_extension_already_used',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
