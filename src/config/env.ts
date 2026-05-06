@@ -20,6 +20,16 @@ const EnvSchema = z.object({
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
 
   TCS_RATE_BP: z.coerce.number().int().nonnegative().default(100),
+
+  // Cloudinary — single media-upload provider for the platform. Optional at boot
+  // so dev environments without media work, but `POST /uploads` will 503 until set.
+  CLOUDINARY_CLOUD_NAME: z.string().min(1).optional(),
+  CLOUDINARY_API_KEY: z.string().min(1).optional(),
+  CLOUDINARY_API_SECRET: z.string().min(1).optional(),
+
+  // Seed defaults — only consumed by the seed CLI (`npm run db:seed`).
+  ADMIN_SEED_EMAIL: z.string().email().default('admin@closetx.local'),
+  ADMIN_SEED_PASSWORD: z.string().min(4).default('admin1234'),
 });
 
 const parsed = EnvSchema.safeParse(process.env);

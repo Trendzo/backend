@@ -7,6 +7,9 @@ coverage/
 .env.local
 .env.*.local
 
+# embedded-postgres dev data dir (real DB files, not for git)
+.dev-pg-data/
+
 # logs
 logs/
 *.log

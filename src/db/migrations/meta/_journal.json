@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1777995442568,
+      "tag": "0000_tough_the_executioner",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778010144917,
+      "tag": "0001_faithful_chimera",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778016623989,
+      "tag": "0002_reflective_skin",
+      "breakpoints": true
+    }
+  ]
+}

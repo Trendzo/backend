@@ -7,11 +7,25 @@ export const ErrorCode = {
   Unauthorized: 'unauthorized',
   Forbidden: 'forbidden',
   NotFound: 'not_found',
+  InvalidCredentials: 'invalid_credentials',
+  EmailAlreadyTaken: 'email_already_taken',
 
   // Validation
   ValidationError: 'validation_error',
   RateLimited: 'rate_limited',
   InternalError: 'internal_error',
+
+  // Onboarding
+  KycInvalid: 'kyc_invalid',
+  RetailerNotApproved: 'retailer_not_approved',
+  StoreNotActive: 'store_not_active',
+  StoreAlreadyExists: 'store_already_exists',
+  NotOwner: 'not_owner',
+  InvalidState: 'invalid_state',
+  SkuTaken: 'sku_taken',
+
+  // Catalog publish gates
+  CannotPublishIncomplete: 'cannot_publish_incomplete',
 
   // Domain
   OutOfStock: 'out_of_stock',
