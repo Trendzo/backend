@@ -16,6 +16,12 @@ export const pool = new Pool({
   connectionTimeoutMillis: 10_000,
 });
 
+// Neon (and other serverless PG) drops idle connections. Without this handler
+// the unhandled 'error' event crashes the process.
+pool.on('error', (err) => {
+  console.error('[pg pool] idle client error — connection will be recycled:', err.message);
+});
+
 export const db = drizzle(pool, { schema, logger: env.NODE_ENV === 'development' });
 
 export type Database = typeof db;

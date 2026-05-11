@@ -1,8 +1,9 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, sql, sum } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { db } from '@/db/client.js';
-import { promotions, retailerAccounts } from '@/db/schema/index.js';
+import { promotionRedemptions, promotions, retailerAccounts, voucherCodes } from '@/db/schema/index.js';
+import { generateCodes } from '@/shared/promotions/voucher-codes.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
@@ -33,6 +34,7 @@ const retailerPromotionRoutes: FastifyPluginAsyncZod = async (app) => {
         querystring: z.object({
           status: PromotionStatusEnum.optional(),
           mechanism: z.enum(['offer', 'coupon', 'voucher']).optional(),
+          listingId: z.string().optional(),
         }),
       },
     },
@@ -41,6 +43,9 @@ const retailerPromotionRoutes: FastifyPluginAsyncZod = async (app) => {
       const conds = [eq(promotions.storeId, storeId)];
       if (req.query.status) conds.push(eq(promotions.status, req.query.status));
       if (req.query.mechanism) conds.push(eq(promotions.mechanism, req.query.mechanism));
+      if (req.query.listingId) {
+        conds.push(sql`${promotions.scope} @> ${JSON.stringify({ listingIds: [req.query.listingId] })}::jsonb`);
+      }
 
       const rows = await db.query.promotions.findMany({
         where: and(...conds),
@@ -276,6 +281,116 @@ const retailerPromotionRoutes: FastifyPluginAsyncZod = async (app) => {
       .returning();
     return updated!;
   }
+
+  // ===== POST /voucher-codes/generate — bulk voucher code generation =====
+  app.post(
+    '/voucher-codes/generate',
+    {
+      schema: {
+        body: z.object({
+          promotionId: z.string(),
+          count: z.coerce.number().int().min(1).max(10_000),
+          prefix: z.string().trim().max(8).optional(),
+        }),
+      },
+    },
+    async (req) => {
+      const storeId = await loadOwnStoreIdOrThrow(getAuth(req).sub);
+
+      const promo = await db.query.promotions.findFirst({
+        where: and(eq(promotions.id, req.body.promotionId), eq(promotions.storeId, storeId)),
+      });
+      if (!promo) throw new AppError(404, ErrorCode.NotFound, 'Promotion not found');
+      if (promo.mechanism !== 'voucher') {
+        throw new AppError(409, ErrorCode.InvalidState, 'Only voucher promotions can have codes generated');
+      }
+
+      const codes = generateCodes(req.body.count, req.body.prefix ? req.body.prefix + '-' : '');
+      const rows = codes.map((code) => ({
+        id: newId(IdPrefix.VoucherCode),
+        promotionId: promo.id,
+        code,
+      }));
+
+      await db.insert(voucherCodes).values(rows);
+      return ok({ generated: codes.length, codes });
+    },
+  );
+
+  // ===== GET /voucher-codes/export — CSV download of all codes for a promo =====
+  app.get(
+    '/voucher-codes/export',
+    {
+      schema: {
+        querystring: z.object({ promotionId: z.string() }),
+      },
+    },
+    async (req, reply) => {
+      const storeId = await loadOwnStoreIdOrThrow(getAuth(req).sub);
+
+      const promo = await db.query.promotions.findFirst({
+        where: and(eq(promotions.id, req.query.promotionId), eq(promotions.storeId, storeId)),
+      });
+      if (!promo) throw new AppError(404, ErrorCode.NotFound, 'Promotion not found');
+
+      const allCodes = await db.query.voucherCodes.findMany({
+        where: eq(voucherCodes.promotionId, promo.id),
+        orderBy: (t, { asc }) => [asc(t.createdAt)],
+      });
+
+      const lines = ['code,redeemed_count,total_uses'];
+      for (const c of allCodes) {
+        lines.push(`${c.code},${c.redeemedCount},${c.totalUses ?? ''}`);
+      }
+
+      void reply
+        .header('Content-Type', 'text/csv; charset=utf-8')
+        .header('Content-Disposition', `attachment; filename="vouchers-${promo.id}.csv"`)
+        .send(lines.join('\n'));
+      return reply;
+    },
+  );
+
+  // ===== GET /promotions/performance — per-promotion redemption metrics for this store =====
+  app.get('/performance', async (req) => {
+    const auth = getAuth(req);
+    const retailer = await db.query.retailerAccounts.findFirst({ where: eq(retailerAccounts.id, auth.sub) });
+    if (!retailer?.storeId) return ok([]);
+
+    const storePromos = await db.query.promotions.findMany({
+      where: eq(promotions.storeId, retailer.storeId),
+    });
+    if (storePromos.length === 0) return ok([]);
+
+    const promoIds = storePromos.map((p) => p.id);
+    const stats = await db
+      .select({
+        promotionId: promotionRedemptions.promotionId,
+        redemptions: count(),
+        gmvInfluencePaise: sum(promotionRedemptions.amountAppliedPaise),
+      })
+      .from(promotionRedemptions)
+      .where(inArray(promotionRedemptions.promotionId, promoIds))
+      .groupBy(promotionRedemptions.promotionId);
+
+    const statsMap = new Map(stats.map((s) => [s.promotionId, s]));
+    const promoMap = new Map(storePromos.map((p) => [p.id, p.name]));
+
+    return ok(
+      promoIds.map((id) => {
+        const s = statsMap.get(id);
+        return {
+          promotionId: id,
+          name: promoMap.get(id) ?? id,
+          redemptions: Number(s?.redemptions ?? 0),
+          gmvInfluencePaise: Number(s?.gmvInfluencePaise ?? 0),
+          aovLiftBp: 0,
+          refundRateBp: 0,
+          anomalyFlagged: false,
+        };
+      }),
+    );
+  });
 };
 
 export default retailerPromotionRoutes;

@@ -10,7 +10,17 @@ import {
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { invoiceKind, invoiceStatus, payoutStatus, taxSplitKind } from './enums.js';
+import {
+  earlyDisbursementStatus,
+  gstReturnKind,
+  gstReturnStatus,
+  invoiceKind,
+  invoiceResetCycle,
+  invoiceStatus,
+  payoutStatus,
+  postPayoutRecoveryStatus,
+  taxSplitKind,
+} from './enums.js';
 import { bankAccounts, retailerStores } from './store.js';
 import { orders } from './orders.js';
 import { refunds } from './refunds.js';
@@ -209,7 +219,116 @@ export const payouts = pgTable(
   }),
 );
 
+/**
+ * Per-legal-entity invoice numbering rules. Stored separately from the sequence counter
+ * so prefix/pattern can be edited without resetting sequences.
+ */
+export const invoiceNumberingRules = pgTable('invoice_numbering_rules', {
+  legalEntityId: text('legal_entity_id').primaryKey(),
+  legalEntityName: text('legal_entity_name').notNull(),
+  prefix: text('prefix').notNull().default('INV'),
+  pattern: text('pattern').notNull().default('{PREFIX}-{YYYY}-{SEQ}'),
+  resetCycle: invoiceResetCycle('reset_cycle').notNull().default('fiscal_year'),
+  updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+});
+
+/**
+ * GST return file records. One row per (period, kind). Admin triggers generation;
+ * status tracks background job; downloadUrl is set when ready.
+ */
+export const gstReturnFiles = pgTable(
+  'gst_return_files',
+  {
+    id: text('id').primaryKey(),
+    period: text('period').notNull(), // e.g. "2026-04"
+    kind: gstReturnKind('kind').notNull(),
+    status: gstReturnStatus('status').notNull().default('pending'),
+    downloadUrl: text('download_url'),
+    generatedAt: timestamp('generated_at', { withTimezone: true, mode: 'date' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => ({
+    periodKindIdx: index('gst_return_files_period_kind_idx').on(t.period, t.kind),
+  }),
+);
+
+/**
+ * Post-payout recoveries: refunds issued after the payout that covered the order has settled.
+ * A planned row debits the amount from the store's next payout cycle.
+ */
+export const postPayoutRecoveries = pgTable(
+  'post_payout_recoveries',
+  {
+    id: text('id').primaryKey(),
+    refundId: text('refund_id').notNull().references(() => refunds.id),
+    orderId: text('order_id').notNull().references(() => orders.id),
+    storeId: text('store_id').notNull().references(() => retailerStores.id),
+    payoutCycleId: text('payout_cycle_id').references(() => payouts.id),
+    refundedPaise: integer('refunded_paise').notNull(),
+    plannedDebitPaise: integer('planned_debit_paise').notNull(),
+    status: postPayoutRecoveryStatus('status').notNull().default('planned'),
+    reason: text('reason'),
+    scheduledFor: timestamp('scheduled_for', { withTimezone: true, mode: 'date' }).notNull(),
+    settledAt: timestamp('settled_at', { withTimezone: true, mode: 'date' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => ({
+    storeStatusIdx: index('post_payout_recoveries_store_status_idx').on(t.storeId, t.status),
+  }),
+);
+
+/**
+ * Off-cycle payout requests. Retailer asks to pull settled balance early; admin approves/rejects.
+ */
+export const earlyDisbursementRequests = pgTable(
+  'early_disbursement_requests',
+  {
+    id: text('id').primaryKey(),
+    storeId: text('store_id')
+      .notNull()
+      .references(() => retailerStores.id),
+    amountPaise: integer('amount_paise').notNull(),
+    reason: text('reason').notNull(),
+    status: earlyDisbursementStatus('status').notNull().default('pending'),
+    requestedAt: timestamp('requested_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    decidedAt: timestamp('decided_at', { withTimezone: true, mode: 'date' }),
+    decidedByAccountId: text('decided_by_account_id'),
+    decisionNote: text('decision_note'),
+  },
+  (t) => ({
+    storeStatusIdx: index('early_disbursement_requests_store_status_idx').on(t.storeId, t.status),
+  }),
+);
+
 // ===== Relations =====
+
+export const earlyDisbursementRequestsRelations = relations(earlyDisbursementRequests, ({ one }) => ({
+  store: one(retailerStores, {
+    fields: [earlyDisbursementRequests.storeId],
+    references: [retailerStores.id],
+  }),
+}));
+
+export const postPayoutRecoveriesRelations = relations(postPayoutRecoveries, ({ one }) => ({
+  store: one(retailerStores, {
+    fields: [postPayoutRecoveries.storeId],
+    references: [retailerStores.id],
+  }),
+  refund: one(refunds, {
+    fields: [postPayoutRecoveries.refundId],
+    references: [refunds.id],
+  }),
+  order: one(orders, {
+    fields: [postPayoutRecoveries.orderId],
+    references: [orders.id],
+  }),
+  payoutCycle: one(payouts, {
+    fields: [postPayoutRecoveries.payoutCycleId],
+    references: [payouts.id],
+  }),
+}));
 
 export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   order: one(orders, { fields: [invoices.orderId], references: [orders.id] }),

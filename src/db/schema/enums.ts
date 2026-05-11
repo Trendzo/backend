@@ -26,6 +26,148 @@ export const actorType = pgEnum('actor_type', [
   'system',
 ]);
 
+// ===== Phase 1: Identity & Access =====
+export const staffInviteStatus = pgEnum('staff_invite_status', [
+  'pending',
+  'accepted',
+  'expired',
+  'revoked',
+]);
+export const passwordResetTokenKind = pgEnum('password_reset_token_kind', [
+  'consumer',
+  'retailer',
+  'admin',
+]);
+export const subRoleScope = pgEnum('sub_role_scope', ['admin', 'retailer']);
+
+// ===== Phase 2: Retailer Onboarding =====
+export const applicationStatus = pgEnum('application_status', [
+  'pending',
+  'under_review',
+  'docs_requested',
+  'approved',
+  'rejected',
+]);
+export const applicationDocumentKind = pgEnum('application_document_kind', [
+  'storefront_photo',
+  'address_proof',
+  'pan',
+  'gst_certificate',
+  'bank_proof',
+  'other',
+]);
+export const verificationCheckKind = pgEnum('verification_check_kind', [
+  'gstin',
+  'pan',
+  'bank_penny_drop',
+]);
+export const verificationCheckStatus = pgEnum('verification_check_status', [
+  'pending',
+  'in_progress',
+  'verified',
+  'failed',
+]);
+
+// ===== Phase 3: KYC & Compliance =====
+export const kycReverificationStatus = pgEnum('kyc_reverification_status', [
+  'pending',
+  'submitted',
+  'approved',
+  'rejected',
+  'overdue',
+]);
+export const kycDocumentStatus = pgEnum('kyc_document_status', [
+  'missing',
+  'pending_review',
+  'verified',
+  'rejected',
+]);
+export const changeRequestStatus = pgEnum('change_request_status', [
+  'pending',
+  'under_review',
+  'approved',
+  'rejected',
+]);
+export const changeRequestField = pgEnum('change_request_field', [
+  'legal_name',
+  'address',
+  'bank_account',
+  'gstin',
+]);
+export const dataExportStatus = pgEnum('data_export_status', [
+  'pending',
+  'building',
+  'ready',
+  'expired',
+  'failed',
+]);
+export const accountDeletionStatus = pgEnum('account_deletion_status', [
+  'pending',
+  'in_progress',
+  'completed',
+  'cancelled',
+]);
+export const enforcementStep = pgEnum('enforcement_step', [
+  'warning_1',
+  'warning_2',
+  'warning_3',
+  'suspension',
+  'termination',
+  'lifted',
+]);
+export const enforcementBreachKind = pgEnum('enforcement_breach_kind', [
+  'acceptance_rate',
+  'fulfilment_sla',
+  'dispute_rate',
+  'return_rate',
+  'kyc_overdue',
+  'policy_violation',
+]);
+
+// ===== Phase 4: Store Operations =====
+export const notificationKind = pgEnum('notification_kind', [
+  'order',
+  'refund',
+  'payout',
+  'kyc',
+  'system',
+  'issue',
+  'compliance',
+  'promotion',
+]);
+export const notificationChannel = pgEnum('notification_channel', [
+  'inbox',
+  'push',
+  'email',
+  'sms',
+]);
+
+// ===== Phase 5: Catalog Moderation =====
+export const moderationFlagSource = pgEnum('moderation_flag_source', [
+  'automation',
+  'user_report',
+  'admin_review',
+]);
+export const moderationFlagStatus = pgEnum('moderation_flag_status', [
+  'open',
+  'under_appeal',
+  'resolved_taken_down',
+  'resolved_restored',
+  'resolved_dismissed',
+]);
+
+// ===== Phase 6: Inventory =====
+export const inventoryAdjustmentReason = pgEnum('inventory_adjustment_reason', [
+  'manual_edit',
+  'csv_import',
+  'order_reservation',
+  'order_confirmation',
+  'order_cancellation',
+  'return_restock',
+  'damage_writeoff',
+  'audit_correction',
+]);
+
 // ===== Store =====
 export const retailerStoreStatus = pgEnum('retailer_store_status', [
   'onboarding',
@@ -245,6 +387,46 @@ export const clubbingDefault = pgEnum('clubbing_default', [
   'allowed',
   'disallowed',
   'always_allowed',
+]);
+
+// ===== §14 Wallet Payouts =====
+export const walletPayoutStatus = pgEnum('wallet_payout_status', [
+  'pending_claim',
+  'awaiting_bank',
+  'paid',
+  'escheated',
+  'failed',
+]);
+
+// ===== §17 GST Returns =====
+export const gstReturnKind = pgEnum('gst_return_kind', ['gstr1', 'gstr3b', 'tcs_reconciliation']);
+export const gstReturnStatus = pgEnum('gst_return_status', [
+  'pending',
+  'generating',
+  'ready',
+  'failed',
+]);
+
+// ===== §17 Invoice Numbering =====
+export const invoiceResetCycle = pgEnum('invoice_reset_cycle', [
+  'never',
+  'fiscal_year',
+  'monthly',
+]);
+
+// ===== §16/§18 Post-Payout Recovery =====
+export const postPayoutRecoveryStatus = pgEnum('post_payout_recovery_status', [
+  'planned',
+  'debited',
+  'failed',
+  'cancelled',
+]);
+
+// ===== §18 Settlement =====
+export const earlyDisbursementStatus = pgEnum('early_disbursement_status', [
+  'pending',
+  'approved',
+  'rejected',
 ]);
 
 // ===== Support =====

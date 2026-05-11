@@ -43,9 +43,10 @@ export const retailerStores = pgTable(
 
     platformFeeBp: integer('platform_fee_bp').notNull(), // basis points
     deliveryOverridePaise: integer('delivery_override_paise'),
-    handlingFeePaise: integer('handling_fee_paise'),
-    convenienceFeePaise: integer('convenience_fee_paise'),
+    handlingFeePaise: integer('handling_fee_paise').notNull().default(0),
+    convenienceFeePaise: integer('convenience_fee_paise').notNull().default(0),
     payoutCadenceDays: integer('payout_cadence_days').notNull().default(7),
+    delegationModeEnabled: boolean('delegation_mode_enabled').notNull().default(false),
 
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()

@@ -176,6 +176,8 @@ export const ScopeSchema = z
     // Order eligibility
     allowedDeliveryMethods: z.array(DeliveryMethodEnum).optional(),
     allowedPaymentMethods: z.array(PaymentMethodEnum).optional(),
+    // Region eligibility
+    allowedStateCodes: z.array(z.string().length(2)).optional(), // e.g. ["MH", "KA"]
     // Shopper eligibility
     firstOrderOnly: z.boolean().optional(),
     loyaltyTierFilter: z.array(z.enum(['bronze', 'silver', 'gold', 'platinum'])).optional(),

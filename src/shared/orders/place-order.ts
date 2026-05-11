@@ -231,7 +231,28 @@ export async function placeOrder(
           where: inArray(promotions.id, [...promoIds]),
         });
 
-  const enginePromos: EnginePromotion[] = promoRows.map((p) => {
+  // G1: Validate status and validity window before applying any promotion.
+  const now = new Date();
+  const validPromoRows = promoRows.filter((p) => {
+    const isActive = p.status === 'active';
+    const inWindow = p.validFrom <= now && p.validUntil >= now;
+    if (!isActive || !inWindow) {
+      const wasExplicit =
+        (input.couponCode && p.mechanism === 'coupon') ||
+        (input.voucherCode && p.mechanism === 'voucher');
+      if (wasExplicit) {
+        throw new AppError(
+          409,
+          ErrorCode.CouponInvalid,
+          `Promotion "${p.name}" is ${!isActive ? p.status : 'outside its validity window'}`,
+        );
+      }
+      return false; // silently drop auto-applied offers that are no longer active
+    }
+    return true;
+  });
+
+  const enginePromos: EnginePromotion[] = validPromoRows.map((p) => {
     const promo: EnginePromotion = {
       id: p.id,
       mechanism: p.mechanism as Mechanism,
@@ -248,6 +269,58 @@ export async function placeOrder(
     return promo;
   });
 
+  // Loyalty balance — always fetched (used for redemption math and loyaltyTierFilter checks).
+  const loyaltyLast = await database.query.loyaltyTransactions.findFirst({
+    where: eq(loyaltyTransactions.consumerId, consumer.id),
+    orderBy: (t, { desc }) => desc(t.at),
+  });
+  const consumerLoyaltyBalance = loyaltyLast?.balanceAfterPoints ?? 0;
+
+  // G2: Enforce firstOrderOnly — the engine can't do this DB lookup itself.
+  if (enginePromos.some((p) => p.scope?.firstOrderOnly)) {
+    const priorOrder = await database.query.orders.findFirst({
+      where: and(eq(orders.consumerId, consumer.id), sql`${orders.status} != 'payment_failed'`),
+      columns: { id: true },
+    });
+    if (priorOrder) {
+      for (let i = enginePromos.length - 1; i >= 0; i--) {
+        if (!enginePromos[i]!.scope?.firstOrderOnly) continue;
+        const isExplicit =
+          (input.couponCode && enginePromos[i]!.mechanism === 'coupon') ||
+          (input.voucherCode && enginePromos[i]!.mechanism === 'voucher');
+        if (isExplicit) {
+          throw new AppError(409, ErrorCode.CouponInvalid, 'This offer is for first-time orders only');
+        }
+        enginePromos.splice(i, 1);
+      }
+    }
+  }
+
+  // G4: Enforce loyaltyTierFilter — derive consumer tier from balance vs. platform thresholds.
+  if (enginePromos.some((p) => p.scope?.loyaltyTierFilter?.length)) {
+    const tierCfg = await database.query.platformConfig.findMany({
+      where: inArray(platformConfig.key, [
+        'loyalty_tier_silver_min',
+        'loyalty_tier_gold_min',
+        'loyalty_tier_platinum_min',
+      ]),
+    });
+    const silver = (tierCfg.find((c) => c.key === 'loyalty_tier_silver_min')?.value as number | undefined) ?? 500;
+    const gold   = (tierCfg.find((c) => c.key === 'loyalty_tier_gold_min')?.value   as number | undefined) ?? 2000;
+    const plat   = (tierCfg.find((c) => c.key === 'loyalty_tier_platinum_min')?.value as number | undefined) ?? 5000;
+    const consumerTier: 'bronze' | 'silver' | 'gold' | 'platinum' =
+      consumerLoyaltyBalance >= plat ? 'platinum'
+        : consumerLoyaltyBalance >= gold ? 'gold'
+        : consumerLoyaltyBalance >= silver ? 'silver'
+        : 'bronze';
+    for (let i = enginePromos.length - 1; i >= 0; i--) {
+      const filter = enginePromos[i]!.scope?.loyaltyTierFilter;
+      if (filter?.length && !filter.includes(consumerTier)) {
+        enginePromos.splice(i, 1);
+      }
+    }
+  }
+
   const clubbingRows = await database.query.clubbingMatrixEntries.findMany();
   const clubbingMatrix = clubbingRows.map((r) => ({
     appliedToA: r.appliedToA as AppliedTo,
@@ -256,16 +329,6 @@ export async function placeOrder(
   }));
 
   const engineConfig = await loadEngineConfig(database, store);
-
-  // Loyalty balance for the redemption math.
-  let consumerLoyaltyBalance = 0;
-  if ((input.pointsToRedeem ?? 0) > 0) {
-    const last = await database.query.loyaltyTransactions.findFirst({
-      where: eq(loyaltyTransactions.consumerId, consumer.id),
-      orderBy: (t, { desc }) => desc(t.at),
-    });
-    consumerLoyaltyBalance = last?.balanceAfterPoints ?? 0;
-  }
 
   const breakdown = compute({
     cart,

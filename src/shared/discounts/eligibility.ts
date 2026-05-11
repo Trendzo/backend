@@ -51,6 +51,10 @@ export function ineligibilityReason(
     const inWindow = s.allowedTimesOfDay.some((w) => hhmm >= w.from && hhmm <= w.to);
     if (!inWindow) return 'outside_allowed_time';
   }
+  // Region — consumer delivery state must be in the allowlist.
+  if (s.allowedStateCodes?.length && !s.allowedStateCodes.includes(cart.consumerStateCode)) {
+    return 'region_not_allowed';
+  }
   // Delivery / payment method allowlists
   if (s.allowedDeliveryMethods?.length && !s.allowedDeliveryMethods.includes(cart.deliveryMethod)) {
     return 'delivery_method_disallowed';

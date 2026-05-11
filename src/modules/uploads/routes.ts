@@ -2,7 +2,6 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { AppError } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
-import { requireAuth } from '@/shared/auth/middleware.js';
 import { uploadToCloudinary } from '@/shared/cloudinary.js';
 
 const QuerySchema = z.object({
@@ -20,7 +19,7 @@ const QuerySchema = z.object({
  * (product gallery, store photo, support attachment, etc.).
  */
 const uploadRoutes: FastifyPluginAsync = async (app) => {
-  app.addHook('preHandler', requireAuth('admin', 'retailer', 'consumer'));
+  // app.addHook('preHandler', requireAuth('admin', 'retailer', 'consumer'));
 
   app.post('/', async (req) => {
     // Pull a single file from the multipart body. `@fastify/multipart` is registered

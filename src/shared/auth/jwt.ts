@@ -9,10 +9,11 @@ import { env } from '@/config/env.js';
 export type TokenKind = 'admin' | 'retailer' | 'consumer';
 
 export type AccessTokenPayload = {
-  sub: string; // account id
+  sub: string;
   kind: TokenKind;
-  // kept loose so each domain can attach role info as needed
-  subRole?: string;
+  subRole?: string | undefined;
+  // Set only on impersonation tokens issued by POST /admin/impersonation/start.
+  impersonating?: { storeId: string; sessionId: string } | undefined;
 };
 
 type DecodedAccessTokenPayload = AccessTokenPayload & {

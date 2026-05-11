@@ -5,7 +5,7 @@
  * outcome on the form so the team can exercise the failure-retry chain without integrating
  * Razorpay yet.
  */
-import { and, asc, desc, eq, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, lt, ne, type SQL } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { db } from '@/db/client.js';
@@ -189,8 +189,32 @@ const adminOrderRoutes: FastifyPluginAsyncZod = async (app) => {
         orderBy: asc(heldItems.holdingWindowExpiresAt),
       });
 
+      const siblingRows = await db.query.orders.findMany({
+        where: and(eq(orders.groupId, order.groupId), ne(orders.id, order.id)),
+        with: { items: { columns: { id: true } } },
+        orderBy: asc(orders.placedAt),
+      });
+      const siblingOrders = siblingRows.map((r) => ({
+        id: r.id,
+        groupId: r.groupId,
+        status: r.status,
+        storeId: r.storeId,
+        storeName: r.storeNameSnap,
+        consumerId: r.consumerId,
+        consumerName: r.consumerNameSnap,
+        consumerPhone: r.consumerPhoneSnap,
+        deliveryMethod: r.deliveryMethod,
+        paymentMethod: r.paymentMethod,
+        itemCount: r.items.length,
+        grandTotalPaise: r.grandTotalPaise,
+        placedAt: r.placedAt,
+        acceptedAt: r.acceptedAt,
+        deliveredAt: r.deliveredAt,
+      }));
+
       return ok({
         ...order,
+        group: { ...order.group, siblingOrders },
         returns: returnsRows,
         refunds: refundsRows,
         heldItems: heldRows,
@@ -289,11 +313,51 @@ const adminOrderRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
+  // ===== GET /admin/orders/:id/price-snapshot — snapshot vs live variant prices =====
+  app.get(
+    '/orders/:id/price-snapshot',
+    { schema: { params: z.object({ id: z.string() }) } },
+    async (req) => {
+      const items = await db.query.orderItems.findMany({
+        where: eq(orderItems.orderId, req.params.id),
+        with: { variant: true },
+      });
+      return ok(
+        items.map((it) => ({
+          variantId: it.variantId,
+          listingNameSnap: it.listingNameSnap,
+          snapshotPaise: it.unitPricePaise,
+          currentPaise: it.variant?.pricePaise ?? it.unitPricePaise,
+        })),
+      );
+    },
+  );
+
   // Suppress unused-symbol (referenced from query above)
   void orderGroups;
   void orderItems;
   void retailerStores;
   void variants;
+
+  // ===== GET /admin/orders/acceptance-timeout — pending orders older than 30 min =====
+  app.get('/orders/acceptance-timeout', async () => {
+    const cutoff = new Date(Date.now() - 30 * 60 * 1000);
+    const rows = await db.query.orders.findMany({
+      where: and(eq(orders.status, 'pending'), lt(orders.placedAt, cutoff)),
+      orderBy: asc(orders.placedAt),
+      limit: 100,
+    });
+    return ok(
+      rows.map((o) => ({
+        orderId: o.id,
+        storeName: o.storeNameSnap,
+        consumerName: o.consumerEmailSnap,
+        attempts: 1,
+        lastTimeoutAt: o.placedAt!.toISOString(),
+        candidateStoreCount: 0,
+      })),
+    );
+  });
 };
 
 export default adminOrderRoutes;

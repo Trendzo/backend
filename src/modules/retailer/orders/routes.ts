@@ -204,6 +204,7 @@ const retailerOrderRoutes: FastifyPluginAsyncZod = async (app) => {
         actorType: 'retailer',
         actorId: auth.sub,
         reason: 'retailer_accepted',
+        ...(auth.impersonating ? { metadata: { impersonatingAdminSessionId: auth.impersonating.sessionId } } : {}),
       });
       return ok(result);
     },
@@ -223,6 +224,7 @@ const retailerOrderRoutes: FastifyPluginAsyncZod = async (app) => {
         actorType: 'retailer',
         actorId: auth.sub,
         reason: 'retailer_packed',
+        ...(auth.impersonating ? { metadata: { impersonatingAdminSessionId: auth.impersonating.sessionId } } : {}),
       });
       return ok(result);
     },
@@ -252,7 +254,7 @@ const retailerOrderRoutes: FastifyPluginAsyncZod = async (app) => {
         actorType: 'retailer',
         actorId: auth.sub,
         reason: 'agent_handover',
-        metadata: req.body,
+        metadata: { ...req.body, ...(auth.impersonating ? { impersonatingAdminSessionId: auth.impersonating.sessionId } : {}) },
       });
       return ok(result);
     },
@@ -272,6 +274,7 @@ const retailerOrderRoutes: FastifyPluginAsyncZod = async (app) => {
         actorType: 'retailer',
         actorId: auth.sub,
         reason: 'agent_departed',
+        ...(auth.impersonating ? { metadata: { impersonatingAdminSessionId: auth.impersonating.sessionId } } : {}),
       });
       return ok(result);
     },
@@ -337,7 +340,7 @@ const retailerOrderRoutes: FastifyPluginAsyncZod = async (app) => {
         actorType: 'retailer',
         actorId: auth.sub,
         reason: 'delivery_confirmed',
-        metadata: { attemptNumber: result.nextAttempt },
+        metadata: { attemptNumber: result.nextAttempt, ...(auth.impersonating ? { impersonatingAdminSessionId: auth.impersonating.sessionId } : {}) },
       });
       return ok(transition);
     },
@@ -393,7 +396,7 @@ const retailerOrderRoutes: FastifyPluginAsyncZod = async (app) => {
         actorType: 'retailer',
         actorId: auth.sub,
         reason: req.body.reason,
-        metadata: { attemptNumber: nextAttempt },
+        metadata: { attemptNumber: nextAttempt, ...(auth.impersonating ? { impersonatingAdminSessionId: auth.impersonating.sessionId } : {}) },
       });
 
       // Then either retry (back to out_for_delivery) or send back to store.
@@ -446,7 +449,7 @@ const retailerOrderRoutes: FastifyPluginAsyncZod = async (app) => {
         actorType: 'retailer',
         actorId: auth.sub,
         reason: 'cancel_requested',
-        metadata: { requestedReason: req.body.reason },
+        metadata: { requestedReason: req.body.reason, ...(auth.impersonating ? { impersonatingAdminSessionId: auth.impersonating.sessionId } : {}) },
       });
       return ok({ orderId: order.id, requestedReason: req.body.reason, ...marker });
     },

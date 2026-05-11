@@ -14,6 +14,7 @@ import { seedAttributeTemplates } from './attribute-templates.js';
 import { seedCatalogDefaults } from './catalog-defaults.js';
 import { seedClubbingMatrix } from './clubbing-matrix.js';
 import { seedDelegationModes } from './delegation-modes.js';
+import { seedDemoRetailer } from './demo-retailer.js';
 import { seedPlatformConfig } from './platform-config.js';
 import { seedSubRoles } from './sub-roles.js';
 
@@ -38,6 +39,9 @@ async function main(): Promise<void> {
 
   console.log('Seeding catalog defaults (brands + categories)…');
   await seedCatalogDefaults(db);
+
+  console.log('Seeding demo retailer (kaushalyaharth@gmail.com)…');
+  await seedDemoRetailer(db);
 
   console.log('Seed complete.');
 }

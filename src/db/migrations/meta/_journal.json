@@ -22,6 +22,20 @@
       "when": 1778016623989,
       "tag": "0002_reflective_skin",
       "breakpoints": true
-    }
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778337491907,
+      "tag": "0003_flaky_black_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778355613674,
+      "tag": "0004_faithful_nova",
+      "breakpoints": true
+    },
   ]
 }

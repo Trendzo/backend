@@ -149,11 +149,15 @@ export function compute(input: ComputeInput): PricingBreakdown {
     lineSubtotalPaise - retailerPromoDiscountPaise - platformPromoDiscountPaise,
   );
 
-  // 5. Loyalty redemption — applied on top, NOT subject to clubbing (per spec line 778).
+  // 5. Cap coupon discount at postPromoSubtotal so stored breakdown amounts are economically
+  // accurate (§11 Discount Cap Rule; matters for §17 credit-note line amounts).
+  const cappedCouponDiscountPaise = Math.min(couponDiscountPaise, postPromoSubtotalPaise);
+
+  // Loyalty redemption — applied on top, NOT subject to clubbing (per spec line 778).
   const loyalty = applyLoyaltyRedemption({
     pointsRequested: input.pointsToRedeem ?? 0,
     consumerBalancePoints: input.consumerLoyaltyBalance ?? 0,
-    eligibleSubtotalPaise: Math.max(0, postPromoSubtotalPaise - couponDiscountPaise),
+    eligibleSubtotalPaise: Math.max(0, postPromoSubtotalPaise - cappedCouponDiscountPaise),
     config: config.loyalty,
   });
   const loyaltyDiscountPaise = loyalty.discountPaise;
@@ -162,7 +166,7 @@ export function compute(input: ComputeInput): PricingBreakdown {
   // 6. Tax base — floored at 0 (spec).
   const taxBasePaise = Math.max(
     0,
-    postPromoSubtotalPaise - couponDiscountPaise - loyaltyDiscountPaise,
+    postPromoSubtotalPaise - cappedCouponDiscountPaise - loyaltyDiscountPaise,
   );
 
   const { cgstPaise, sgstPaise, igstPaise } = gstSplit(
@@ -209,7 +213,7 @@ export function compute(input: ComputeInput): PricingBreakdown {
     excludedPromotions: excluded,
     retailerPromoDiscountPaise,
     platformPromoDiscountPaise,
-    couponDiscountPaise,
+    couponDiscountPaise: cappedCouponDiscountPaise,
     loyaltyDiscountPaise,
     shippingSubsidyPaise,
     postPromoSubtotalPaise,

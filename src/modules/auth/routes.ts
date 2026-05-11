@@ -1,8 +1,8 @@
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { db } from '@/db/client.js';
-import { adminAccounts, retailerAccounts } from '@/db/schema/index.js';
+import { adminAccounts, retailerAccounts, retailerApplications } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { signAccessToken } from '@/shared/auth/jwt.js';
@@ -140,6 +140,18 @@ body: z.object({
         where: eq(retailerAccounts.email, email),
       });
       if (!retailer) {
+        // Check if this email belongs to a pending/under-review application.
+        const application = await db.query.retailerApplications.findFirst({
+          where: eq(retailerApplications.ownerEmail, email),
+          columns: { id: true, status: true },
+          orderBy: desc(retailerApplications.submittedAt),
+        });
+        if (application) {
+          if (application.status === 'rejected') {
+            throw new AppError(403, ErrorCode.ApplicationRejected, 'Your application was not approved. Contact support for details.', { applicationId: application.id });
+          }
+          throw new AppError(403, ErrorCode.ApplicationPending, 'Your application is under review. You will be able to log in once ClosetX approves it.', { applicationId: application.id });
+        }
         throw new AppError(401, ErrorCode.InvalidCredentials, 'Email or password is incorrect');
       }
       if (retailer.status === 'deactivated') {

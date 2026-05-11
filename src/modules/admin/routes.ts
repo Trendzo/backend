@@ -122,6 +122,118 @@ params: z.object({ id: z.string() }),
     },
   );
 
+  // ===== POST /retailers/:id/suspend — suspend retailer's store =====
+  // Keeps the retailer account active (so they can login and see the notice) but
+  // pauses fulfilment by setting the store to 'suspended'.
+  app.post(
+    '/retailers/:id/suspend',
+    {
+      schema: {
+        params: z.object({ id: z.string() }),
+        body: z.object({ reason: z.string().trim().min(1).max(500) }),
+      },
+    },
+    async (req) => {
+      const retailer = await db.query.retailerAccounts.findFirst({
+        where: eq(retailerAccounts.id, req.params.id),
+      });
+      if (!retailer) throw new AppError(404, ErrorCode.NotFound, 'Retailer not found');
+      if (retailer.status !== 'active') {
+        throw new AppError(
+          409,
+          ErrorCode.InvalidState,
+          `Cannot suspend retailer in '${retailer.status}' status`,
+        );
+      }
+      if (!retailer.storeId) {
+        throw new AppError(409, ErrorCode.InvalidState, 'Retailer has no associated store');
+      }
+      const currentStore = await db.query.retailerStores.findFirst({
+        where: eq(retailerStores.id, retailer.storeId),
+      });
+      if (currentStore?.status === 'suspended') {
+        throw new AppError(409, ErrorCode.InvalidState, 'Store is already suspended');
+      }
+      const [updatedStore] = await db
+        .update(retailerStores)
+        .set({ status: 'suspended' })
+        .where(eq(retailerStores.id, retailer.storeId))
+        .returning();
+      req.log.info({ retailerId: retailer.id, reason: req.body.reason }, 'retailer store suspended');
+      const { passwordHash: _ph, ...safe } = retailer;
+      return ok({ retailer: safe, store: updatedStore });
+    },
+  );
+
+  // ===== POST /retailers/:id/unsuspend — lift suspension =====
+  app.post(
+    '/retailers/:id/unsuspend',
+    {
+      schema: {
+        params: z.object({ id: z.string() }),
+        body: z.preprocess((v) => (v == null ? {} : v), z.object({ reason: z.string().trim().max(500).optional() })),
+      },
+    },
+    async (req) => {
+      const retailer = await db.query.retailerAccounts.findFirst({
+        where: eq(retailerAccounts.id, req.params.id),
+      });
+      if (!retailer) throw new AppError(404, ErrorCode.NotFound, 'Retailer not found');
+      if (!retailer.storeId) {
+        throw new AppError(409, ErrorCode.InvalidState, 'Retailer has no associated store');
+      }
+      const store = await db.query.retailerStores.findFirst({
+        where: eq(retailerStores.id, retailer.storeId),
+      });
+      if (store?.status !== 'suspended') {
+        throw new AppError(409, ErrorCode.InvalidState, 'Store is not currently suspended');
+      }
+      const [updatedStore] = await db
+        .update(retailerStores)
+        .set({ status: 'active' })
+        .where(eq(retailerStores.id, retailer.storeId))
+        .returning();
+      req.log.info({ retailerId: retailer.id, reason: req.body?.reason }, 'retailer store unsuspended');
+      const { passwordHash: _ph, ...safe } = retailer;
+      return ok({ retailer: safe, store: updatedStore });
+    },
+  );
+
+  // ===== POST /retailers/:id/terminate — permanently terminate retailer =====
+  // Deactivates the retailer account and terminates the store. Irreversible.
+  app.post(
+    '/retailers/:id/terminate',
+    {
+      schema: {
+        params: z.object({ id: z.string() }),
+        body: z.object({ reason: z.string().trim().min(1).max(500) }),
+      },
+    },
+    async (req) => {
+      const retailer = await db.query.retailerAccounts.findFirst({
+        where: eq(retailerAccounts.id, req.params.id),
+      });
+      if (!retailer) throw new AppError(404, ErrorCode.NotFound, 'Retailer not found');
+      if (retailer.status === 'deactivated') {
+        throw new AppError(409, ErrorCode.InvalidState, 'Retailer is already deactivated');
+      }
+      await db.transaction(async (tx) => {
+        await tx
+          .update(retailerAccounts)
+          .set({ status: 'deactivated' })
+          .where(eq(retailerAccounts.id, retailer.id));
+        if (retailer.storeId) {
+          await tx
+            .update(retailerStores)
+            .set({ status: 'terminated' })
+            .where(eq(retailerStores.id, retailer.storeId));
+        }
+      });
+      req.log.info({ retailerId: retailer.id, reason: req.body.reason }, 'retailer terminated');
+      return ok({ retailerId: retailer.id, terminated: true });
+    },
+  );
+
   // ===== GET /stores — list stores (optionally filter by status) =====
   // Includes a `retailer` summary on each row so the UI can disclose the cross-entity
   // approval gate ("can't approve store until retailer is active") before the admin clicks.

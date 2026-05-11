@@ -38,4 +38,10 @@ export const IdPrefix = {
   Refund: 'rfd',
   RefundLine: 'rfl',
   RefundDisbursement: 'rdb',
+  // Disputes
+  Dispute: 'dsp',
+  GiftCard: 'gc',
+  ApplicationDoc: 'adoc',
+  // Inventory
+  InventoryAdjustment: 'iadj',
 } as const;

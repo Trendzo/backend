@@ -16,6 +16,8 @@ export const ErrorCode = {
   InternalError: 'internal_error',
 
   // Onboarding
+  ApplicationPending: 'application_pending',
+  ApplicationRejected: 'application_rejected',
   KycInvalid: 'kyc_invalid',
   RetailerNotApproved: 'retailer_not_approved',
   StoreNotActive: 'store_not_active',
@@ -89,6 +91,11 @@ export const ErrorCode = {
   HeldItemNotFound: 'held_item_not_found',
   HeldItemNotHolding: 'held_item_not_holding',
   HeldExtensionAlreadyUsed: 'held_extension_already_used',
+
+  // Disputes
+  DisputeNotFound: 'dispute_not_found',
+  DisputeInvalidState: 'dispute_invalid_state',
+  DisputeAlreadyDecided: 'dispute_already_decided',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

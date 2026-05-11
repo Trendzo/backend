@@ -14,7 +14,8 @@ await c.connect();
 await c.query(`
   TRUNCATE TABLE
     variants, product_listings,
-    bank_accounts, retailer_accounts, retailer_stores
+    bank_accounts, retailer_accounts, retailer_stores,
+    retailer_applications
   RESTART IDENTITY CASCADE;
 `);
 // Drop only retailer-created brand 'acme' from previous runs (keep seeded defaults).

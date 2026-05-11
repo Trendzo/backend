@@ -1,11 +1,12 @@
-import { and, desc, eq, isNull, or } from 'drizzle-orm';
+import { and, count, desc, eq, isNull, or, sum } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { db } from '@/db/client.js';
-import { promotions, retailerStores } from '@/db/schema/index.js';
+import { promotionRedemptions, promotions, retailerStores } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
-import { requireAuth } from '@/shared/auth/middleware.js';
+import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
+import { recordAudit } from '@/shared/audit.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import {
   defaultAppliedTo,
@@ -268,6 +269,90 @@ const adminPromotionRoutes: FastifyPluginAsyncZod = async (app) => {
       .returning();
     return updated!;
   }
+
+  // ===== GET /admin/promotions/performance =====
+  app.get('/performance', async () => {
+    const stats = await db
+      .select({
+        promotionId: promotionRedemptions.promotionId,
+        redemptions: count(),
+        gmvInfluencePaise: sum(promotionRedemptions.amountAppliedPaise),
+      })
+      .from(promotionRedemptions)
+      .groupBy(promotionRedemptions.promotionId);
+
+    if (stats.length === 0) return ok([]);
+
+    const promoRows = await db.query.promotions.findMany({
+      where: (t, { inArray }) => inArray(t.id, stats.map((s) => s.promotionId)),
+    });
+    const promoMap = new Map(promoRows.map((p) => [p.id, p.name]));
+
+    return ok(
+      stats.map((s) => ({
+        promotionId: s.promotionId,
+        name: promoMap.get(s.promotionId) ?? s.promotionId,
+        redemptions: Number(s.redemptions),
+        gmvInfluencePaise: Number(s.gmvInfluencePaise ?? 0),
+        aovLiftBp: 0,
+        refundRateBp: 0,
+        anomalyFlagged: false,
+      })),
+    );
+  });
+
+  // ===== GET /admin/promotions/anomalies — returns empty until anomaly detection lands =====
+  app.get('/anomalies', async () => ok([]));
+  app.get('/anomalies/:id', { schema: { params: z.object({ id: z.string() }) } }, async (_req) => {
+    throw new AppError(404, ErrorCode.NotFound, 'Anomaly not found');
+  });
+
+  // ===== GET /admin/promotions/targeted-drops — returns empty until targeted-drops table lands =====
+  app.get('/targeted-drops', async () => ok([]));
+
+  // ===== POST /admin/targeted-drops — push promo to consumer cohort (stub) =====
+  // MOCK_DEPENDENCY: §14 consumer wallet — actual wallet push deferred
+  app.post(
+    '/targeted-drops',
+    {
+      schema: {
+        body: z.object({
+          promotionId: z.string(),
+          cohort: z.enum(['all', 'loyalty_gold', 'loyalty_silver', 'loyalty_bronze', 'specific_consumers']),
+          consumerIds: z.array(z.string()).optional(),
+        }),
+      },
+    },
+    async (req) => {
+      const auth = getAuth(req);
+      const promo = await db.query.promotions.findFirst({
+        where: and(
+          eq(promotions.id, req.body.promotionId),
+          eq(promotions.issuerType, 'admin'),
+        ),
+      });
+      if (!promo) throw new AppError(404, ErrorCode.NotFound, 'Platform promotion not found');
+
+      if (req.body.cohort === 'specific_consumers' && (!req.body.consumerIds || req.body.consumerIds.length === 0)) {
+        throw new AppError(400, ErrorCode.ValidationError, 'consumerIds required for specific_consumers cohort');
+      }
+
+      await recordAudit({
+        actor: auth,
+        action: 'promotions.targeted_drop',
+        resourceKind: 'promotion',
+        resourceId: promo.id,
+        requestId: req.id,
+      });
+
+      return ok({
+        promotionId: promo.id,
+        cohort: req.body.cohort,
+        consumerCount: req.body.consumerIds?.length ?? null,
+        dispatched: true,
+      });
+    },
+  );
 
   // Suppress unused — kept for future cohort filters.
   void or;

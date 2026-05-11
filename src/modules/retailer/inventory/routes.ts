@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
   brands,
+  inventoryAdjustments,
   productListings,
   retailerAccounts,
   retailerStores,
@@ -20,6 +21,7 @@ import {
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
+import { IdPrefix, newId } from '@/shared/ids.js';
 import { StockSchema } from '@/shared/validation/common.js';
 
 /** Same loaders the parent retailer module uses, kept local so this stays a self-
@@ -93,6 +95,43 @@ const inventoryRoutes: FastifyPluginAsyncZod = async (app) => {
     const rows = await fetchInventoryRows(store.id);
     return ok(rows);
   });
+
+  // ===== GET /retailer/inventory/adjustments — adjustment history for this store =====
+  app.get(
+    '/adjustments',
+    {
+      schema: {
+        querystring: z.object({
+          variantId: z.string().optional(),
+          limit: z.coerce.number().int().min(1).max(200).default(100),
+        }),
+      },
+    },
+    async (req) => {
+      const auth = getAuth(req);
+      const retailer = await loadRetailer(auth.sub);
+      const store = await loadOwnedStore(retailer.storeId);
+
+      // Collect variant IDs owned by this store
+      const storeVariants = await db.query.productListings.findMany({
+        where: eq(productListings.storeId, store.id),
+        with: { variants: { columns: { id: true } } },
+      });
+      const variantIds = storeVariants.flatMap((l) => l.variants.map((v) => v.id));
+      if (variantIds.length === 0) return ok([]);
+
+      const { inArray, desc } = await import('drizzle-orm');
+      const conditions = [inArray(inventoryAdjustments.variantId, variantIds)];
+      if (req.query.variantId) conditions.push(eq(inventoryAdjustments.variantId, req.query.variantId));
+
+      const rows = await db.query.inventoryAdjustments.findMany({
+        where: and(...conditions),
+        orderBy: desc(inventoryAdjustments.at),
+        limit: req.query.limit,
+      });
+      return ok(rows);
+    },
+  );
 
   // ===== GET /retailer/inventory/export — CSV download =====
   // Returns the same shape as the JSON list, RFC-4180-escaped, ready to round-trip
@@ -189,7 +228,17 @@ const inventoryRoutes: FastifyPluginAsyncZod = async (app) => {
       if (toApply.length > 0) {
         await db.transaction(async (tx) => {
           for (const u of toApply) {
+            const existing = owned.find((v) => v.id === u.id)!;
             await tx.update(variants).set({ stock: u.stock }).where(eq(variants.id, u.id));
+            await tx.insert(inventoryAdjustments).values({
+              id: newId(IdPrefix.InventoryAdjustment),
+              variantId: u.id,
+              delta: u.stock - existing.stock,
+              newStock: u.stock,
+              reason: 'csv_import',
+              actorKind: 'retailer',
+              actorId: auth.sub,
+            });
             applied += 1;
           }
         });

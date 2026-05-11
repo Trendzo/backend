@@ -3,8 +3,11 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
+  attributeTemplates,
   brands,
   categories,
+  inventoryAdjustments,
+  listingAuditEntries,
   productListings,
   retailerAccounts,
   retailerStores,
@@ -79,11 +82,11 @@ function assertCanPublish(retailerStatus: string, storeStatus: string): void {
       'Your retailer account is not approved yet — wait for admin approval',
     );
   }
-  if (storeStatus !== 'active') {
+  if (storeStatus !== 'active' && storeStatus !== 'onboarding') {
     throw new AppError(
       403,
       ErrorCode.StoreNotActive,
-      `Your store is ${storeStatus}, must be 'active' to publish products`,
+      `Your store is ${storeStatus}, must be active or onboarding to manage products`,
     );
   }
 }
@@ -233,6 +236,7 @@ body: z.object({
           listingPolicy: z.enum(['return', 'replace', 'final_sale']).default('return'),
           galleryUrls: z.array(z.string().url()).default([]),
           hsn: z.string().trim().max(8).optional(),
+          templateId: z.string().optional(),
           // No `status` on create — listings always start as `draft`. Publishing
           // (status='active') happens via PATCH after at least one variant and one
           // gallery image exist.
@@ -254,6 +258,10 @@ body: z.object({
       ]);
       if (!brand) throw new AppError(404, ErrorCode.NotFound, `Brand ${body.brandId} not found`);
       if (!category) throw new AppError(404, ErrorCode.NotFound, `Category ${body.categoryId} not found`);
+      if (body.templateId) {
+        const tpl = await db.query.attributeTemplates.findFirst({ where: eq(attributeTemplates.id, body.templateId) });
+        if (!tpl) throw new AppError(404, ErrorCode.NotFound, `Template ${body.templateId} not found`);
+      }
 
       const id = newId(IdPrefix.Listing);
       const [created] = await db
@@ -266,6 +274,7 @@ body: z.object({
           name: body.name,
           ...(body.description !== undefined && { description: body.description }),
           ...(body.hsn !== undefined && { hsn: body.hsn }),
+          ...(body.templateId !== undefined && { templateId: body.templateId }),
           gender: body.gender,
           badge: body.badge,
           listingPolicy: body.listingPolicy,
@@ -323,6 +332,7 @@ params: z.object({ id: z.string() }),
             listingPolicy: z.enum(['return', 'replace', 'final_sale']).optional(),
             galleryUrls: z.array(z.string().url()).optional(),
             hsn: z.string().trim().max(8).optional(),
+            templateId: z.string().nullable().optional(),
             status: z.enum(['draft', 'active', 'retired']).optional(),
           })
           .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' }),
@@ -351,6 +361,10 @@ params: z.object({ id: z.string() }),
       if (body.categoryId) {
         const cat = await db.query.categories.findFirst({ where: eq(categories.id, body.categoryId) });
         if (!cat) throw new AppError(404, ErrorCode.NotFound, `Category ${body.categoryId} not found`);
+      }
+      if (body.templateId) {
+        const tpl = await db.query.attributeTemplates.findFirst({ where: eq(attributeTemplates.id, body.templateId) });
+        if (!tpl) throw new AppError(404, ErrorCode.NotFound, `Template ${body.templateId} not found`);
       }
 
       // Status transition guard: can't activate a listing on a non-active store.
@@ -396,6 +410,27 @@ params: z.object({ id: z.string() }),
               await tx.update(variants).set({ imageUrls: pruned }).where(eq(variants.id, v.id));
             }
           }
+        }
+        if (body.status === 'active' && existing.status !== 'active') {
+          await tx.insert(listingAuditEntries).values({
+            id: newId('lae'),
+            listingId: existing.id,
+            action: 'publish',
+            actorKind: 'retailer',
+            actorId: auth.sub,
+          });
+          // First active listing graduates the store from onboarding → active.
+          if (store.status === 'onboarding') {
+            await tx.update(retailerStores).set({ status: 'active' }).where(eq(retailerStores.id, store.id));
+          }
+        } else if (body.status === 'draft' && existing.status === 'active') {
+          await tx.insert(listingAuditEntries).values({
+            id: newId('lae'),
+            listingId: existing.id,
+            action: 'unpublish',
+            actorKind: 'retailer',
+            actorId: auth.sub,
+          });
         }
         return row;
       });
@@ -461,6 +496,75 @@ params: z.object({ listingId: z.string() }),
             409,
             ErrorCode.SkuTaken,
             `SKU '${req.body.sku ?? '?'}' already exists on this listing`,
+          );
+        }
+        throw err;
+      }
+    },
+  );
+
+  // ===== POST /listings/:listingId/variants/bulk — create multiple variants at once =====
+  app.post(
+    '/listings/:listingId/variants/bulk',
+    {
+      schema: {
+        params: z.object({ listingId: z.string() }),
+        body: z.object({
+          variants: z
+            .array(
+              z.object({
+                attributes: z.record(z.string(), z.string()),
+                attributesLabel: z.string().trim().min(1).max(120),
+                sku: z.string().trim().min(1).max(64).optional(),
+                pricePaise: PositivePaiseSchema,
+                stock: StockSchema.default(0),
+                imageUrls: z.array(z.string().url()).default([]),
+              }),
+            )
+            .min(1)
+            .max(100),
+        }),
+      },
+    },
+    async (req) => {
+      const auth = getAuth(req);
+      const retailer = await loadRetailer(auth.sub);
+      const store = await loadOwnedStore(retailer.storeId);
+
+      const listing = await db.query.productListings.findFirst({
+        where: eq(productListings.id, req.params.listingId),
+      });
+      if (!listing) throw new AppError(404, ErrorCode.NotFound, 'Listing not found');
+      if (listing.storeId !== store.id) {
+        throw new AppError(403, ErrorCode.NotOwner, 'You do not own this listing');
+      }
+
+      for (const v of req.body.variants) {
+        assertSubsetOfGallery(v.imageUrls, listing.galleryUrls);
+      }
+
+      const rows = req.body.variants.map((v) => ({
+        id: newId(IdPrefix.Variant),
+        listingId: listing.id,
+        attributes: v.attributes,
+        attributesLabel: v.attributesLabel,
+        ...(v.sku !== undefined && { sku: v.sku }),
+        pricePaise: v.pricePaise,
+        stock: v.stock,
+        imageUrls: v.imageUrls,
+        reserved: 0,
+      }));
+
+      try {
+        const created = await db.insert(variants).values(rows).returning();
+        return ok(created);
+      } catch (err) {
+        const code = (err as { code?: string }).code;
+        if (code === '23505') {
+          throw new AppError(
+            409,
+            ErrorCode.SkuTaken,
+            'One or more SKUs already exist on this listing',
           );
         }
         throw err;
@@ -546,6 +650,17 @@ params: z.object({ id: z.string() }),
           .set(compact(req.body))
           .where(eq(variants.id, existing.id))
           .returning();
+        if (req.body.stock !== undefined) {
+          await db.insert(inventoryAdjustments).values({
+            id: newId(IdPrefix.InventoryAdjustment),
+            variantId: existing.id,
+            delta: req.body.stock - existing.stock,
+            newStock: req.body.stock,
+            reason: 'manual_edit',
+            actorKind: 'retailer',
+            actorId: auth.sub,
+          });
+        }
         return ok(updated);
       } catch (err) {
         const code = (err as { code?: string }).code;
@@ -558,6 +673,77 @@ params: z.object({ id: z.string() }),
         }
         throw err;
       }
+    },
+  );
+
+  // ===== POST /listings/bulk-status — bulk availability toggle =====
+  app.post(
+    '/listings/bulk-status',
+    {
+      schema: {
+        body: z.object({
+          ids: z.array(z.string()).min(1).max(100),
+          status: z.enum(['active', 'draft']),
+        }),
+      },
+    },
+    async (req) => {
+      const auth = getAuth(req);
+      const retailer = await loadRetailer(auth.sub);
+      const store = await loadOwnedStore(retailer.storeId);
+      assertCanPublish(retailer.status, store.status);
+
+      let updated = 0;
+      let skipped = 0;
+
+      await db.transaction(async (tx) => {
+        for (const id of req.body.ids) {
+          const listing = await tx.query.productListings.findFirst({
+            where: and(eq(productListings.id, id), eq(productListings.storeId, store.id)),
+          });
+          if (!listing) { skipped++; continue; }
+
+          if (req.body.status === 'active') {
+            const gallery = listing.galleryUrls ?? [];
+            const variantCount = await tx.$count(variants, eq(variants.listingId, id));
+            if (variantCount < 1 || gallery.length < 1) { skipped++; continue; }
+          }
+
+          await tx
+            .update(productListings)
+            .set({ status: req.body.status })
+            .where(eq(productListings.id, id));
+          updated++;
+        }
+        // First batch activation graduates the store from onboarding → active.
+        if (req.body.status === 'active' && updated > 0 && store.status === 'onboarding') {
+          await tx.update(retailerStores).set({ status: 'active' }).where(eq(retailerStores.id, store.id));
+        }
+      });
+
+      return ok({ updated, skipped });
+    },
+  );
+
+  // ===== GET /listings/:id/audit =====
+  app.get(
+    '/listings/:id/audit',
+    { schema: { params: z.object({ id: z.string() }) } },
+    async (req) => {
+      const auth = getAuth(req);
+      const retailer = await loadRetailer(auth.sub);
+      const store = await loadOwnedStore(retailer.storeId);
+
+      const listing = await db.query.productListings.findFirst({
+        where: and(eq(productListings.id, req.params.id), eq(productListings.storeId, store.id)),
+      });
+      if (!listing) throw new AppError(404, ErrorCode.NotFound, 'Listing not found');
+
+      const rows = await db.query.listingAuditEntries.findMany({
+        where: eq(listingAuditEntries.listingId, listing.id),
+        orderBy: (t, { desc }) => [desc(t.at)],
+      });
+      return ok(rows);
     },
   );
 

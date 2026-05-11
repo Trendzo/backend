@@ -1,6 +1,7 @@
 import { relations, sql } from 'drizzle-orm';
 import {
   check,
+  date,
   index,
   integer,
   pgTable,
@@ -8,7 +9,7 @@ import {
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { loyaltyTransactionKind, walletTransactionKind } from './enums.js';
+import { loyaltyTransactionKind, walletPayoutStatus, walletTransactionKind } from './enums.js';
 import { consumers } from './identity.js';
 import { orders } from './orders.js';
 import { refunds } from './refunds.js';
@@ -121,7 +122,69 @@ export const loyaltyTransactions = pgTable(
   }),
 );
 
+/**
+ * Wallet balance disbursal for closed consumer accounts. Admin reviews during the claim window;
+ * unpaid rows are escheated after the platform retention period.
+ */
+export const walletPayouts = pgTable(
+  'wallet_payouts',
+  {
+    id: text('id').primaryKey(),
+    consumerId: text('consumer_id')
+      .notNull()
+      .references(() => consumers.id),
+    balancePaise: integer('balance_paise').notNull(),
+    status: walletPayoutStatus('status').notNull().default('pending_claim'),
+    claimWindowEndsAt: timestamp('claim_window_ends_at', { withTimezone: true, mode: 'date' }).notNull(),
+    bankAccountRef: text('bank_account_ref'),
+    disbursedAt: timestamp('disbursed_at', { withTimezone: true, mode: 'date' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => ({
+    consumerIdx: index('wallet_payouts_consumer_idx').on(t.consumerId),
+    statusIdx: index('wallet_payouts_status_idx').on(t.status),
+  }),
+);
+
 // ===== Relations =====
+
+/**
+ * Platform-issued gift cards. Each card carries a remaining balance; `expiresOn` is a
+ * calendar date (no time component needed). Admin issues cards; consumer redeems at checkout.
+ */
+export const giftCards = pgTable(
+  'gift_cards',
+  {
+    id: text('id').primaryKey(),
+    consumerId: text('consumer_id')
+      .notNull()
+      .references(() => consumers.id),
+    code: text('code').notNull(),
+    balancePaise: integer('balance_paise').notNull().default(0),
+    expiresOn: date('expires_on').notNull(),
+    issuedBy: text('issued_by'), // admin id or null for system-generated
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => ({
+    codeIdx: uniqueIndex('gift_cards_code_idx').on(t.code),
+    consumerIdx: index('gift_cards_consumer_idx').on(t.consumerId),
+    nonNegativeGuard: check('gift_cards_balance_non_negative', sql`${t.balancePaise} >= 0`),
+  }),
+);
+
+export const giftCardsRelations = relations(giftCards, ({ one }) => ({
+  consumer: one(consumers, {
+    fields: [giftCards.consumerId],
+    references: [consumers.id],
+  }),
+}));
+
+export const walletPayoutsRelations = relations(walletPayouts, ({ one }) => ({
+  consumer: one(consumers, {
+    fields: [walletPayouts.consumerId],
+    references: [consumers.id],
+  }),
+}));
 
 export const consumerWalletsRelations = relations(consumerWallets, ({ one, many }) => ({
   consumer: one(consumers, {
