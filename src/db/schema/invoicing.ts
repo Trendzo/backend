@@ -11,12 +11,16 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import {
+  billingStatementStatus,
   earlyDisbursementStatus,
   gstReturnKind,
   gstReturnStatus,
   invoiceKind,
   invoiceResetCycle,
   invoiceStatus,
+  payoutAdjustmentDirection,
+  payoutAdjustmentKind,
+  payoutHoldStatus,
   payoutStatus,
   postPayoutRecoveryStatus,
   taxSplitKind,
@@ -70,6 +74,10 @@ export const invoices = pgTable(
     sgstPaise: integer('sgst_paise').notNull().default(0),
     igstPaise: integer('igst_paise').notNull().default(0),
     tcsPaise: integer('tcs_paise').notNull().default(0),
+    // Mirrors orders.tcs_rate_bp_snap so the invoice is reproducible after platform_config
+    // tcs_rate_bp is edited. Read from the order at invoice issuance, never live config.
+    // Default exists for migration backfill only.
+    tcsRateBpSnap: integer('tcs_rate_bp_snap').notNull().default(100),
     grandTotalPaise: integer('grand_total_paise').notNull(),
 
     pdfUrl: text('pdf_url'),
@@ -191,12 +199,21 @@ export const payouts = pgTable(
     refundsHeldPaise: bigint('refunds_held_paise', { mode: 'bigint' }).notNull().default(sql`0`),
     adjustmentsPaise: bigint('adjustments_paise', { mode: 'bigint' }).notNull().default(sql`0`),
     netPaise: bigint('net_paise', { mode: 'bigint' }).notNull(),
+    // §18 — sum of active payout_holds bound to this payout at creation time.
+    disputeHoldPaise: bigint('dispute_hold_paise', { mode: 'bigint' }).notNull().default(sql`0`),
     bankAccountId: text('bank_account_id')
       .notNull()
       .references(() => bankAccounts.id),
     status: payoutStatus('status').notNull().default('pending'),
     statementUrl: text('statement_url'),
     gatewayPayoutId: text('gateway_payout_id'),
+    // §18 — bank reconciliation metadata (set on mark-complete).
+    bankConfirmationRef: text('bank_confirmation_ref'),
+    bankConfirmedAt: timestamp('bank_confirmed_at', { withTimezone: true, mode: 'date' }),
+    // §18 — failure reason + retry chain.
+    failureReason: text('failure_reason'),
+    retryCount: integer('retry_count').notNull().default(0),
+    previousPayoutId: text('previous_payout_id'),
     initiatedAt: timestamp('initiated_at', { withTimezone: true, mode: 'date' }),
     completedAt: timestamp('completed_at', { withTimezone: true, mode: 'date' }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
@@ -347,7 +364,7 @@ export const creditNotesRelations = relations(creditNotes, ({ one }) => ({
   }),
 }));
 
-export const payoutsRelations = relations(payouts, ({ one }) => ({
+export const payoutsRelations = relations(payouts, ({ one, many }) => ({
   store: one(retailerStores, {
     fields: [payouts.storeId],
     references: [retailerStores.id],
@@ -356,4 +373,132 @@ export const payoutsRelations = relations(payouts, ({ one }) => ({
     fields: [payouts.bankAccountId],
     references: [bankAccounts.id],
   }),
+  holds: many(payoutHolds),
+  adjustments: many(payoutAdjustments),
+  transitions: many(payoutTransitions),
+}));
+
+/**
+ * §18 — Append-only audit row per payout state change. Mirrors orderTransitions.
+ */
+export const payoutTransitions = pgTable(
+  'payout_transitions',
+  {
+    id: text('id').primaryKey(),
+    payoutId: text('payout_id')
+      .notNull()
+      .references(() => payouts.id),
+    fromStatus: payoutStatus('from_status'),
+    toStatus: payoutStatus('to_status').notNull(),
+    actorType: text('actor_type').notNull(), // admin | system
+    actorId: text('actor_id').notNull(),
+    reason: text('reason'),
+    at: timestamp('at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => ({
+    payoutAtIdx: index('payout_transitions_payout_at_idx').on(t.payoutId, t.at),
+  }),
+);
+
+/**
+ * §18 — Hold tied to an open dispute. Auto-released when dispute resolves (helper exists; manual
+ * for MVP). When `payoutId` is set, the amount is bound to that cycle and rolled into payouts.disputeHoldPaise.
+ */
+export const payoutHolds = pgTable(
+  'payout_holds',
+  {
+    id: text('id').primaryKey(),
+    storeId: text('store_id')
+      .notNull()
+      .references(() => retailerStores.id),
+    disputeId: text('dispute_id').notNull(),
+    payoutId: text('payout_id').references(() => payouts.id),
+    amountPaise: bigint('amount_paise', { mode: 'bigint' }).notNull(),
+    reason: text('reason').notNull(),
+    status: payoutHoldStatus('status').notNull().default('active'),
+    createdByAdminId: text('created_by_admin_id'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    releasedAt: timestamp('released_at', { withTimezone: true, mode: 'date' }),
+    releasedReason: text('released_reason'),
+  },
+  (t) => ({
+    storeStatusIdx: index('payout_holds_store_status_idx').on(t.storeId, t.status),
+    disputeIdx: index('payout_holds_dispute_idx').on(t.disputeId),
+  }),
+);
+
+export const payoutHoldsRelations = relations(payoutHolds, ({ one }) => ({
+  store: one(retailerStores, { fields: [payoutHolds.storeId], references: [retailerStores.id] }),
+  payout: one(payouts, { fields: [payoutHolds.payoutId], references: [payouts.id] }),
+}));
+
+/**
+ * §18 — Free-form debit/credit adjustments applied by ops to a store's next or specific cycle.
+ * `payoutId` null = will be picked up by the next runCycle.
+ */
+export const payoutAdjustments = pgTable(
+  'payout_adjustments',
+  {
+    id: text('id').primaryKey(),
+    storeId: text('store_id')
+      .notNull()
+      .references(() => retailerStores.id),
+    payoutId: text('payout_id').references(() => payouts.id),
+    direction: payoutAdjustmentDirection('direction').notNull(),
+    kind: payoutAdjustmentKind('kind').notNull().default('manual'),
+    amountPaise: bigint('amount_paise', { mode: 'bigint' }).notNull(),
+    reason: text('reason').notNull(),
+    sourceIssueId: text('source_issue_id'),
+    createdByAdminId: text('created_by_admin_id'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => ({
+    storePayoutIdx: index('payout_adjustments_store_payout_idx').on(t.storeId, t.payoutId),
+    kindIdx: index('payout_adjustments_kind_idx').on(t.kind),
+  }),
+);
+
+export const payoutAdjustmentsRelations = relations(payoutAdjustments, ({ one }) => ({
+  store: one(retailerStores, { fields: [payoutAdjustments.storeId], references: [retailerStores.id] }),
+  payout: one(payouts, { fields: [payoutAdjustments.payoutId], references: [payouts.id] }),
+}));
+
+export const payoutTransitionsRelations = relations(payoutTransitions, ({ one }) => ({
+  payout: one(payouts, { fields: [payoutTransitions.payoutId], references: [payouts.id] }),
+}));
+
+/**
+ * §18 — Monthly billing statement per (store, period). One row per store per YYYY-MM, summarising
+ * commission + GST on commission + add-on fees + TCS + dispute liabilities + adjustments → net payout.
+ */
+export const billingStatements = pgTable(
+  'billing_statements',
+  {
+    id: text('id').primaryKey(),
+    storeId: text('store_id')
+      .notNull()
+      .references(() => retailerStores.id),
+    legalEntityId: text('legal_entity_id').notNull(),
+    period: text('period').notNull(), // YYYY-MM
+    commissionPaise: bigint('commission_paise', { mode: 'bigint' }).notNull().default(sql`0`),
+    commissionTaxPaise: bigint('commission_tax_paise', { mode: 'bigint' }).notNull().default(sql`0`),
+    addOnFeesPaise: bigint('add_on_fees_paise', { mode: 'bigint' }).notNull().default(sql`0`),
+    tcsPaise: bigint('tcs_paise', { mode: 'bigint' }).notNull().default(sql`0`),
+    disputeLiabilitiesPaise: bigint('dispute_liabilities_paise', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
+    adjustmentsPaise: bigint('adjustments_paise', { mode: 'bigint' }).notNull().default(sql`0`),
+    netPayoutPaise: bigint('net_payout_paise', { mode: 'bigint' }).notNull().default(sql`0`),
+    pdfUrl: text('pdf_url'),
+    status: billingStatementStatus('status').notNull().default('open'),
+    closedAt: timestamp('closed_at', { withTimezone: true, mode: 'date' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => ({
+    storePeriodUnique: uniqueIndex('billing_statements_store_period_unique').on(t.storeId, t.period),
+  }),
+);
+
+export const billingStatementsRelations = relations(billingStatements, ({ one }) => ({
+  store: one(retailerStores, { fields: [billingStatements.storeId], references: [retailerStores.id] }),
 }));

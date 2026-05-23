@@ -38,6 +38,8 @@ import { eligibleLines, ineligibilityReason } from './eligibility.js';
 import { resolveClubbing } from './clubbing.js';
 import { applyLoyaltyRedemption, loyaltyEarned } from './loyalty.js';
 import { gstSplit, tcsWithheld } from './tax.js';
+import { applyDiscountCap } from './cap.js';
+import { computeTaxBase } from './tax-base.js';
 import type {
   Cart,
   ClubbingRule,
@@ -149,25 +151,32 @@ export function compute(input: ComputeInput): PricingBreakdown {
     lineSubtotalPaise - retailerPromoDiscountPaise - platformPromoDiscountPaise,
   );
 
-  // 5. Cap coupon discount at postPromoSubtotal so stored breakdown amounts are economically
-  // accurate (§11 Discount Cap Rule; matters for §17 credit-note line amounts).
-  const cappedCouponDiscountPaise = Math.min(couponDiscountPaise, postPromoSubtotalPaise);
-
-  // Loyalty redemption — applied on top, NOT subject to clubbing (per spec line 778).
+  // 5. Loyalty redemption — applied on top, NOT subject to clubbing (per spec line 778).
+  //    Uses the *uncapped* coupon discount for headroom; the cap rule clamps both
+  //    coupon + loyalty after the redemption math runs.
   const loyalty = applyLoyaltyRedemption({
     pointsRequested: input.pointsToRedeem ?? 0,
     consumerBalancePoints: input.consumerLoyaltyBalance ?? 0,
-    eligibleSubtotalPaise: Math.max(0, postPromoSubtotalPaise - cappedCouponDiscountPaise),
+    eligibleSubtotalPaise: Math.max(0, postPromoSubtotalPaise - couponDiscountPaise),
     config: config.loyalty,
   });
-  const loyaltyDiscountPaise = loyalty.discountPaise;
   const loyaltyRedeemedPoints = loyalty.pointsRedeemed;
 
-  // 6. Tax base — floored at 0 (spec).
-  const taxBasePaise = Math.max(
-    0,
-    postPromoSubtotalPaise - cappedCouponDiscountPaise - loyaltyDiscountPaise,
-  );
+  // 6. Discount cap rule (§11). Coupon + loyalty cannot exceed post-promo subtotal.
+  const capped = applyDiscountCap({
+    postPromoSubtotalPaise,
+    couponPaise: couponDiscountPaise,
+    loyaltyPaise: loyalty.discountPaise,
+  });
+  const cappedCouponDiscountPaise = capped.cappedCouponPaise;
+  const loyaltyDiscountPaise = capped.cappedLoyaltyPaise;
+
+  // 7. Tax base — floored at 0 via shared helper (§11).
+  const taxBasePaise = computeTaxBase({
+    postPromoSubtotalPaise,
+    couponPaise: cappedCouponDiscountPaise,
+    loyaltyPaise: loyaltyDiscountPaise,
+  });
 
   const { cgstPaise, sgstPaise, igstPaise } = gstSplit(
     taxBasePaise,

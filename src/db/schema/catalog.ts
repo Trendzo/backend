@@ -22,7 +22,10 @@ export const attributeTemplates = pgTable('attribute_templates', {
   name: text('name').notNull(),
   axes: jsonb('axes')
     .$type<
-      Record<string, { type: 'enum' | 'free_text'; required: boolean; values?: string[] }>
+      Record<
+        string,
+        { type: 'enum' | 'free_text' | 'numeric' | 'color'; required: boolean; values?: string[] }
+      >
     >()
     .notNull(),
   isPlatformDefault: boolean('is_platform_default').notNull().default(false),
@@ -33,11 +36,28 @@ export const aiCatalogSubmissions = pgTable('ai_catalog_submissions', {
   storeId: text('store_id')
     .notNull()
     .references(() => retailerStores.id),
-  listingId: text('listing_id').references(() => productListings.id), // nullable: review-first then attach
+  // Nullable at the column level for back-compat with rows seeded before
+  // Module 7 went live; new submissions require it (enforced at the route).
+  listingId: text('listing_id').references(() => productListings.id),
+  // Optional variant the retailer wants the output attached to. When set, the
+  // accepted output URL is appended to `variants.image_urls`; otherwise it goes
+  // to `product_listings.gallery_urls`.
+  targetVariantId: text('target_variant_id'),
   mode: aiCatalogMode('mode').notNull(),
+  // Retailer's freeform instruction for the AI provider (8-800 chars at route).
+  prompt: text('prompt').notNull().default(''),
+  // Subset of rawPhotos actually shipped to Gemini as multimodal context.
+  referenceImageUrls: jsonb('reference_image_urls')
+    .$type<string[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  // Populated on regenerate children with the retailer's revision instructions.
+  revisionNotes: text('revision_notes'),
   rawPhotos: jsonb('raw_photos').$type<string[]>().notNull(),
   outputUrls: jsonb('output_urls').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   status: aiCatalogStatus('status').notNull().default('submitted'),
+  // Populated when `status = 'failed'` so retailer sees the provider error.
+  errorMessage: text('error_message'),
   costPaise: integer('cost_paise'),
   parentSubmissionId: text('parent_submission_id'),
   thirdPartyRequestId: text('third_party_request_id'),

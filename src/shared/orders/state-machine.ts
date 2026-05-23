@@ -36,21 +36,24 @@ const RULES: readonly TransitionRule[] = [
   { from: 'confirmed', to: 'routing', actors: ['system'] },
   { from: 'confirmed', to: 'cancelled', actors: ['consumer', 'admin'] },
 
-  { from: 'routing', to: 'accepted', actors: ['retailer'] },
+  { from: 'routing', to: 'accepted', actors: ['retailer', 'admin'] },
   // Auto-reroute is modelled as a routing → routing self-loop in the audit log; we record
   // it as a transition with the same status (handled by transitionOrder caller).
   { from: 'routing', to: 'cancelled', actors: ['admin', 'system'] },
 
   // ── Pack + handover ──
-  { from: 'accepted', to: 'packed', actors: ['retailer'] },
+  { from: 'accepted', to: 'packed', actors: ['retailer', 'admin'] },
   { from: 'accepted', to: 'cancelled', actors: ['consumer', 'admin'] },
 
-  { from: 'packed', to: 'picked_up', actors: ['retailer', 'delivery_agent'] },
+  { from: 'packed', to: 'picked_up', actors: ['retailer', 'delivery_agent', 'admin'] },
+  // Pickup orders: consumer collects from the store after verifying pickup_code.
+  // Route handler enforces deliveryMethod === 'pickup' before allowing this jump.
+  { from: 'packed', to: 'delivered', actors: ['retailer', 'admin'] },
   { from: 'packed', to: 'cancelled', actors: ['admin'] },
 
   // ── Out for delivery ──
-  { from: 'picked_up', to: 'out_for_delivery', actors: ['retailer', 'delivery_agent', 'system'] },
-  { from: 'picked_up', to: 'returning_to_store', actors: ['retailer', 'delivery_agent'] },
+  { from: 'picked_up', to: 'out_for_delivery', actors: ['retailer', 'delivery_agent', 'system', 'admin'] },
+  { from: 'picked_up', to: 'returning_to_store', actors: ['retailer', 'delivery_agent', 'admin'] },
   { from: 'picked_up', to: 'cancelled', actors: ['admin'] },
 
   { from: 'out_for_delivery', to: 'delivered', actors: ['retailer', 'delivery_agent', 'admin'] },
@@ -73,14 +76,18 @@ const RULES: readonly TransitionRule[] = [
   { from: 'undelivered', to: 'cancelled', actors: ['admin'] },
 
   // ── Returns to store (post-failed-delivery / post-door-reject) ──
-  { from: 'returning_to_store', to: 'returned_to_store', actors: ['retailer', 'delivery_agent'] },
+  { from: 'returning_to_store', to: 'returned_to_store', actors: ['retailer', 'delivery_agent', 'admin'] },
   { from: 'returning_to_store', to: 'cancelled', actors: ['admin'] },
 
-  { from: 'returned_to_store', to: 'delivered', actors: ['retailer'] },
+  { from: 'returned_to_store', to: 'delivered', actors: ['retailer', 'admin'] },
   { from: 'returned_to_store', to: 'cancelled', actors: ['retailer', 'admin', 'system'] },
 
   // ── Closure ──
   { from: 'delivered', to: 'closed', actors: ['system', 'admin'] },
+  // Ops-admin can cancel a delivered order to force a refund (§8 story 10). The
+  // delivered → cancelled transition reverses the order accounting; pickups /
+  // return-to-store flow is handled separately by the refund disbursement.
+  { from: 'delivered', to: 'cancelled', actors: ['admin'] },
 ];
 
 /** All transitions out of a given status, for UI hinting + validation. */

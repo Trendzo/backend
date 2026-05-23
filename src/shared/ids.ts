@@ -21,6 +21,9 @@ export const IdPrefix = {
   Collection: 'col',
   Promotion: 'prm',
   VoucherCode: 'vch',
+  TargetedDrop: 'tdr',
+  PromotionGrant: 'pgr',
+  ConsumerFlag: 'cfg',
   WalletTx: 'wtx',
   LoyaltyTx: 'lty',
   ClubbingRule: 'clb',
@@ -38,10 +41,38 @@ export const IdPrefix = {
   Refund: 'rfd',
   RefundLine: 'rfl',
   RefundDisbursement: 'rdb',
+  // §15 Payment Capture
+  PaymentSettlement: 'pst',
+  PaymentSettlementEntry: 'pse',
+  PaymentReconDiscrepancy: 'prd',
   // Disputes
   Dispute: 'dsp',
+  // §19 Customer Issues
+  Issue: 'iss',
+  IssueMessage: 'ism',
+  IssueTransition: 'ist',
   GiftCard: 'gc',
   ApplicationDoc: 'adoc',
   // Inventory
   InventoryAdjustment: 'iadj',
+  // KYC
+  KycReverification: 'kyc',
+  KycDocument: 'kycd',
+  // §20 Consumer Management
+  ConsumerBan: 'bban',
+  CommunityPost: 'cpst',
+  ProductReview: 'rev',
+  ModerationReport: 'mrp',
+  ModerationAction: 'mac',
+  AccountDeletionRequest: 'adr',
+  WalletPayout: 'wpo',
+  // §21 Analytics events
+  ListingView: 'lvw',
+  CartEvent: 'cev',
+  // §22 Notifications extras
+  PushSubscription: 'psub',
+  PushAttempt: 'patt',
+  Banner: 'bnr',
+  BannerDismissal: 'bdm',
+  EmailOutbox: 'eml',
 } as const;

@@ -198,6 +198,29 @@ export async function createRefundForReturns(
       .where(eq(refunds.id, refundId));
   });
 
+  // §14 L3 — loyalty credit-back (restore redeemed points) + earn claw-back (proportional).
+  // Runs outside the refund tx because it has its own balance bookkeeping. Bypasses
+  // the rewards-ban check — restoration is not a fresh reward.
+  const pointsRedeemedClawback = lineRows.reduce((acc, ln) => acc + ln.pointsClawbackPaise, 0);
+  const { creditBackOnRefund } = await import('@/shared/loyalty/grant.js');
+  await creditBackOnRefund({
+    orderId: order.id,
+    refundId,
+    pointsRedeemedClawbackPaise: pointsRedeemedClawback,
+    refundedLinesTotalPaise: total,
+  });
+
+  // §17 — issue credit note against parent tax invoice. Best-effort: invoice may not yet exist
+  // (e.g. refund before delivery). Idempotent on refundId so manual retry remains safe.
+  try {
+    const { issueCreditNoteForRefund } = await import('@/shared/invoicing/issuance.js');
+    await issueCreditNoteForRefund({ refundId, reason: input.reason });
+  } catch (err) {
+    console.error(
+      `[invoicing] auto-issue credit note failed for refund ${refundId}: ${(err as Error).message}`,
+    );
+  }
+
   return { refundId, totalRefundPaise: total, disbursementIds };
 }
 

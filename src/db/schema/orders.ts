@@ -1,5 +1,6 @@
 import { desc, relations, sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   doublePrecision,
   foreignKey,
@@ -46,12 +47,17 @@ export const addresses = pgTable(
     stateCode: text('state_code').notNull(), // for GST place-of-supply on the order
     lat: doublePrecision('lat').notNull(),
     lng: doublePrecision('lng').notNull(),
+    isDefault: boolean('is_default').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
   },
   (t) => ({
     consumerIdx: index('addresses_consumer_idx').on(t.consumerId),
+    // At most one default address per consumer.
+    consumerDefaultIdx: uniqueIndex('addresses_consumer_default_idx')
+      .on(t.consumerId)
+      .where(sql`${t.isDefault} = true`),
   }),
 );
 
@@ -67,6 +73,10 @@ export const orderGroups = pgTable(
       .notNull()
       .references(() => consumers.id),
     status: orderGroupStatus('status').notNull().default('in_flight'),
+    // Sum of child orders' grandTotalPaise. Written at placement; future multi-store
+    // checkouts (one group → N orders across stores) aggregate here so consumers see
+    // a single combined total without recomputing on read.
+    combinedTotalPaise: integer('combined_total_paise').notNull().default(0),
     placedAt: timestamp('placed_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
@@ -142,6 +152,33 @@ export const orders = pgTable(
 
     // Platform fee captured at placement (basis points snap)
     platformFeeBpSnap: integer('platform_fee_bp_snap').notNull(),
+    // TCS rate captured at placement so invoices generated later remain reproducible if
+    // the platform_config tcs_rate_bp value is edited. Default exists only so the ALTER
+    // backfills cleanly — place-order always supplies the live rate.
+    tcsRateBpSnap: integer('tcs_rate_bp_snap').notNull().default(100),
+    // §12 F3b — admin per-order platform-fee override. Recorded + audited here so the
+    // decision is captured even before settlement math reads it. Zero = no override
+    // (default fall-through to platformFeeBpSnap-derived amount).
+    platformFeeOverridePaise: integer('platform_fee_override_paise').notNull().default(0),
+    platformFeeOverrideReason: text('platform_fee_override_reason'),
+
+    // §14 L3 — loyalty points credited on delivery. Set once when the order transitions to
+    // 'delivered' (idempotent — re-transition is a no-op). Refund credit-back math reads this
+    // to claw back the earned portion for the refunded items.
+    loyaltyEarnedPoints: integer('loyalty_earned_points').notNull().default(0),
+
+    // Consumer-facing handover code for pickup orders only. Generated at placement,
+    // verified at the store front during the consumer pickup handover.
+    pickupCode: text('pickup_code'),
+    // §9 — pickup orders carry a snap of the consumer-selected slot so config edits
+    // on `store_pickup_slots` don't drift the order. NULL on non-pickup orders.
+    pickupSlotId: text('pickup_slot_id'),
+    pickupSlotStart: timestamp('pickup_slot_start', { withTimezone: true, mode: 'date' }),
+    pickupSlotEnd: timestamp('pickup_slot_end', { withTimezone: true, mode: 'date' }),
+    // §9 — try-and-buy try-on window. Set by openDoor(), bumped by extendDoor().
+    // extended_at acts as the one-shot guard (non-null = extension consumed).
+    doorWindowExpiresAt: timestamp('door_window_expires_at', { withTimezone: true, mode: 'date' }),
+    doorWindowExtendedAt: timestamp('door_window_extended_at', { withTimezone: true, mode: 'date' }),
 
     placedAt: timestamp('placed_at', { withTimezone: true, mode: 'date' })
       .notNull()
@@ -150,6 +187,20 @@ export const orders = pgTable(
     deliveredAt: timestamp('delivered_at', { withTimezone: true, mode: 'date' }),
     closedAt: timestamp('closed_at', { withTimezone: true, mode: 'date' }),
     piiScrubbedAt: timestamp('pii_scrubbed_at', { withTimezone: true, mode: 'date' }),
+
+    // Routing dispatcher fields (§8). Set when dispatchOrder() runs at placement;
+    // rerouteOrder() updates routingAttempts + appends to routingHistory.
+    acceptanceDeadlineAt: timestamp('acceptance_deadline_at', { withTimezone: true, mode: 'date' }),
+    routingAttempts: integer('routing_attempts').notNull().default(0),
+    routingHistory: jsonb('routing_history')
+      .$type<Array<{ candidateStoreId: string; decidedAt: string; decision: 'accepted' | 'rejected' | 'timeout' | 'pending'; reason?: string }>>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    // Promo ids voided after a partial-return recompute. Read by snapshot diff.
+    promoVoidedAfterReturn: jsonb('promo_voided_after_return')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
 
     idempotencyKey: text('idempotency_key').notNull(),
   },
@@ -183,6 +234,21 @@ export const orders = pgTable(
             AND ${t.sgstPaise} = 0
             AND ${t.igstPaise} = ${t.taxPaise})`,
     ),
+    // pickup_code is only meaningful for pickup orders.
+    pickupCodeMethodGuard: check(
+      'orders_pickup_code_method_guard',
+      sql`${t.pickupCode} IS NULL OR ${t.deliveryMethod} = 'pickup'`,
+    ),
+    // pickup_slot_* is only meaningful for pickup orders.
+    pickupSlotMethodGuard: check(
+      'orders_pickup_slot_method_guard',
+      sql`${t.pickupSlotStart} IS NULL OR ${t.deliveryMethod} = 'pickup'`,
+    ),
+    // Collision-free pickup code while the order is still active. Once delivered/cancelled/closed
+    // the code is free to reuse for a fresh pickup.
+    pickupCodeActiveIdx: uniqueIndex('orders_pickup_code_active_idx')
+      .on(t.storeId, t.pickupCode)
+      .where(sql`${t.pickupCode} IS NOT NULL AND ${t.status} NOT IN ('cancelled','delivered','closed')`),
   }),
 );
 
@@ -283,6 +349,14 @@ export const payments = pgTable(
       .notNull()
       .defaultNow(),
     settledAt: timestamp('settled_at', { withTimezone: true, mode: 'date' }),
+    // §15 PC2 — capture-failure outreach + inventory release bookkeeping. These are
+    // pure admin-action ledgers; set on the failing payment once ops triages it.
+    failureCode: text('failure_code'),
+    failureMessage: text('failure_message'),
+    consumerNotifiedAt: timestamp('consumer_notified_at', { withTimezone: true, mode: 'date' }),
+    consumerNotifiedByAdminId: text('consumer_notified_by_admin_id'),
+    inventoryReleasedAt: timestamp('inventory_released_at', { withTimezone: true, mode: 'date' }),
+    inventoryReleasedByAdminId: text('inventory_released_by_admin_id'),
   },
   (t) => ({
     orderStatusIdx: index('payments_order_status_idx').on(t.orderId, t.status),

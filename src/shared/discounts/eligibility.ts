@@ -9,21 +9,23 @@ export function eligibleLines(promo: EnginePromotion, cart: Cart) {
   const s = promo.scope ?? {};
   return cart.lines.filter((line) => {
     // Inclusion lists — if any are set, line must match at least one inclusion check.
+    // Note: storeIds is enforced in place-order (the cart represents one store), not here.
     const hasIncludes = !!(
       s.listingIds?.length ||
+      s.variantIds?.length ||
       s.categoryIds?.length ||
-      s.brandIds?.length ||
-      s.storeIds?.length
+      s.brandIds?.length
     );
     if (hasIncludes) {
       const matchListing = s.listingIds?.includes(line.listingId);
+      const matchVariant = s.variantIds?.includes(line.variantId);
       const matchCategory = line.categoryId && s.categoryIds?.includes(line.categoryId);
       const matchBrand = line.brandId && s.brandIds?.includes(line.brandId);
-      // storeIds isn't on the line; engine treats it as a higher-level filter (caller's job).
-      if (!matchListing && !matchCategory && !matchBrand) return false;
+      if (!matchListing && !matchVariant && !matchCategory && !matchBrand) return false;
     }
     // Exclusion lists.
     if (s.excludeListingIds?.includes(line.listingId)) return false;
+    if (s.excludeVariantIds?.includes(line.variantId)) return false;
     if (line.categoryId && s.excludeCategoryIds?.includes(line.categoryId)) return false;
     if (line.brandId && s.excludeBrandIds?.includes(line.brandId)) return false;
     return true;

@@ -6,57 +6,94 @@ import {
   validatorCompiler,
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
+import { eq } from 'drizzle-orm';
 import type { LoggerOptions } from 'pino';
 import { env } from '@/config/env.js';
+import { db } from '@/db/client.js';
+import { retailerAccounts } from '@/db/schema/index.js';
 import { AppError } from '@/shared/errors/app-error.js';
+import { verifyAccessToken } from '@/shared/auth/jwt.js';
 import { fail, ok } from '@/shared/http/envelope.js';
-import authRoutes from '@/modules/auth/routes.js';
-import retailerRoutes from '@/modules/retailer/routes.js';
-import adminRoutes from '@/modules/admin/routes.js';
-import catalogRoutes from '@/modules/catalog/routes.js';
-import uploadRoutes from '@/modules/uploads/routes.js';
-import adminPromotionRoutes from '@/modules/admin/promotions/routes.js';
-import adminVoucherRoutes from '@/modules/admin/vouchers/routes.js';
-import adminClubbingRoutes from '@/modules/admin/clubbing/routes.js';
-import adminLoyaltyRoutes from '@/modules/admin/loyalty/routes.js';
-import adminSimulateRoutes from '@/modules/admin/simulate/routes.js';
-import retailerPromotionRoutes from '@/modules/retailer/promotions/routes.js';
-import adminOrderRoutes from '@/modules/admin/orders/routes.js';
-import adminTestConsumerRoutes from '@/modules/admin/consumers/test-consumers.js';
-import adminConsumerManagementRoutes from '@/modules/admin/consumers/management.js';
-import adminDisputeRoutes from '@/modules/admin/disputes/routes.js';
-import retailerDisputeRoutes from '@/modules/retailer/disputes/routes.js';
-import retailerOrderRoutes from '@/modules/retailer/orders/routes.js';
-import retailerInventoryRoutes from '@/modules/retailer/inventory/routes.js';
-import adminReturnsRoutes from '@/modules/admin/returns/routes.js';
-import retailerReturnsRoutes from '@/modules/retailer/returns/routes.js';
-import authPhase1Routes from '@/modules/auth/phase1/routes.js';
-import adminPhase1Routes from '@/modules/admin/phase1-identity/routes.js';
-import retailerPhase1Routes from '@/modules/retailer/phase1-identity/routes.js';
-import adminOnboardingRoutes from '@/modules/admin/phase2-onboarding/routes.js';
-import retailerOnboardingRoutes from '@/modules/retailer/phase2-onboarding/routes.js';
-import adminComplianceRoutes from '@/modules/admin/phase3-compliance/routes.js';
-import retailerComplianceRoutes from '@/modules/retailer/phase3-compliance/routes.js';
-import retailerStoreOpsRoutes from '@/modules/retailer/phase4-store-ops/routes.js';
-import adminStoreOpsRoutes from '@/modules/admin/phase4-store-ops/routes.js';
-import adminModerationRoutes from '@/modules/admin/phase5-moderation/routes.js';
-import adminInventoryRoutes from '@/modules/admin/phase6-inventory/routes.js';
-import retailerAiCatalogRoutes from '@/modules/retailer/phase7-ai-catalog/routes.js';
-import retailerCatalogRoutes from '@/modules/retailer/phase5-catalog/routes.js';
-import retailerInvoicingRoutes from '@/modules/retailer/phase17-invoicing/routes.js';
-import retailerSettlementRoutes from '@/modules/retailer/phase18-settlement/routes.js';
-import adminSettlementRoutes from '@/modules/admin/phase18-settlement/routes.js';
-import adminFeesRoutes from '@/modules/admin/phase12-fees/routes.js';
-import retailerFeesRoutes from '@/modules/retailer/phase12-fees/routes.js';
-import retailerEarlyDisbursementRoutes from '@/modules/retailer/phase18-early-disbursement/routes.js';
-import adminEarlyDisbursementRoutes from '@/modules/admin/phase18-early-disbursement/routes.js';
-import adminInvoicingRoutes from '@/modules/admin/phase17-invoicing/routes.js';
-import adminWalletRoutes from '@/modules/admin/phase14-wallet/routes.js';
-import adminPostPayoutRecoveryRoutes from '@/modules/admin/phase16-recovery/routes.js';
-import retailerReportsRoutes from '@/modules/retailer/phase21-reports/routes.js';
-import adminReportsRoutes from '@/modules/admin/phase21-reports/routes.js';
-import adminCommunityRoutes from '@/modules/admin/phase20-community/routes.js';
-import adminPaymentsRoutes from '@/modules/admin/phase15-payments/routes.js';
+import authRoutes from '@/modules/auth/auth.routes.js';
+import retailerProfileRoutes from '@/modules/retailer/profile/profile.routes.js';
+import retailerListingsRoutes from '@/modules/retailer/listings/listings.routes.js';
+import retailerBrandsRoutes from '@/modules/retailer/brands/brands.routes.js';
+import adminRetailersRoutes from '@/modules/admin/retailers/retailers.routes.js';
+import adminStoresRoutes from '@/modules/admin/stores/stores.routes.js';
+import adminCollectionsRoutes from '@/modules/admin/collections/collections.routes.js';
+import adminListingsRoutes from '@/modules/admin/listings/listings.routes.js';
+import catalogRoutes from '@/modules/catalog/catalog.routes.js';
+import uploadRoutes from '@/modules/uploads/uploads.routes.js';
+import adminPromotionRoutes from '@/modules/admin/promotions/promotions.routes.js';
+import adminVoucherRoutes from '@/modules/admin/vouchers/vouchers.routes.js';
+import adminClubbingRoutes from '@/modules/admin/clubbing/clubbing.routes.js';
+import adminLoyaltyRoutes from '@/modules/admin/loyalty/loyalty.routes.js';
+import adminSimulateRoutes from '@/modules/admin/simulate/simulate.routes.js';
+import retailerPromotionRoutes from '@/modules/retailer/promotions/promotions.routes.js';
+import adminOrderRoutes from '@/modules/admin/orders/orders.routes.js';
+import adminConsumersRoutes from '@/modules/admin/consumers/consumers.routes.js';
+import adminBrandsRoutes from '@/modules/admin/brands/brands.routes.js';
+import adminCategoriesRoutes from '@/modules/admin/categories/categories.routes.js';
+import adminPlatformRoutes from '@/modules/admin/platform/platform.routes.js';
+import adminDisputeRoutes from '@/modules/admin/disputes/disputes.routes.js';
+import retailerDisputeRoutes from '@/modules/retailer/disputes/disputes.routes.js';
+import retailerOrderRoutes from '@/modules/retailer/orders/orders.routes.js';
+import retailerInventoryRoutes from '@/modules/retailer/inventory/inventory.routes.js';
+import adminReturnsRoutes from '@/modules/admin/returns/returns.routes.js';
+import retailerReturnsRoutes from '@/modules/retailer/returns/returns.routes.js';
+import authPhase1Routes from '@/modules/auth/access/access.routes.js';
+import adminPhase1Routes from '@/modules/admin/access/access.routes.js';
+import retailerPhase1Routes from '@/modules/retailer/access/access.routes.js';
+import adminOnboardingRoutes from '@/modules/admin/onboarding/onboarding.routes.js';
+import retailerOnboardingRoutes from '@/modules/retailer/onboarding/onboarding.routes.js';
+import adminComplianceRoutes from '@/modules/admin/compliance/compliance.routes.js';
+import retailerComplianceRoutes from '@/modules/retailer/compliance/compliance.routes.js';
+import retailerStoreOpsRoutes from '@/modules/retailer/store-ops/store-ops.routes.js';
+import adminStoreOpsRoutes from '@/modules/admin/store-ops/store-ops.routes.js';
+import adminModerationRoutes from '@/modules/admin/moderation/moderation.routes.js';
+import adminInventoryRoutes from '@/modules/admin/inventory/inventory.routes.js';
+import retailerAiCatalogRoutes from '@/modules/retailer/ai-catalog/ai-catalog.routes.js';
+import retailerCatalogRoutes from '@/modules/retailer/catalog/catalog.routes.js';
+import retailerInvoicingRoutes from '@/modules/retailer/invoicing/invoicing.routes.js';
+import retailerSettlementRoutes from '@/modules/retailer/settlement/settlement.routes.js';
+import adminSettlementRoutes from '@/modules/admin/settlement/settlement.routes.js';
+import adminFeesRoutes from '@/modules/admin/fees/fees.routes.js';
+import retailerFeesRoutes from '@/modules/retailer/fees/fees.routes.js';
+import retailerEarlyDisbursementRoutes from '@/modules/retailer/early-disbursement/early-disbursement.routes.js';
+import adminEarlyDisbursementRoutes from '@/modules/admin/early-disbursement/early-disbursement.routes.js';
+import adminInvoicingRoutes from '@/modules/admin/invoicing/invoicing.routes.js';
+import adminWalletRoutes from '@/modules/admin/wallet/wallet.routes.js';
+import adminPostPayoutRecoveryRoutes from '@/modules/admin/recovery/recovery.routes.js';
+import adminPayoutHoldsRoutes from '@/modules/admin/payout-holds/payout-holds.routes.js';
+import adminPayoutAdjustmentsRoutes from '@/modules/admin/payout-adjustments/payout-adjustments.routes.js';
+import retailerReportsRoutes from '@/modules/retailer/reports/reports.routes.js';
+import adminReportsRoutes from '@/modules/admin/reports/reports.routes.js';
+import adminStoreReportsRoutes from '@/modules/admin/store-reports/store-reports.routes.js';
+import adminCommunityRoutes from '@/modules/admin/community/community.routes.js';
+import adminPaymentsRoutes from '@/modules/admin/payments/payments.routes.js';
+import adminRetailerMgmtRoutes from '@/modules/admin/retailer-mgmt/retailer-mgmt.routes.js';
+import adminStoreMgmtRoutes from '@/modules/admin/store-mgmt/store-mgmt.routes.js';
+import adminStaffMgmtRoutes from '@/modules/admin/staff-mgmt/staff-mgmt.routes.js';
+import adminStoreCatalogRoutes from '@/modules/admin/store-catalog/store-catalog.routes.js';
+import adminStoreListingsRoutes from '@/modules/admin/store-listings/store-listings.routes.js';
+import adminStoreVariantsRoutes from '@/modules/admin/store-variants/store-variants.routes.js';
+import adminStoreInventoryRoutes from '@/modules/admin/store-inventory/store-inventory.routes.js';
+import adminStoreOrdersRoutes from '@/modules/admin/store-orders/store-orders.routes.js';
+import adminStoreReturnsRoutes from '@/modules/admin/store-returns/store-returns.routes.js';
+import adminStorePromotionsRoutes from '@/modules/admin/store-promotions/store-promotions.routes.js';
+import adminOrderGroupRoutes from '@/modules/admin/order-groups/order-groups.routes.js';
+import consumerAddressRoutes from '@/modules/consumer/addresses/addresses.routes.js';
+import adminIssuesRoutes from '@/modules/admin/issues/issues.routes.js';
+import retailerIssuesRoutes from '@/modules/retailer/issues/issues.routes.js';
+import consumerIssuesRoutes from '@/modules/consumer/issues/issues.routes.js';
+import consumerCommunityRoutes from '@/modules/consumer/community/community.routes.js';
+import consumerEventsRoutes from '@/modules/consumer/events/events.routes.js';
+import retailerPushRoutes from '@/modules/retailer/push/push.routes.js';
+import adminPushRoutes from '@/modules/admin/push/push.routes.js';
+import consumerPushRoutes from '@/modules/consumer/push/push.routes.js';
+import adminBannersRoutes from '@/modules/admin/banners/banners.routes.js';
+import retailerBannersRoutes from '@/modules/retailer/banners/banners.routes.js';
+import adminDigestRoutes from '@/modules/admin/digest/digest.routes.js';
 
 /**
  * Build a Fastify app with strict TypeScript routing via the Zod type provider.
@@ -138,19 +175,51 @@ export function buildApp() {
   void app.register(
     async (api) => {
       api.get('/ping', () => ok({ pong: true }));
+
+      // Block terminated retailer accounts from all /retailer/* routes.
+      // /retailer/me is exempt — the dashboard banner polls it to display the termination state.
+      api.addHook('preHandler', async (req) => {
+        const path = req.url.split('?')[0] ?? req.url;
+        if (!path.includes('/retailer')) return;
+        if (path.endsWith('/retailer/me')) return;
+        const authHeader = req.headers.authorization;
+        if (!authHeader?.startsWith('Bearer ')) return;
+        let sub: string;
+        try {
+          const payload = verifyAccessToken(authHeader.slice(7));
+          if (payload.kind !== 'retailer') return;
+          sub = payload.sub;
+        } catch {
+          return; // invalid/expired token — downstream requireAuth will reject it
+        }
+        const row = await db.query.retailerAccounts.findFirst({
+          where: eq(retailerAccounts.id, sub),
+          columns: { status: true, permanentSuspend: true },
+        });
+        if (row && (row.status === 'terminated' || row.permanentSuspend)) {
+          throw AppError.forbidden('This account has been terminated');
+        }
+      });
       await api.register(authRoutes, { prefix: '/auth' });
       await api.register(catalogRoutes, { prefix: '/catalog' });
-      await api.register(retailerRoutes, { prefix: '/retailer' });
+      await api.register(retailerProfileRoutes, { prefix: '/retailer' });
+      await api.register(retailerListingsRoutes, { prefix: '/retailer' });
+      await api.register(retailerBrandsRoutes, { prefix: '/retailer/brands' });
       await api.register(retailerPromotionRoutes, { prefix: '/retailer/promotions' });
-      await api.register(adminRoutes, { prefix: '/admin' });
+      await api.register(adminRetailersRoutes, { prefix: '/admin/retailers' });
+      await api.register(adminStoresRoutes, { prefix: '/admin/stores' });
+      await api.register(adminCollectionsRoutes, { prefix: '/admin/collections' });
+      await api.register(adminListingsRoutes, { prefix: '/admin/listings' });
       await api.register(adminPromotionRoutes, { prefix: '/admin/promotions' });
       await api.register(adminVoucherRoutes, { prefix: '/admin/promotions' });
       await api.register(adminClubbingRoutes, { prefix: '/admin/clubbing-matrix' });
       await api.register(adminLoyaltyRoutes, { prefix: '/admin/loyalty' });
       await api.register(adminSimulateRoutes, { prefix: '/admin' });
       await api.register(adminOrderRoutes, { prefix: '/admin' });
-      await api.register(adminTestConsumerRoutes, { prefix: '/admin/consumers' });
-      await api.register(adminConsumerManagementRoutes, { prefix: '/admin/consumers' });
+      await api.register(adminConsumersRoutes, { prefix: '/admin/consumers' });
+      await api.register(adminBrandsRoutes, { prefix: '/admin/brands' });
+      await api.register(adminCategoriesRoutes, { prefix: '/admin/categories' });
+      await api.register(adminPlatformRoutes, { prefix: '/admin/platform' });
       await api.register(adminDisputeRoutes, { prefix: '/admin' });
       await api.register(retailerDisputeRoutes, { prefix: '/retailer' });
       await api.register(retailerOrderRoutes, { prefix: '/retailer/orders' });
@@ -194,15 +263,50 @@ export function buildApp() {
       await api.register(adminWalletRoutes, { prefix: '/admin' });
       // §16 Post-Payout Recovery
       await api.register(adminPostPayoutRecoveryRoutes, { prefix: '/admin' });
+      await api.register(adminPayoutHoldsRoutes, { prefix: '/admin' });
+      await api.register(adminPayoutAdjustmentsRoutes, { prefix: '/admin' });
       // §7 AI Catalog
       await api.register(retailerAiCatalogRoutes, { prefix: '/retailer' });
       // §21 Reports
       await api.register(retailerReportsRoutes, { prefix: '/retailer' });
       await api.register(adminReportsRoutes, { prefix: '/admin' });
+      await api.register(adminStoreReportsRoutes, { prefix: '/admin/stores' });
       // §20 Community moderation
       await api.register(adminCommunityRoutes, { prefix: '/admin' });
       // §15 Payment failures
       await api.register(adminPaymentsRoutes, { prefix: '/admin' });
+      // Admin store management (direct retailer/store/staff/catalog CRUD)
+      await api.register(adminRetailerMgmtRoutes, { prefix: '/admin/retailers' });
+      await api.register(adminStoreMgmtRoutes, { prefix: '/admin/stores' });
+      await api.register(adminStaffMgmtRoutes, { prefix: '/admin/retailers' });
+      await api.register(adminStoreCatalogRoutes, { prefix: '/admin/stores' });
+      await api.register(adminStoreListingsRoutes, { prefix: '/admin/stores' });
+      await api.register(adminStoreVariantsRoutes, { prefix: '/admin/stores' });
+      await api.register(adminStoreInventoryRoutes, { prefix: '/admin/stores' });
+      await api.register(adminStoreOrdersRoutes, { prefix: '/admin/stores' });
+      await api.register(adminStoreReturnsRoutes, { prefix: '/admin/stores' });
+      await api.register(adminStorePromotionsRoutes, { prefix: '/admin/stores' });
+      // Admin order groups
+      await api.register(adminOrderGroupRoutes, { prefix: '/admin' });
+      // Consumer address book
+      await api.register(consumerAddressRoutes, { prefix: '/consumer/addresses' });
+      // §19 Customer Issues (unified tickets/queries/disputes)
+      await api.register(adminIssuesRoutes, { prefix: '/admin' });
+      await api.register(retailerIssuesRoutes, { prefix: '/retailer' });
+      await api.register(consumerIssuesRoutes, { prefix: '/consumer/issues' });
+      // §20 Consumer Community (posts, reviews, reports)
+      await api.register(consumerCommunityRoutes, { prefix: '/consumer/community' });
+      // §21 Analytics event ingest
+      await api.register(consumerEventsRoutes, { prefix: '/consumer/events' });
+      // §22 Push subscriptions
+      await api.register(retailerPushRoutes, { prefix: '/retailer/push-subscriptions' });
+      await api.register(adminPushRoutes, { prefix: '/admin/push-subscriptions' });
+      await api.register(consumerPushRoutes, { prefix: '/consumer/push-subscriptions' });
+      // §22 Banners
+      await api.register(adminBannersRoutes, { prefix: '/admin/banners' });
+      await api.register(retailerBannersRoutes, { prefix: '/retailer/banners' });
+      // §22 Daily digest
+      await api.register(adminDigestRoutes, { prefix: '/admin/digest' });
     },
     { prefix: '/api/v1' },
   );

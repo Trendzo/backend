@@ -1,0 +1,3 @@
+ALTER TABLE "voucher_codes" ADD COLUMN "assigned_consumer_id" text;--> statement-breakpoint
+ALTER TABLE "voucher_codes" ADD CONSTRAINT "voucher_codes_assigned_consumer_id_consumers_id_fk" FOREIGN KEY ("assigned_consumer_id") REFERENCES "public"."consumers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "voucher_codes_assigned_consumer_idx" ON "voucher_codes" USING btree ("assigned_consumer_id") WHERE "voucher_codes"."assigned_consumer_id" IS NOT NULL;

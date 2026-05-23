@@ -95,6 +95,9 @@ export const voucherCodes = pgTable(
     code: text('code').notNull(),
     totalUses: integer('total_uses'), // null = unlimited; usually 1
     redeemedCount: integer('redeemed_count').notNull().default(0),
+    // §13 P6 — targeted vouchers. When non-null, redemption is restricted to this
+    // consumer (enforced in place-order). Null = anonymous bulk code.
+    assignedConsumerId: text('assigned_consumer_id').references(() => consumers.id),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
@@ -102,6 +105,9 @@ export const voucherCodes = pgTable(
   (t) => ({
     codeUniqueIdx: uniqueIndex('voucher_codes_code_idx').on(t.code),
     promotionIdx: index('voucher_codes_promotion_idx').on(t.promotionId),
+    assignedConsumerIdx: index('voucher_codes_assigned_consumer_idx')
+      .on(t.assignedConsumerId)
+      .where(sql`${t.assignedConsumerId} IS NOT NULL`),
     countersGuard: check(
       'voucher_codes_counters_guard',
       sql`${t.redeemedCount} >= 0
@@ -235,6 +241,120 @@ export const promotionConsumerUsageRelations = relations(promotionConsumerUsage,
   }),
   consumer: one(consumers, {
     fields: [promotionConsumerUsage.consumerId],
+    references: [consumers.id],
+  }),
+}));
+
+/**
+ * Admin-issued targeted drops — push a coupon/voucher promo to a consumer cohort.
+ * History row written per push; child grant rows in `promotion_consumer_grants`.
+ */
+export const targetedDrops = pgTable(
+  'targeted_drops',
+  {
+    id: text('id').primaryKey(),
+    promotionId: text('promotion_id')
+      .notNull()
+      .references(() => promotions.id, { onDelete: 'cascade' }),
+    cohortKind: text('cohort_kind').notNull(), // 'all' | 'loyalty_*' | 'specific_consumers'
+    audienceSize: integer('audience_size').notNull().default(0),
+    pushedByAdminId: text('pushed_by_admin_id'),
+    pushedAt: timestamp('pushed_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    promotionIdx: index('targeted_drops_promotion_idx').on(t.promotionId),
+    pushedAtIdx: index('targeted_drops_pushed_at_idx').on(t.pushedAt),
+  }),
+);
+
+export const targetedDropsRelations = relations(targetedDrops, ({ one }) => ({
+  promotion: one(promotions, {
+    fields: [targetedDrops.promotionId],
+    references: [promotions.id],
+  }),
+}));
+
+/**
+ * One row per (promotion, consumer) when admin pushes a coupon (or voucher) into the
+ * consumer's wallet. Vouchers also stamp `voucher_codes.assigned_consumer_id`; this
+ * table captures both promo flavours uniformly so the consumer wallet view can join.
+ */
+export const promotionConsumerGrants = pgTable(
+  'promotion_consumer_grants',
+  {
+    id: text('id').primaryKey(),
+    promotionId: text('promotion_id')
+      .notNull()
+      .references(() => promotions.id, { onDelete: 'cascade' }),
+    consumerId: text('consumer_id')
+      .notNull()
+      .references(() => consumers.id),
+    assignedByAdminId: text('assigned_by_admin_id'),
+    source: text('source').notNull().default('targeted_drop'),
+    /** Voucher code id when the grant materialises as a single-use voucher row. */
+    voucherCodeId: text('voucher_code_id').references(() => voucherCodes.id),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    promotionConsumerUniqueIdx: uniqueIndex('promotion_consumer_grants_pc_idx').on(
+      t.promotionId,
+      t.consumerId,
+    ),
+    consumerIdx: index('promotion_consumer_grants_consumer_idx').on(t.consumerId),
+  }),
+);
+
+export const promotionConsumerGrantsRelations = relations(promotionConsumerGrants, ({ one }) => ({
+  promotion: one(promotions, {
+    fields: [promotionConsumerGrants.promotionId],
+    references: [promotions.id],
+  }),
+  consumer: one(consumers, {
+    fields: [promotionConsumerGrants.consumerId],
+    references: [consumers.id],
+  }),
+  voucherCode: one(voucherCodes, {
+    fields: [promotionConsumerGrants.voucherCodeId],
+    references: [voucherCodes.id],
+  }),
+}));
+
+/**
+ * Admin-recorded consumer-abuse flag. Surfaced on consumer detail + future dispute UX.
+ * Soft-resolved via `resolvedAt`; history kept for context.
+ */
+export const consumerFlags = pgTable(
+  'consumer_flags',
+  {
+    id: text('id').primaryKey(),
+    consumerId: text('consumer_id')
+      .notNull()
+      .references(() => consumers.id),
+    kind: text('kind').notNull(), // 'promo_abuse' | 'dispute_pattern' | 'other'
+    reason: text('reason').notNull(),
+    createdByAdminId: text('created_by_admin_id'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    resolvedByAdminId: text('resolved_by_admin_id'),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true, mode: 'date' }),
+    resolvedNote: text('resolved_note'),
+  },
+  (t) => ({
+    consumerIdx: index('consumer_flags_consumer_idx').on(t.consumerId),
+    openIdx: index('consumer_flags_open_idx')
+      .on(t.consumerId)
+      .where(sql`${t.resolvedAt} IS NULL`),
+  }),
+);
+
+export const consumerFlagsRelations = relations(consumerFlags, ({ one }) => ({
+  consumer: one(consumers, {
+    fields: [consumerFlags.consumerId],
     references: [consumers.id],
   }),
 }));

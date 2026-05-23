@@ -59,6 +59,7 @@ export async function markCollectedAtCounter(
     .update(orderItems)
     .set({ outcome: 'held_collected_at_counter' })
     .where(eq(orderItems.id, h.return.orderItemId));
+  await issueSupplementaryForHeld(h.return.orderItem.orderId, heldId);
   void actor;
   return { heldId };
 }
@@ -103,8 +104,29 @@ export async function markRedelivered(
       .set({ outcome: 'held_redelivered' })
       .where(eq(orderItems.id, h.return.orderItemId));
   });
+  await issueSupplementaryForHeld(orderId, heldId);
   void actor;
   return { heldId, deliveryAttemptId: daId };
+}
+
+/**
+ * §17 — supplementary tax invoice for the held item the consumer ultimately keeps.
+ * Best-effort: if the parent order isn't yet delivered (no tax invoice) or render fails,
+ * we log but don't block the disposition.
+ */
+async function issueSupplementaryForHeld(orderId: string, heldItemId: string): Promise<void> {
+  try {
+    const { issueInvoiceForOrder } = await import('@/shared/invoicing/issuance.js');
+    await issueInvoiceForOrder({
+      orderId,
+      kind: 'supplementary_invoice',
+      heldItemId,
+    });
+  } catch (err) {
+    console.error(
+      `[invoicing] supplementary invoice failed for held ${heldItemId}: ${(err as Error).message}`,
+    );
+  }
 }
 
 export async function forceDispose(
@@ -177,6 +199,8 @@ export async function extendHoldingWindow(
       holdingWindowExpiresAt: newExpiry,
       extendedByAdminId: input.adminId,
       extensionReason: input.reason,
+      // Re-arm the pre-expiry warning sweep so the new threshold gets a fresh notification.
+      warningNotifiedAt: null,
     })
     .where(eq(heldItems.id, input.heldId));
   return { heldId: input.heldId, newExpiry };

@@ -1,0 +1,1 @@
+ALTER TABLE "orders" ADD COLUMN "loyalty_earned_points" integer DEFAULT 0 NOT NULL;

@@ -1,5 +1,8 @@
+import { eq } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
-import { AppError } from '@/shared/errors/app-error.js';
+import { db } from '@/db/client.js';
+import { consumers } from '@/db/schema/index.js';
+import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { verifyAccessToken, type AccessTokenPayload, type TokenKind } from './jwt.js';
 
 /**
@@ -39,6 +42,21 @@ export function requireAuth(...allowedKinds: TokenKind[]): preHandlerAsyncHookHa
     }
     if (!allowedKinds.includes(payload.kind)) {
       throw AppError.forbidden(`Token kind '${payload.kind}' is not allowed on this route`);
+    }
+    if (payload.kind === 'consumer') {
+      const row = await db.query.consumers.findFirst({
+        where: eq(consumers.id, payload.sub),
+        columns: { status: true },
+      });
+      if (!row) {
+        throw AppError.unauthorized('Account not found');
+      }
+      if (row.status === 'suspended') {
+        throw new AppError(401, ErrorCode.ConsumerSuspended, 'Account is suspended');
+      }
+      if (row.status === 'closed') {
+        throw new AppError(401, ErrorCode.ConsumerClosed, 'Account is closed');
+      }
     }
     req.auth = payload;
   };

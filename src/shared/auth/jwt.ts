@@ -12,8 +12,13 @@ export type AccessTokenPayload = {
   sub: string;
   kind: TokenKind;
   subRole?: string | undefined;
-  // Set only on impersonation tokens issued by POST /admin/impersonation/start.
+  // Legacy field — kept for back-compat on any unrotated admin tokens that still
+  // carry it. New impersonation tokens are issued as `kind: 'retailer'` with
+  // `impersonator` set so retailer routes accept them transparently.
   impersonating?: { storeId: string; sessionId: string } | undefined;
+  // Set on retailer-kind impersonation tokens — identifies the originating admin
+  // so per-action audit logs can attribute the actor correctly.
+  impersonator?: { adminId: string; sessionId: string } | undefined;
 };
 
 type DecodedAccessTokenPayload = AccessTokenPayload & {

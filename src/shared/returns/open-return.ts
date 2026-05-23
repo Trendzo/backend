@@ -98,6 +98,15 @@ export async function openReturn(
         `Item ${it.id} is in outcome '${it.outcome}', cannot return`,
       );
     }
+    // US-5.5.1: returns are gated by the policy snapshot frozen at order placement,
+    // so future policy changes don't retroactively block (or unblock) past orders.
+    if (it.listingPolicySnap === 'final_sale') {
+      throw new AppError(
+        409,
+        ErrorCode.ReturnInvalidState,
+        `Item ${it.id} was sold as final sale — no returns or replacements`,
+      );
+    }
   }
 
   const cfg = await database.query.platformConfig.findFirst({

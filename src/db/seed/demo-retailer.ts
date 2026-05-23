@@ -1,6 +1,6 @@
 /* eslint-disable no-console -- CLI seed: console output is the intended UX */
 /**
- * Seeds a demo retailer account (kaushalyaharth@gmail.com) with a full store,
+ * Seeds a demo retailer account (demo@closetx.local) with a full store,
  * product catalog, consumer accounts, and 30 days of order history so the
  * retailer dashboard has real analytics to display.
  *
@@ -27,8 +27,8 @@ import {
 import { hashPassword } from '@/shared/auth/password.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 
-const DEMO_EMAIL = 'kaushalyaharth@gmail.com';
-const DEMO_PHONE = '9179621765';
+const DEMO_EMAIL = 'demo@closetx.local';
+const DEMO_PHONE = '+919800000001';
 const DEMO_PASSWORD = 'Demo@1234';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -524,7 +524,10 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
     const payStatus =
       spec.status === 'cancelled' ? 'failed' :
       spec.status === 'pending' ? 'pending' : 'succeeded';
-    const settledAt = payStatus === 'succeeded' ? new Date(placedAt.getTime() + 5 * 60 * 1000) : undefined;
+    const settledAt =
+      payStatus === 'succeeded' || payStatus === 'failed'
+        ? new Date(placedAt.getTime() + 5 * 60 * 1000)
+        : undefined;
 
     await database.insert(payments).values({
       id: newId(IdPrefix.Payment),

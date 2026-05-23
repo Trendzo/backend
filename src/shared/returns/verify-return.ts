@@ -21,6 +21,7 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { ActorType } from '@/shared/orders/state-machine.js';
 import { createRefundForReturns } from '@/shared/refunds/create-refund.js';
+import { recomputeAfterPartialReturn } from '@/shared/orders/recompute-on-return.js';
 
 export async function verifyReturn(
   database: typeof Db,
@@ -28,6 +29,8 @@ export async function verifyReturn(
     returnId: string;
     decision: 'accepted' | 'rejected';
     reasonNote?: string | undefined;
+    /** Store-side evidence photos. Persisted on rejection; ignored on acceptance. */
+    rejectPhotos?: string[] | undefined;
     actor: { type: ActorType; id: string };
     /** When set, retailer-side caller asserting ownership. */
     expectedStoreId?: string | undefined;
@@ -81,6 +84,8 @@ export async function verifyReturn(
       actor: input.actor,
     });
     refundId = refund.refundId;
+    // Re-evaluate promo eligibility against the kept subset; mark voided promos on the order.
+    await recomputeAfterPartialReturn(database, order.id).catch(() => undefined);
     return { returnId: input.returnId, decision: 'accepted' as const, refundId, heldItemId: null };
   }
 
@@ -92,10 +97,15 @@ export async function verifyReturn(
   const expiresAt = new Date(now.getTime() + holdingDays * 24 * 60 * 60 * 1000);
 
   const heldId = newId(IdPrefix.HeldItem);
+  const rejectPhotos = input.rejectPhotos ?? [];
   await database.transaction(async (tx) => {
     await tx
       .update(returns)
-      .set({ storeDecision: 'rejected', storeDecidedAt: now })
+      .set({
+        storeDecision: 'rejected',
+        storeDecidedAt: now,
+        storeRejectPhotos: rejectPhotos,
+      })
       .where(eq(returns.id, input.returnId));
     await tx
       .update(orderItems)

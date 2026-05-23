@@ -1,5 +1,6 @@
 import { relations, sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   index,
   integer,
@@ -49,7 +50,12 @@ export const productListings = pgTable(
     badge: listingBadge('badge').notNull().default('none'),
     listingPolicy: listingPolicy('listing_policy').notNull().default('return'),
     galleryUrls: jsonb('gallery_urls').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    occasion: jsonb('occasion').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    ageGroup: text('age_group'),
     status: listingStatus('status').notNull().default('draft'),
+    // US-5.7.2: when admin takes a listing down, the previous status is saved here
+    // so US-5.7.3 restore can revert to the right state (active vs draft).
+    statusBeforeTakedown: listingStatus('status_before_takedown'),
 
     // Reviews projection — updated by the (future) reviews module; kept here so the
     // consumer card render is a single-row read.
@@ -57,6 +63,9 @@ export const productListings = pgTable(
     ratingCount: integer('rating_count').notNull().default(0),
 
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
   },
@@ -89,9 +98,14 @@ export const variants = pgTable(
     // Per-variant gallery — Shopify-style. First URL is the variant's primary image
     // (used in product cards). Listing.galleryUrls remains for listing-level shots.
     imageUrls: jsonb('image_urls').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    isActive: boolean('is_active').notNull().default(true),
     stock: integer('stock').notNull().default(0),
     reserved: integer('reserved').notNull().default(0),
     pricePaise: integer('price_paise').notNull(),
+    // US-5.6.4: set true when a template edit removes an axis or enum value that
+    // this variant was using. Retailer sees these flagged for review on the listing
+    // detail; backend never auto-deletes a variant.
+    attributesOutOfTemplate: boolean('attributes_out_of_template').notNull().default(false),
   },
   (t) => ({
     listingIdx: index('variants_listing_idx').on(t.listingId),

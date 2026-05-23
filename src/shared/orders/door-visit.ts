@@ -44,19 +44,49 @@ const DECISION_TO_AGENT_DISPOSITION = {
   refused: 'refused',
 } as const;
 
+// §9 — defaults if platform_config rows are absent. 10-min initial window, 5-min
+// one-shot extension match the values used by the dashboard's prior mock.
+const DEFAULT_TRY_ON_WINDOW_SECONDS = 600;
+const DEFAULT_TRY_ON_EXTENSION_SECONDS = 300;
+
+async function readConfigNumber(
+  database: typeof Db,
+  key: string,
+  fallback: number,
+): Promise<number> {
+  const row = await database.query.platformConfig.findFirst({
+    where: eq(platformConfig.key, key),
+  });
+  if (!row) return fallback;
+  return typeof row.value === 'number' ? (row.value as number) : fallback;
+}
+
 export async function openDoor(
   database: typeof Db,
   orderId: string,
   actor: { type: ActorType; id: string },
-): Promise<{ orderId: string; toStatus: OrderStatus }> {
+): Promise<{ orderId: string; toStatus: OrderStatus; doorWindowExpiresAt: Date }> {
+  const windowSeconds = await readConfigNumber(
+    database,
+    'try_on_window_seconds',
+    DEFAULT_TRY_ON_WINDOW_SECONDS,
+  );
+  const expiresAt = new Date(Date.now() + windowSeconds * 1000);
+  // Persist the window first so a concurrent read on the order detail picks up
+  // the timestamp before the status transition lands.
+  await database
+    .update(orders)
+    .set({ doorWindowExpiresAt: expiresAt, doorWindowExtendedAt: null })
+    .where(eq(orders.id, orderId));
   const r = await transitionOrder(database, {
     orderId,
     toStatus: 'at_door',
     actorType: actor.type,
     actorId: actor.id,
     reason: 'door_visit_opened',
+    metadata: { doorWindowExpiresAt: expiresAt.toISOString() },
   });
-  return { orderId: r.orderId, toStatus: r.toStatus };
+  return { orderId: r.orderId, toStatus: r.toStatus, doorWindowExpiresAt: expiresAt };
 }
 
 /**
@@ -68,10 +98,15 @@ export async function extendDoor(
   orderId: string,
   actor: { type: ActorType; id: string },
   reason: string,
-): Promise<{ orderId: string }> {
+): Promise<{ orderId: string; doorWindowExpiresAt: Date }> {
   const order = await database.query.orders.findFirst({
     where: eq(orders.id, orderId),
-    columns: { id: true, status: true },
+    columns: {
+      id: true,
+      status: true,
+      doorWindowExpiresAt: true,
+      doorWindowExtendedAt: true,
+    },
   });
   if (!order) throw new AppError(404, ErrorCode.OrderNotFound, 'Order not found');
   if (order.status !== 'at_door') {
@@ -81,7 +116,16 @@ export async function extendDoor(
       `Order ${orderId} must be in 'at_door' to extend`,
     );
   }
-  // Check for existing extension marker.
+  // §9 — column is the source of truth. doorWindowExtendedAt non-null = extension
+  // already used. Falls back to the legacy transition-marker check for orders
+  // opened before this migration ran.
+  if (order.doorWindowExtendedAt) {
+    throw new AppError(
+      409,
+      ErrorCode.DoorVisitExtensionExhausted,
+      'Door visit extension has already been used',
+    );
+  }
   const priorExtension = await database.query.orderTransitions.findFirst({
     where: and(
       eq(orderTransitions.orderId, orderId),
@@ -95,15 +139,33 @@ export async function extendDoor(
       'Door visit extension has already been used',
     );
   }
+
+  const extensionSeconds = await readConfigNumber(
+    database,
+    'try_on_extension_seconds',
+    DEFAULT_TRY_ON_EXTENSION_SECONDS,
+  );
+  // Bump from the existing deadline (or now if the deadline somehow lapsed) so
+  // an extension on an already-expired window still grants the full extension
+  // worth of time, not negative.
+  const base = order.doorWindowExpiresAt && order.doorWindowExpiresAt.getTime() > Date.now()
+    ? order.doorWindowExpiresAt.getTime()
+    : Date.now();
+  const newExpiresAt = new Date(base + extensionSeconds * 1000);
+  const now = new Date();
+  await database
+    .update(orders)
+    .set({ doorWindowExpiresAt: newExpiresAt, doorWindowExtendedAt: now })
+    .where(eq(orders.id, orderId));
   await logTransitionMarker(database, {
     orderId,
     toStatus: 'at_door',
     actorType: actor.type,
     actorId: actor.id,
     reason: 'door_visit_extended',
-    metadata: { reason },
+    metadata: { reason, doorWindowExpiresAt: newExpiresAt.toISOString() },
   });
-  return { orderId };
+  return { orderId, doorWindowExpiresAt: newExpiresAt };
 }
 
 export async function closeDoor(

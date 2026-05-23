@@ -8,6 +8,7 @@ import {
   heldItemDisposition,
   heldItemStatus,
   returnKind,
+  returnReasonCategory,
   storeReturnDecision,
 } from './enums.js';
 import { adminAccounts, consumers } from './identity.js';
@@ -32,7 +33,14 @@ export const returns = pgTable(
       .notNull()
       .defaultNow(),
     reasonText: text('reason_text'),
+    // Categorical reason (post-delivery standard returns). Null for door returns.
+    reasonCategory: returnReasonCategory('reason_category'),
     photos: jsonb('photos').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    // Consumer-submitted photo URLs for standard (post-delivery) returns.
+    consumerPhotos: jsonb('consumer_photos').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    // Store-side evidence photos uploaded by the retailer when rejecting a return.
+    // Empty until storeDecision = 'rejected' and the retailer chooses to attach evidence.
+    storeRejectPhotos: jsonb('store_reject_photos').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
 
     // Door-return only: agent's call at the door
     agentDisposition: agentDisposition('agent_disposition'),
@@ -91,6 +99,9 @@ export const heldItems = pgTable(
     extendedByAdminId: text('extended_by_admin_id').references(() => adminAccounts.id),
     extensionReason: text('extension_reason'),
     resolvedAt: timestamp('resolved_at', { withTimezone: true, mode: 'date' }),
+    // Set by the pre-expiry warning sweep so we never double-notify. Reset to NULL when
+    // an admin extends the holding window so the new threshold gets a fresh warning.
+    warningNotifiedAt: timestamp('warning_notified_at', { withTimezone: true, mode: 'date' }),
   },
   (t) => ({
     storeStatusExpiryIdx: index('held_items_store_status_expiry_idx').on(
@@ -100,6 +111,9 @@ export const heldItems = pgTable(
     ),
     consumerStatusIdx: index('held_items_consumer_status_idx').on(t.consumerId, t.status),
     returnIdx: index('held_items_return_idx').on(t.returnId),
+    warningSweepIdx: index('held_items_warning_sweep_idx')
+      .on(t.status, t.holdingWindowExpiresAt)
+      .where(sql`${t.warningNotifiedAt} IS NULL`),
     // Resolved held-items must capture how they were disposed and when.
     resolvedGuard: check(
       'held_items_resolved_guard',

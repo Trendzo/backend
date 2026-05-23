@@ -1,0 +1,2 @@
+ALTER TABLE "retailer_applications" ADD COLUMN "must_reupload_doc_kinds" jsonb DEFAULT '[]'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "retailer_applications" ADD COLUMN "resubmission_count" integer DEFAULT 0 NOT NULL;

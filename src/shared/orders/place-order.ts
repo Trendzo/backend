@@ -62,6 +62,7 @@ import {
   buildOrderItemSnapshot,
   buildOrderSnapshot,
 } from '@/shared/snapshots/order-snapshot.js';
+import { generatePickupCode } from './pickup-code.js';
 import { transitionOrder } from './transition.js';
 
 export type PaymentOutcome = 'succeeded' | 'failed' | 'pending';
@@ -86,6 +87,12 @@ export type PlaceOrderInput = {
   /** Who initiated this placement (admin user id for the test surface). */
   placedByActorType: 'admin' | 'consumer' | 'system';
   placedByActorId: string;
+  /** §9 — pickup slot snap. Required when deliveryMethod==='pickup' and the caller
+   *  is a consumer (real checkout). Admin test placement may omit (auto-default).
+   *  All three are stored on the order so slot config edits don't drift. */
+  pickupSlotId?: string;
+  pickupSlotStart?: Date;
+  pickupSlotEnd?: Date;
 };
 
 export type PlaceOrderResult = {
@@ -140,11 +147,30 @@ export async function placeOrder(
     });
     if (!address) throw new AppError(404, ErrorCode.NotFound, 'Address not found');
   } else if (input.deliveryMethod !== 'pickup') {
-    throw AppError.validation('addressId is required for non-pickup orders');
+    // Fall back to the consumer's default address when caller omits addressId.
+    address = await database.query.addresses.findFirst({
+      where: and(eq(addresses.consumerId, consumer.id), eq(addresses.isDefault, true)),
+    });
+    if (!address) {
+      throw AppError.validation(
+        'addressId is required for non-pickup orders and no default address is set',
+      );
+    }
   }
 
   if (input.items.length === 0) {
     throw AppError.validation('At least one item is required');
+  }
+
+  // Try-and-Buy is prepaid only — payment must clear before agent doors-up the order.
+  // COD on a try-on order would mean settling cash at the door for items the customer
+  // can still refuse, which is operationally infeasible.
+  if (input.deliveryMethod === 'try_and_buy' && input.paymentMethod === 'cod') {
+    throw new AppError(
+      400,
+      ErrorCode.ValidationError,
+      'Try-and-Buy orders are prepaid only — COD is not allowed',
+    );
   }
 
   const variantIds = input.items.map((i) => i.variantId);
@@ -218,6 +244,14 @@ export async function placeOrder(
     }
     if (code.totalUses != null && code.redeemedCount >= code.totalUses) {
       throw new AppError(409, ErrorCode.VoucherAlreadyRedeemed, 'Voucher already redeemed');
+    }
+    // §13 P6 — targeted vouchers are reserved for a specific consumer.
+    if (code.assignedConsumerId && code.assignedConsumerId !== consumer.id) {
+      throw new AppError(
+        409,
+        ErrorCode.CouponInvalid,
+        'Voucher is reserved for a different consumer',
+      );
     }
     promoIds.add(code.promotionId);
     voucherCodeId = code.id;
@@ -321,6 +355,27 @@ export async function placeOrder(
     }
   }
 
+  // §13 A5 — scope.storeIds gating. The pricing engine's eligibility filter is
+  // per-line and ignores storeIds (the cart already represents one store), so we
+  // drop here. Explicit coupons/vouchers throw — auto-applied offers silently drop.
+  for (let i = enginePromos.length - 1; i >= 0; i--) {
+    const storeIds = enginePromos[i]!.scope?.storeIds;
+    if (storeIds?.length && !storeIds.includes(store.id)) {
+      const promo = enginePromos[i]!;
+      const isExplicit =
+        (input.couponCode && promo.mechanism === 'coupon') ||
+        (input.voucherCode && promo.mechanism === 'voucher');
+      if (isExplicit) {
+        throw new AppError(
+          409,
+          ErrorCode.CouponInvalid,
+          'This promotion is not available for this store',
+        );
+      }
+      enginePromos.splice(i, 1);
+    }
+  }
+
   const clubbingRows = await database.query.clubbingMatrixEntries.findMany();
   const clubbingMatrix = clubbingRows.map((r) => ({
     appliedToA: r.appliedToA as AppliedTo,
@@ -371,6 +426,9 @@ export async function placeOrder(
       id: groupId,
       consumerId: consumer.id,
       status: 'in_flight',
+      // Today this is single-store (one order per group). When multi-store split lands,
+      // swap this for the sum of per-store breakdown totals.
+      combinedTotalPaise: breakdown.totalPaise,
     });
 
     const orderId = newId(IdPrefix.Order);
@@ -379,6 +437,28 @@ export async function placeOrder(
       address: address ?? null,
       store,
     });
+
+    // Pickup orders carry a short handover code consumers read aloud at the store front.
+    // Retry once on the (extremely rare) unique-violation against an active order.
+    let pickupCode: string | null = null;
+    if (input.deliveryMethod === 'pickup') {
+      pickupCode = generatePickupCode();
+    }
+
+    // §9 — refuse real consumer pickup orders without a slot snap. Admin test
+    // placement falls through with NULLs (slot can be backfilled by the admin
+    // form's auto-default before insert when needed).
+    if (
+      input.deliveryMethod === 'pickup'
+      && input.placedByActorType === 'consumer'
+      && (!input.pickupSlotId || !input.pickupSlotStart || !input.pickupSlotEnd)
+    ) {
+      throw new AppError(
+        400,
+        ErrorCode.ValidationError,
+        'Pickup orders require pickupSlotId + pickupSlotStart + pickupSlotEnd',
+      );
+    }
 
     await tx.insert(orders).values({
       id: orderId,
@@ -391,6 +471,11 @@ export async function placeOrder(
       paymentMethodLabel: paymentMethodLabel(input.paymentMethod),
       status: 'pending',
       ...snap,
+      tcsRateBpSnap: engineConfig.tcsRateBp,
+      pickupCode,
+      pickupSlotId: input.pickupSlotId ?? null,
+      pickupSlotStart: input.pickupSlotStart ?? null,
+      pickupSlotEnd: input.pickupSlotEnd ?? null,
       itemsSubtotalPaise: breakdown.lineSubtotalPaise,
       retailerPromoPaise: breakdown.retailerPromoDiscountPaise,
       platformPromoPaise: breakdown.platformPromoDiscountPaise,
@@ -565,6 +650,8 @@ export async function placeOrder(
       actorId: 'system',
       reason: 'auto_route',
     });
+    const { dispatchOrder } = await import('./routing.js');
+    await dispatchOrder(placed.orderId);
     finalStatus = 'routing';
   } else if (input.paymentOutcome === 'failed') {
     await transitionOrder(database, {

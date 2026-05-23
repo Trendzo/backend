@@ -1,0 +1,443 @@
+import { asc, eq, or } from 'drizzle-orm';
+import type { z } from 'zod';
+import { db } from '@/db/client.js';
+import {
+  applicationDocuments,
+  applicationMessages,
+  retailerAccounts,
+  retailerApplications,
+} from '@/db/schema/index.js';
+import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
+import { ok } from '@/shared/http/envelope.js';
+import { newId } from '@/shared/ids.js';
+import { hashPassword, verifyPassword } from '@/shared/auth/password.js';
+import { notifyAllAdmins } from '@/shared/notify-admins.js';
+import { recordAudit } from '@/shared/audit.js';
+import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
+import type {
+  CheckIdentityQuery,
+  FetchForResubmitBody,
+  MessagesQuery,
+  PostMessageBody,
+  ResubmitBody,
+  StatusQuery,
+  SubmitApplicationBody,
+} from './onboarding.validators.js';
+
+type Auth = AccessTokenPayload;
+
+export async function submitApplication(input: {
+  body: z.infer<typeof SubmitApplicationBody>;
+}) {
+  const { body } = input;
+  // Block duplicate submissions by email or phone.
+  const accountCollision = await db.query.retailerAccounts.findFirst({
+    where: or(
+      eq(retailerAccounts.email, body.ownerEmail),
+      eq(retailerAccounts.phone, body.ownerPhone),
+    ),
+    columns: { id: true, email: true },
+  });
+  if (accountCollision) {
+    throw new AppError(
+      409,
+      ErrorCode.EmailAlreadyTaken,
+      'A retailer account with this email or phone already exists',
+    );
+  }
+  const applicationCollision = await db.query.retailerApplications.findFirst({
+    where: or(
+      eq(retailerApplications.ownerEmail, body.ownerEmail),
+      eq(retailerApplications.ownerPhone, body.ownerPhone),
+    ),
+    columns: { id: true, status: true },
+  });
+  if (applicationCollision) {
+    if (applicationCollision.status === 'rejected') {
+      throw new AppError(
+        409,
+        ErrorCode.ApplicationRejected,
+        'A previous application with this email or phone was rejected. Sign in on the status page to re-apply on the same record.',
+        { applicationId: applicationCollision.id },
+      );
+    }
+    throw new AppError(
+      409,
+      ErrorCode.ApplicationPending,
+      'An application with this email or phone is already on file.',
+      { applicationId: applicationCollision.id },
+    );
+  }
+
+  const id = newId('app');
+  const passwordHash = body.password ? await hashPassword(body.password) : null;
+  await db.insert(retailerApplications).values({
+    id,
+    legalName: body.legalName,
+    storeName: body.storeName ?? null,
+    gstin: body.gstin,
+    pan: body.pan ?? null,
+    ownerName: body.ownerName,
+    ownerEmail: body.ownerEmail,
+    ownerPhone: body.ownerPhone,
+    addressLine: body.addressLine,
+    pincode: body.pincode,
+    stateCode: body.stateCode,
+    lat: body.lat ?? null,
+    lng: body.lng ?? null,
+    hours: body.hours ?? null,
+    categories: body.categories ?? null,
+    brands: body.brands ?? null,
+    sampleSkus: body.sampleSkus ?? null,
+    contactPhone: body.contactPhone ?? null,
+    managerName: body.managerName ?? null,
+    bankLegalName: body.bankLegalName ?? null,
+    bankAccountNumber: body.bankAccountNumber ?? null,
+    bankIfsc: body.bankIfsc ?? null,
+    passwordHash,
+  });
+  if (body.documents?.length) {
+    await db.insert(applicationDocuments).values(
+      body.documents.map((d) => ({
+        id: newId('adoc'),
+        applicationId: id,
+        kind: d.kind,
+        url: d.url,
+      })),
+    );
+  }
+  await notifyAllAdmins({
+    kind: 'system',
+    title: 'New retailer application',
+    body: `${body.legalName} (${body.ownerEmail}) submitted an application.`,
+    deepLink: `/admin/onboarding/${id}`,
+    payload: { applicationId: id, legalName: body.legalName, ownerEmail: body.ownerEmail },
+  });
+  return ok({ id, status: 'pending', message: 'Application submitted successfully' });
+}
+
+export async function getApplicationStatus(input: {
+  id: string;
+  query: z.infer<typeof StatusQuery>;
+}) {
+  const application = await db.query.retailerApplications.findFirst({
+    where: eq(retailerApplications.id, input.id),
+  });
+  if (!application || application.ownerEmail !== input.query.email) {
+    throw new AppError(404, ErrorCode.NotFound, 'Application not found');
+  }
+  return ok({
+    id: application.id,
+    status: application.status,
+    submittedAt: application.submittedAt,
+    decidedAt: application.decidedAt,
+    decisionReason: application.decisionReason,
+  });
+}
+
+export async function checkIdentity(input: {
+  query: z.infer<typeof CheckIdentityQuery>;
+}) {
+  const { email, phone } = input.query;
+  if (!email && !phone) {
+    return ok({ emailTaken: false, phoneTaken: false });
+  }
+
+  // Account-level collisions (already approved retailer) → must sign in, no reapply.
+  let accountEmailTaken = false;
+  let accountPhoneTaken = false;
+  if (email) {
+    const acct = await db.query.retailerAccounts.findFirst({
+      where: eq(retailerAccounts.email, email),
+      columns: { id: true },
+    });
+    accountEmailTaken = !!acct;
+  }
+  if (phone) {
+    const acct = await db.query.retailerAccounts.findFirst({
+      where: eq(retailerAccounts.phone, phone),
+      columns: { id: true },
+    });
+    accountPhoneTaken = !!acct;
+  }
+
+  // Application-level collisions — return status so UI can offer the reapply route
+  // (rejected) or status-page route (pending/approved).
+  let appEmailHit: { id: string; status: string } | null = null;
+  let appPhoneHit: { id: string; status: string } | null = null;
+  if (email) {
+    const a = await db.query.retailerApplications.findFirst({
+      where: eq(retailerApplications.ownerEmail, email),
+      columns: { id: true, status: true },
+    });
+    if (a) appEmailHit = a;
+  }
+  if (phone) {
+    const a = await db.query.retailerApplications.findFirst({
+      where: eq(retailerApplications.ownerPhone, phone),
+      columns: { id: true, status: true },
+    });
+    if (a) appPhoneHit = a;
+  }
+
+  const appHit = appEmailHit ?? appPhoneHit;
+  return ok({
+    emailTaken: accountEmailTaken || !!appEmailHit,
+    phoneTaken: accountPhoneTaken || !!appPhoneHit,
+    accountExists: accountEmailTaken || accountPhoneTaken,
+    applicationStatus: appHit?.status ?? null,
+    applicationId: appHit?.id ?? null,
+  });
+}
+
+export async function getPublicMessages(input: {
+  id: string;
+  query: z.infer<typeof MessagesQuery>;
+}) {
+  const application = await db.query.retailerApplications.findFirst({
+    where: eq(retailerApplications.id, input.id),
+  });
+  if (!application || application.ownerEmail !== input.query.email) {
+    throw new AppError(404, ErrorCode.NotFound, 'Application not found');
+  }
+  const messages = await db.query.applicationMessages.findMany({
+    where: eq(applicationMessages.applicationId, application.id),
+    orderBy: asc(applicationMessages.at),
+  });
+  return ok(messages);
+}
+
+export async function getOwnApplicationMessages(input: { auth: Auth }) {
+  const application = await db.query.retailerApplications.findFirst({
+    where: eq(retailerApplications.provisionedRetailerAccountId, input.auth.sub),
+  });
+  if (!application) return ok([]);
+
+  const msgs = await db.query.applicationMessages.findMany({
+    where: eq(applicationMessages.applicationId, application.id),
+    orderBy: asc(applicationMessages.at),
+  });
+
+  return ok(
+    msgs.map((m) => ({
+      id: m.id,
+      applicationId: m.applicationId,
+      authorKind: m.authorKind === 'applicant' ? 'retailer' : m.authorKind,
+      authorLabel: m.authorKind === 'admin' ? 'ClosetX admin' : 'You',
+      body: m.body,
+      attachments: m.attachmentUrls ?? [],
+      fieldKey: null as string | null,
+      createdAt: m.at.toISOString(),
+    })),
+  );
+}
+
+export async function postPublicMessage(input: {
+  id: string;
+  body: z.infer<typeof PostMessageBody>;
+}) {
+  const application = await db.query.retailerApplications.findFirst({
+    where: eq(retailerApplications.id, input.id),
+  });
+  if (!application || application.ownerEmail !== input.body.applicantEmail) {
+    throw new AppError(404, ErrorCode.NotFound, 'Application not found');
+  }
+  const id = newId('amsg');
+  await db.insert(applicationMessages).values({
+    id,
+    applicationId: application.id,
+    authorKind: 'applicant',
+    applicantEmail: input.body.applicantEmail,
+    body: input.body.body,
+    attachmentUrls: input.body.attachmentUrls ?? null,
+  });
+  return ok({ id });
+}
+
+export async function fetchForResubmit(input: {
+  id: string;
+  body: z.infer<typeof FetchForResubmitBody>;
+}) {
+  const application = await db.query.retailerApplications.findFirst({
+    where: eq(retailerApplications.id, input.id),
+  });
+  if (!application || application.ownerEmail !== input.body.email) {
+    throw new AppError(404, ErrorCode.NotFound, 'Application not found');
+  }
+  if (!application.passwordHash) {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      'This application has no stored password — contact support to resubmit',
+    );
+  }
+  const ok_pw = await verifyPassword(input.body.password, application.passwordHash);
+  if (!ok_pw) {
+    throw new AppError(401, ErrorCode.InvalidCredentials, 'Incorrect password');
+  }
+  if (application.status !== 'rejected') {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      'Re-application only available after the original was rejected',
+    );
+  }
+  const documents = await db.query.applicationDocuments.findMany({
+    where: eq(applicationDocuments.applicationId, application.id),
+  });
+  const { passwordHash: _ph, ...safe } = application;
+  void _ph;
+  return ok({
+    application: safe,
+    documents: documents.map((d) => ({ kind: d.kind, url: d.url })),
+  });
+}
+
+export async function resubmitApplication(input: {
+  id: string;
+  body: z.infer<typeof ResubmitBody>;
+  requestId: string;
+}) {
+  const { id, body, requestId } = input;
+  const application = await db.query.retailerApplications.findFirst({
+    where: eq(retailerApplications.id, id),
+  });
+  if (!application || application.ownerEmail !== body.email) {
+    throw new AppError(404, ErrorCode.NotFound, 'Application not found');
+  }
+  if (!application.passwordHash) {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      'This application has no stored password — contact support to resubmit',
+    );
+  }
+  const ok_pw = await verifyPassword(body.password, application.passwordHash);
+  if (!ok_pw) {
+    throw new AppError(401, ErrorCode.InvalidCredentials, 'Incorrect password');
+  }
+  if (application.status !== 'rejected') {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      'Re-application only available after the original was rejected',
+    );
+  }
+
+  // Build the new documents map keyed by kind for fast lookup.
+  const newDocByKind = new Map<string, string>();
+  for (const d of body.documents ?? []) {
+    newDocByKind.set(d.kind, d.url);
+  }
+
+  // Validate must-reupload constraint
+  if ((application.mustReuploadDocKinds ?? []).length > 0) {
+    const prior = await db.query.applicationDocuments.findMany({
+      where: eq(applicationDocuments.applicationId, application.id),
+    });
+    const priorByKind = new Map<string, string>(
+      prior.map((d) => [d.kind, d.url] as const),
+    );
+    for (const kind of application.mustReuploadDocKinds) {
+      const newUrl = newDocByKind.get(kind);
+      if (!newUrl) {
+        throw new AppError(
+          422,
+          ErrorCode.ValidationError,
+          `Admin asked you to replace the document for "${kind}" — please upload a new file`,
+        );
+      }
+      if (newUrl === priorByKind.get(kind)) {
+        throw new AppError(
+          422,
+          ErrorCode.ValidationError,
+          `Document for "${kind}" must be re-uploaded, not the same file`,
+        );
+      }
+    }
+  }
+
+  const priorDecisionReason = application.decisionReason;
+  const priorDecidedBy = application.decidedByAccountId;
+
+  await db.transaction(async (tx) => {
+    // Archive the rejection into the message thread.
+    if (priorDecisionReason) {
+      await tx.insert(applicationMessages).values({
+        id: newId('amsg'),
+        applicationId: application.id,
+        authorKind: 'admin',
+        authorAccountId: priorDecidedBy ?? null,
+        body: `Previous rejection: ${priorDecisionReason}`,
+      });
+    }
+    await tx.insert(applicationMessages).values({
+      id: newId('amsg'),
+      applicationId: application.id,
+      authorKind: 'applicant',
+      applicantEmail: body.email,
+      body: 'Application resubmitted with updated details.',
+    });
+
+    // Replace the document set wholesale.
+    await tx
+      .delete(applicationDocuments)
+      .where(eq(applicationDocuments.applicationId, application.id));
+    if (body.documents?.length) {
+      await tx.insert(applicationDocuments).values(
+        body.documents.map((d) => ({
+          id: newId('adoc'),
+          applicationId: application.id,
+          kind: d.kind,
+          url: d.url,
+        })),
+      );
+    }
+
+    // Update editable fields, reset decision metadata, bump counter.
+    await tx
+      .update(retailerApplications)
+      .set({
+        legalName: body.legalName,
+        storeName: body.storeName ?? null,
+        gstin: body.gstin,
+        pan: body.pan ?? null,
+        ownerName: body.ownerName,
+        // ownerEmail intentionally not changed — identity anchor for the row.
+        ownerPhone: body.ownerPhone,
+        addressLine: body.addressLine,
+        pincode: body.pincode,
+        stateCode: body.stateCode,
+        lat: body.lat ?? null,
+        lng: body.lng ?? null,
+        hours: body.hours ?? null,
+        categories: body.categories ?? null,
+        brands: body.brands ?? null,
+        sampleSkus: body.sampleSkus ?? null,
+        contactPhone: body.contactPhone ?? null,
+        managerName: body.managerName ?? null,
+        bankLegalName: body.bankLegalName ?? null,
+        bankAccountNumber: body.bankAccountNumber ?? null,
+        bankIfsc: body.bankIfsc ?? null,
+        status: 'pending',
+        decidedAt: null,
+        decidedByAccountId: null,
+        decisionReason: null,
+        mustReuploadDocKinds: [],
+        resubmissionCount: application.resubmissionCount + 1,
+        submittedAt: new Date(),
+      })
+      .where(eq(retailerApplications.id, application.id));
+  });
+
+  await recordAudit({
+    actor: { sub: body.email, kind: 'retailer' },
+    action: 'application.resubmitted',
+    resourceKind: 'retailer_application',
+    resourceId: application.id,
+    after: { resubmissionCount: application.resubmissionCount + 1 },
+    requestId,
+  });
+
+  return ok({ id: application.id, status: 'pending', message: 'Application resubmitted' });
+}

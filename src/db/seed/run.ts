@@ -40,7 +40,7 @@ async function main(): Promise<void> {
   console.log('Seeding catalog defaults (brands + categories)…');
   await seedCatalogDefaults(db);
 
-  console.log('Seeding demo retailer (kaushalyaharth@gmail.com)…');
+  console.log('Seeding demo retailer (demo@closetx.local)…');
   await seedDemoRetailer(db);
 
   console.log('Seed complete.');

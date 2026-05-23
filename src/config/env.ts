@@ -27,8 +27,24 @@ const EnvSchema = z.object({
   CLOUDINARY_API_KEY: z.string().min(1).optional(),
   CLOUDINARY_API_SECRET: z.string().min(1).optional(),
 
+  // AI image generation provider switch — selects which backend the AI catalog
+  // module calls. Both providers ultimately run Gemini's image model; OpenRouter
+  // is the no-billing-card alternative path.
+  AI_IMAGE_PROVIDER: z.enum(['gemini', 'openrouter']).default('gemini'),
+
+  // Google Gemini API key (AI Studio). Required when AI_IMAGE_PROVIDER=gemini.
+  GEMINI_API_KEY: z.string().min(20).optional(),
+
+  // OpenRouter API key + model. Required when AI_IMAGE_PROVIDER=openrouter.
+  // Model defaults to the Gemini image preview which is the most reliable image-output
+  // model on OpenRouter today.
+  OPENROUTER_API_KEY: z.string().min(20).optional(),
+  OPENROUTER_MODEL: z.string().default('google/gemini-2.5-flash-image'),
+  OPENROUTER_SITE_URL: z.string().url().optional(),
+  OPENROUTER_APP_NAME: z.string().default('ClosetX'),
+
   // Seed defaults — only consumed by the seed CLI (`npm run db:seed`).
-  ADMIN_SEED_EMAIL: z.string().email().default('admin@closetx.local'),
+  ADMIN_SEED_EMAIL: z.string().email().default('admin@trendzo.local'),
   ADMIN_SEED_PASSWORD: z.string().min(4).default('admin1234'),
 
   // CORS allowlist for production. Comma-separated list of origins that may call the API.

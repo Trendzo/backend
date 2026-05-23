@@ -10,6 +10,7 @@ import {
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
+import { brands } from './brands.js';
 import { collectionKind, collectionStatus, gender } from './enums.js';
 import { productListings } from './products.js';
 
@@ -40,6 +41,13 @@ export const collections = pgTable(
     sortOrder: integer('sort_order').notNull().default(0),
     isFeatured: boolean('is_featured').notNull().default(false),
     status: collectionStatus('status').notNull().default('draft'),
+    // US-5.8.2: when kind='brand', brandId points at the brand whose active listings
+    // should auto-populate the collection. When kind='occasion', occasionTag is matched
+    // against product_listings.occasion[] to resolve the live set. Both stay null for
+    // hand-curated collections (outfit/drop/edit/trend) which keep their explicit
+    // collection_listings memberships.
+    brandId: text('brand_id').references(() => brands.id, { onDelete: 'set null' }),
+    occasionTag: text('occasion_tag'),
     startsAt: timestamp('starts_at', { withTimezone: true, mode: 'date' }),
     endsAt: timestamp('ends_at', { withTimezone: true, mode: 'date' }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })

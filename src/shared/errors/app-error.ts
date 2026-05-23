@@ -69,6 +69,8 @@ export const ErrorCode = {
   OrderStoreUnavailable: 'order_store_unavailable',
   OrderRetryBudgetExhausted: 'order_retry_budget_exhausted',
   OrderCancellationNotAllowed: 'order_cancellation_not_allowed',
+  InvalidPickupCode: 'invalid_pickup_code',
+  PickupCodeNotApplicable: 'pickup_code_not_applicable',
 
   // Door visit (Try-and-Buy)
   DoorVisitInvalidItem: 'door_visit_invalid_item',
@@ -96,6 +98,11 @@ export const ErrorCode = {
   DisputeNotFound: 'dispute_not_found',
   DisputeInvalidState: 'dispute_invalid_state',
   DisputeAlreadyDecided: 'dispute_already_decided',
+
+  // §20 Consumer Management
+  ConsumerBanned: 'consumer_banned',
+  ConsumerSuspended: 'consumer_suspended',
+  ConsumerClosed: 'consumer_closed',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

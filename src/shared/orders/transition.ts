@@ -78,6 +78,34 @@ export async function transitionOrder(
 
   await recomputeGroupStatus(database, order.groupId);
 
+  // §14 L3 — credit loyalty points on delivery. Idempotent; skipped if rewards-banned.
+  if (input.toStatus === 'delivered') {
+    const { grantLoyaltyOnDelivery } = await import('@/shared/loyalty/grant.js');
+    await grantLoyaltyOnDelivery(input.orderId);
+
+    // §17 — issue consumer tax invoice. Idempotent; failures must not roll back delivery.
+    try {
+      const { issueInvoiceForOrder } = await import('@/shared/invoicing/issuance.js');
+      await issueInvoiceForOrder({ orderId: input.orderId, kind: 'tax_invoice' });
+    } catch (err) {
+      console.error(
+        `[invoicing] auto-issue on delivery failed for order ${input.orderId}: ${(err as Error).message}`,
+      );
+    }
+
+    // §18 — issue per-order commission invoice. Idempotent on (orderId, kind).
+    try {
+      const { issueCommissionInvoiceForOrder } = await import(
+        '@/shared/settlement/commission-invoice.js'
+      );
+      await issueCommissionInvoiceForOrder({ orderId: input.orderId });
+    } catch (err) {
+      console.error(
+        `[settlement] commission invoice on delivery failed for order ${input.orderId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
   return { orderId: input.orderId, fromStatus: from, toStatus: input.toStatus, transitionId };
 }
 

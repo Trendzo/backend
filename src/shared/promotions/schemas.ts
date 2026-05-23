@@ -161,10 +161,12 @@ export const ScopeSchema = z
   .object({
     // Targeting
     listingIds: z.array(z.string()).optional(),
+    variantIds: z.array(z.string()).optional(),
     categoryIds: z.array(z.string()).optional(),
     brandIds: z.array(z.string()).optional(),
     storeIds: z.array(z.string()).optional(),
     excludeListingIds: z.array(z.string()).optional(),
+    excludeVariantIds: z.array(z.string()).optional(),
     excludeCategoryIds: z.array(z.string()).optional(),
     excludeBrandIds: z.array(z.string()).optional(),
     // Time eligibility

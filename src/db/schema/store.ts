@@ -35,11 +35,23 @@ export const retailerStores = pgTable(
     lat: doublePrecision('lat').notNull(),
     lng: doublePrecision('lng').notNull(),
     openingHours: jsonb('opening_hours').$type<Record<string, { open: string; close: string }[]>>(),
+    contactPhone: text('contact_phone'),
+    managerName: text('manager_name'),
+    galleryImageUrls: jsonb('gallery_image_urls').$type<string[]>(),
 
     status: retailerStoreStatus('status').notNull().default('onboarding'),
     pauseVisibility: pauseVisibility('pause_visibility'),
     pauseReason: text('pause_reason'),
     pauseUntil: timestamp('pause_until', { withTimezone: true, mode: 'date' }),
+
+    // Admin suspension fields. `permanentSuspend=true` means a permanent ban;
+    // unban clears it back to false. `suspendReason`/`suspendedAt`/`suspendedByAccountId`
+    // are populated whenever status flips to 'suspended' or 'terminated' by admin
+    // and cleared on unsuspend/unban.
+    permanentSuspend: boolean('permanent_suspend').notNull().default(false),
+    suspendReason: text('suspend_reason'),
+    suspendedAt: timestamp('suspended_at', { withTimezone: true, mode: 'date' }),
+    suspendedByAccountId: text('suspended_by_account_id'),
 
     platformFeeBp: integer('platform_fee_bp').notNull(), // basis points
     deliveryOverridePaise: integer('delivery_override_paise'),
@@ -47,6 +59,9 @@ export const retailerStores = pgTable(
     convenienceFeePaise: integer('convenience_fee_paise').notNull().default(0),
     payoutCadenceDays: integer('payout_cadence_days').notNull().default(7),
     delegationModeEnabled: boolean('delegation_mode_enabled').notNull().default(false),
+    // US-6.1.2: per-store low-stock threshold. A variant is "low" when stock <= this
+    // value (and > 0). Default 5 matches the legacy hardcoded constant.
+    lowStockThreshold: integer('low_stock_threshold').notNull().default(5),
 
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()
@@ -106,6 +121,12 @@ export const retailerAccounts = pgTable(
     gstin: text('gstin').notNull(), // captured at signup (KYC auto-accepted in MVP)
     subRole: retailerSubRole('sub_role').notNull().default('owner'),
     status: retailerAccountStatus('status').notNull().default('pending_approval'),
+    // Admin ban fields. Permanent ban = `permanentSuspend=true` + status='terminated'.
+    // Temporary suspension uses status='terminated' + permanentSuspend=false. Unban clears both.
+    permanentSuspend: boolean('permanent_suspend').notNull().default(false),
+    suspendReason: text('suspend_reason'),
+    suspendedAt: timestamp('suspended_at', { withTimezone: true, mode: 'date' }),
+    suspendedByAccountId: text('suspended_by_account_id'),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
@@ -115,11 +136,53 @@ export const retailerAccounts = pgTable(
   }),
 );
 
+/**
+ * Pickup-method slot table. Per (storeId, dayOfWeek 0-6, startTime), capacity.
+ * Consumer app picks a slot at checkout; retailer manages availability.
+ */
+export const storePickupSlots = pgTable(
+  'store_pickup_slots',
+  {
+    id: text('id').primaryKey(),
+    storeId: text('store_id')
+      .notNull()
+      .references(() => retailerStores.id, { onDelete: 'cascade' }),
+    dayOfWeek: integer('day_of_week').notNull(),
+    startTime: text('start_time').notNull(),
+    endTime: text('end_time').notNull(),
+    capacity: integer('capacity').notNull().default(1),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    storeDaySlotIdx: uniqueIndex('store_pickup_slots_store_day_slot_idx').on(
+      t.storeId,
+      t.dayOfWeek,
+      t.startTime,
+    ),
+    dayGuard: check(
+      'store_pickup_slots_day_guard',
+      sql`${t.dayOfWeek} >= 0 AND ${t.dayOfWeek} <= 6`,
+    ),
+    capacityGuard: check('store_pickup_slots_capacity_guard', sql`${t.capacity} > 0`),
+  }),
+);
+
 // ===== Relations =====
 
 export const retailerStoresRelations = relations(retailerStores, ({ many }) => ({
   accounts: many(retailerAccounts),
   bankAccounts: many(bankAccounts),
+  pickupSlots: many(storePickupSlots),
+}));
+
+export const storePickupSlotsRelations = relations(storePickupSlots, ({ one }) => ({
+  store: one(retailerStores, {
+    fields: [storePickupSlots.storeId],
+    references: [retailerStores.id],
+  }),
 }));
 
 export const retailerAccountsRelations = relations(retailerAccounts, ({ one }) => ({
