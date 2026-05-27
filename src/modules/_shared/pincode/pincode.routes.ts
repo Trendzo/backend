@@ -1,4 +1,5 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
+import https from 'node:https';
 import { z } from 'zod/v4';
 import { ok } from '@/shared/http/envelope.js';
 
@@ -18,6 +19,26 @@ type ApiResponse = {
   PostOffice: PostOffice[] | null;
 };
 
+// postalpincode.in has an expired SSL cert — skip verification for this one upstream call only
+function fetchPincode(pin: string): Promise<ApiResponse[]> {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      `https://api.postalpincode.in/pincode/${pin}`,
+      { rejectUnauthorized: false, timeout: 5_000 },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+        res.on('end', () => {
+          try { resolve(JSON.parse(body) as ApiResponse[]); }
+          catch { reject(new Error('Invalid JSON from upstream')); }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Upstream timeout')); });
+  });
+}
+
 const pincodeRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     '/:pin',
@@ -25,18 +46,13 @@ const pincodeRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const { pin } = req.params as z.infer<typeof PinParam>;
 
-      let res: Response;
+      let data: ApiResponse[];
       try {
-        res = await fetch(`https://api.postalpincode.in/pincode/${pin}`, {
-          signal: AbortSignal.timeout(5_000),
-        });
+        data = await fetchPincode(pin);
       } catch {
         return reply.status(502).send(ok(null));
       }
 
-      if (!res.ok) return reply.status(502).send(ok(null));
-
-      const data = (await res.json()) as ApiResponse[];
       const first = data[0];
       if (!first || first.Status !== 'Success' || !first.PostOffice?.length) {
         return ok(null);
