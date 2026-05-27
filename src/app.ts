@@ -94,6 +94,7 @@ import consumerPushRoutes from '@/modules/consumer/push/push.routes.js';
 import adminBannersRoutes from '@/modules/admin/banners/banners.routes.js';
 import retailerBannersRoutes from '@/modules/retailer/banners/banners.routes.js';
 import adminDigestRoutes from '@/modules/admin/digest/digest.routes.js';
+import pincodeRoutes from '@/modules/_shared/pincode/pincode.routes.js';
 
 /**
  * Build a Fastify app with strict TypeScript routing via the Zod type provider.
@@ -202,6 +203,7 @@ export function buildApp() {
       });
       await api.register(authRoutes, { prefix: '/auth' });
       await api.register(catalogRoutes, { prefix: '/catalog' });
+      await api.register(pincodeRoutes, { prefix: '/pincode' });
       await api.register(retailerProfileRoutes, { prefix: '/retailer' });
       await api.register(retailerListingsRoutes, { prefix: '/retailer' });
       await api.register(retailerBrandsRoutes, { prefix: '/retailer/brands' });
