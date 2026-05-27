@@ -289,10 +289,10 @@ export async function resumePromotion(input: { auth: Auth; id: string; requestId
 export async function revokePromotion(input: {
   auth: Auth;
   id: string;
-  body: { reason: string };
+  body: { reason?: string | undefined };
   requestId: string;
 }) {
-  const r = await transition(input.id, 'revoked', input.auth, input.body.reason, input.requestId);
+  const r = await transition(input.id, 'revoked', input.auth, input.body.reason ?? '', input.requestId);
   return ok(r);
 }
 

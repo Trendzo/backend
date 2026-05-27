@@ -1,10 +1,9 @@
-import { and, count, eq, gte, isNotNull, lt, sql, sum } from 'drizzle-orm';
+import { and, count, eq, gte, isNotNull, sql, sum } from 'drizzle-orm';
 import { db } from '@/db/client.js';
 import {
   aiCatalogSubmissions,
   cartEvents,
   consumers,
-  customerIssues,
   disputes,
   listingViews,
   orderItems,
@@ -12,7 +11,6 @@ import {
   payouts,
   policyEnforcementActions,
   refunds,
-  retailerStores,
   returns as returnsTable,
   supportTickets,
 } from '@/db/schema/index.js';

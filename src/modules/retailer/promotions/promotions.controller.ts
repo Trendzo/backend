@@ -392,10 +392,10 @@ export async function resumePromotion(input: { auth: Auth; id: string; requestId
 export async function revokePromotion(input: {
   auth: Auth;
   id: string;
-  body: { reason: string };
+  body: { reason?: string | undefined };
   requestId: string;
 }) {
-  return ok(await transitionPromo(input.auth, input.id, 'revoked', input.body.reason, input.requestId));
+  return ok(await transitionPromo(input.auth, input.id, 'revoked', input.body.reason ?? '', input.requestId));
 }
 
 export async function activatePromotion(input: { auth: Auth; id: string; requestId: string }) {
