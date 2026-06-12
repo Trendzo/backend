@@ -76,7 +76,7 @@ const RULES: readonly TransitionRule[] = [
   { from: 'undelivered', to: 'cancelled', actors: ['admin'] },
 
   // ── Returns to store (post-failed-delivery / post-door-reject) ──
-  { from: 'returning_to_store', to: 'returned_to_store', actors: ['retailer', 'delivery_agent', 'admin'] },
+  { from: 'returning_to_store', to: 'returned_to_store', actors: ['retailer', 'delivery_agent', 'admin', 'system'] },
   { from: 'returning_to_store', to: 'cancelled', actors: ['admin'] },
 
   { from: 'returned_to_store', to: 'delivered', actors: ['retailer', 'admin'] },

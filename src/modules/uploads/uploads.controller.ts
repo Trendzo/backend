@@ -37,8 +37,10 @@ export async function uploadMedia(req: FastifyRequest) {
     throw AppError.validation('File too large — limit is 25 MB');
   }
 
-  // Listing-gallery has a tighter 5 MB cap + format filter per US-5.2.4.
-  if (parsedQuery.data.purpose === 'listing-gallery') {
+  // Listing media (gallery + rich-description images) share a tighter 5 MB cap
+  // + format filter per US-5.2.4.
+  const purpose = parsedQuery.data.purpose;
+  if (purpose === 'listing-gallery' || purpose === 'listing-description') {
     if (buffer.length > LISTING_GALLERY_MAX_BYTES) {
       throw AppError.validation('File too large — listing images are capped at 5 MB');
     }

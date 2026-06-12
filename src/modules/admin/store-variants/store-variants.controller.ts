@@ -10,6 +10,7 @@ import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { recordAudit } from '@/shared/audit.js';
 import { notify, notifySummaryToStoreOwners } from '@/shared/notify.js';
+import { resolveGroupId } from '@/shared/variant-groups.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
   BulkCreateBody,
@@ -63,6 +64,11 @@ export async function createVariant(input: {
       `Variant image not in listing gallery: ${stray[0]}`,
     );
   }
+  const groupId = await resolveGroupId(db, listing, {
+    groupId: input.body.groupId,
+    attributes: input.body.attributes,
+    createMissing: true,
+  });
   const id = newId(IdPrefix.Variant);
   try {
     const [created] = await db
@@ -70,6 +76,8 @@ export async function createVariant(input: {
       .values({
         id,
         listingId: listing.id,
+        storeId: listing.storeId,
+        groupId,
         attributes: input.body.attributes,
         attributesLabel: input.body.attributesLabel,
         ...(input.body.sku !== undefined && { sku: input.body.sku }),
@@ -132,17 +140,27 @@ export async function bulkCreate(input: {
       );
     }
   }
-  const rows = input.body.variants.map((v) => ({
-    id: newId(IdPrefix.Variant),
-    listingId: listing.id,
-    attributes: v.attributes,
-    attributesLabel: v.attributesLabel,
-    ...(v.sku !== undefined && { sku: v.sku }),
-    pricePaise: v.pricePaise,
-    stock: v.stock,
-    imageUrls: v.imageUrls,
-    reserved: 0,
-  }));
+  const rows: (typeof variants.$inferInsert)[] = [];
+  for (const v of input.body.variants) {
+    const groupId = await resolveGroupId(db, listing, {
+      groupId: v.groupId,
+      attributes: v.attributes,
+      createMissing: true,
+    });
+    rows.push({
+      id: newId(IdPrefix.Variant),
+      listingId: listing.id,
+      storeId: listing.storeId,
+      groupId,
+      attributes: v.attributes,
+      attributesLabel: v.attributesLabel,
+      ...(v.sku !== undefined && { sku: v.sku }),
+      pricePaise: v.pricePaise,
+      stock: v.stock,
+      imageUrls: v.imageUrls,
+      reserved: 0,
+    });
+  }
   try {
     const created = await db.insert(variants).values(rows).returning();
     await notifySummaryToStoreOwners({

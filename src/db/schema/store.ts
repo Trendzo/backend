@@ -198,3 +198,41 @@ export const bankAccountsRelations = relations(bankAccounts, ({ one }) => ({
     references: [retailerStores.id],
   }),
 }));
+
+/**
+ * Persistent media library — a record of every image a retailer uploads, so the
+ * product wizard can offer a Shopify-style "pick from already-uploaded" picker.
+ * Soft-deleted only (deletedAt): a URL removed from the library may still be
+ * referenced by a live listing/variant, so the Cloudinary asset is never
+ * destroyed here.
+ */
+export const storeMedia = pgTable(
+  'store_media',
+  {
+    id: text('id').primaryKey(),
+    storeId: text('store_id')
+      .notNull()
+      .references(() => retailerStores.id),
+    url: text('url').notNull(),
+    publicId: text('public_id'),
+    folder: text('folder'),
+    resourceType: text('resource_type').notNull().default('image'),
+    mimetype: text('mimetype'),
+    width: integer('width'),
+    height: integer('height'),
+    bytes: integer('bytes'),
+    alt: text('alt'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'date' }),
+  },
+  (t) => ({
+    storeCreatedIdx: index('store_media_store_created_idx').on(t.storeId, t.createdAt),
+  }),
+);
+
+export const storeMediaRelations = relations(storeMedia, ({ one }) => ({
+  store: one(retailerStores, {
+    fields: [storeMedia.storeId],
+    references: [retailerStores.id],
+  }),
+}));

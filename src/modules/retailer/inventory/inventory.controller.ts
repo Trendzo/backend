@@ -21,6 +21,11 @@ import {
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
+import {
+  colorFromAttributes,
+  insertDefaultGroup,
+  resolveGroupId,
+} from '@/shared/variant-groups.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import {
   classify,
@@ -402,6 +407,7 @@ export async function importInventory(input: { auth: Auth; body: z.infer<typeof 
       if (p.action !== 'listing_create' || !p.listingCreate) continue;
       const lc: ListingCreatePlan = p.listingCreate;
       const lid = newId('lst');
+      const csvHasColor = colorFromAttributes(lc.variant.attributes) !== null;
       await tx.insert(productListings).values({
         id: lid,
         storeId: store.id,
@@ -409,13 +415,26 @@ export async function importInventory(input: { auth: Auth; body: z.infer<typeof 
         categoryId: lc.categoryId,
         name: lc.listingName,
         gender: lc.gender,
+        variantMode: csvHasColor
+          ? 'color_size'
+          : Object.keys(lc.variant.attributes).length > 0
+            ? 'custom'
+            : 'single',
         status: 'draft',
       });
       createdListings.push({ row: p.row, listingId: lid, name: lc.listingName });
+      await insertDefaultGroup(tx, lid, store.id);
+      const groupId = await resolveGroupId(
+        tx,
+        { id: lid, storeId: store.id },
+        { attributes: lc.variant.attributes, createMissing: true },
+      );
       const vid = newId('var');
       await tx.insert(variants).values({
         id: vid,
         listingId: lid,
+        storeId: store.id,
+        groupId,
         ...(lc.variant.sku && { sku: lc.variant.sku }),
         attributes: lc.variant.attributes,
         attributesLabel: lc.variant.attributesLabel,
@@ -463,10 +482,17 @@ export async function importInventory(input: { auth: Auth; body: z.infer<typeof 
         }
         listingId = resolved;
       }
+      const groupId = await resolveGroupId(
+        tx,
+        { id: listingId, storeId: store.id },
+        { attributes: vc.attributes, createMissing: true },
+      );
       const vid = newId('var');
       await tx.insert(variants).values({
         id: vid,
         listingId,
+        storeId: store.id,
+        groupId,
         ...(vc.sku && { sku: vc.sku }),
         attributes: vc.attributes,
         attributesLabel: vc.attributesLabel,

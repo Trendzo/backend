@@ -4,6 +4,7 @@ import {
   BrandsQuery,
   CategoriesQuery,
   CollectionsQuery,
+  SizeScalesQuery,
   SlugParam,
 } from './catalog.validators.js';
 
@@ -16,6 +17,12 @@ const catalogRoutes: FastifyPluginAsyncZod = async (app) => {
     '/categories',
     { schema: { querystring: CategoriesQuery } },
     async (req) => ctrl.listCategories({ query: req.query }),
+  );
+
+  app.get(
+    '/size-scales',
+    { schema: { querystring: SizeScalesQuery } },
+    async (req) => ctrl.listSizeScales({ query: req.query }),
   );
 
   app.get(

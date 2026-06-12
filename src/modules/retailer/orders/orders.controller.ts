@@ -1,17 +1,18 @@
 /**
  * Retailer-side order management. Scoped to the authenticated retailer's storeId.
  */
-import { and, asc, eq, desc, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, desc, inArray, or, sql, type SQL } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
+  customerIssues,
   deliveryAttempts,
   heldItems,
   orderItems,
   orderTransitions,
   orders,
   payments,
-  platformConfig,
+  payoutHolds,
   refundDisbursements,
   refunds,
   retailerAccounts,
@@ -22,6 +23,8 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { logTransitionMarker, transitionOrder } from '@/shared/orders/transition.js';
+import { finalizeReturnedOrder } from '@/shared/orders/finalize-return.js';
+import { recordUndelivered } from '@/shared/orders/undelivered.js';
 import { type OrderStatus, transitionsFrom } from '@/shared/orders/state-machine.js';
 import { closeDoor, extendDoor, openDoor } from '@/shared/orders/door-visit.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
@@ -48,7 +51,10 @@ async function getOwnStoreId(auth: Auth): Promise<string> {
   if (!retailer.storeId) {
     throw new AppError(409, ErrorCode.NotOwner, 'No store linked to this retailer account');
   }
-  if (retailer.status !== 'active') {
+  // `terminated` passes through: those accounts keep read-only access to their
+  // historical orders. Mutating verbs never reach this controller — they are
+  // rejected centrally in requireAuth (shared/auth/middleware.ts).
+  if (retailer.status !== 'active' && retailer.status !== 'terminated') {
     throw new AppError(
       403,
       ErrorCode.RetailerNotApproved,
@@ -95,8 +101,25 @@ export async function listOrders(input: { auth: Auth; query: z.infer<typeof List
     ...(where && { where }),
     orderBy: oldestFirst ? asc(orders.placedAt) : desc(orders.placedAt),
     limit: input.query.limit,
-    with: { items: { columns: { id: true } } },
+    with: { items: { columns: { id: true, listingNameSnap: true, qty: true, listingId: true } } },
   });
+
+  // Which of these orders have a return awaiting the store's decision — so the
+  // board/sheet can surface accept/decline-return actions without a per-row fetch.
+  const allItemIds = rows.flatMap((r) => r.items.map((i) => i.id));
+  const pendingReturnOrderIds = new Set<string>();
+  if (allItemIds.length > 0) {
+    const pend = await db.query.returns.findMany({
+      where: and(inArray(returns.orderItemId, allItemIds), eq(returns.storeDecision, 'pending')),
+      columns: { orderItemId: true },
+    });
+    const itemToOrder = new Map(rows.flatMap((r) => r.items.map((i) => [i.id, r.id] as const)));
+    for (const p of pend) {
+      const oid = itemToOrder.get(p.orderItemId);
+      if (oid) pendingReturnOrderIds.add(oid);
+    }
+  }
+
   return ok(
     rows.map((r) => ({
       id: r.id,
@@ -106,6 +129,8 @@ export async function listOrders(input: { auth: Auth; query: z.infer<typeof List
       deliveryMethod: r.deliveryMethod,
       paymentMethod: r.paymentMethod,
       itemCount: r.items.length,
+      // Compact line-item preview for board/history cards (capped).
+      items: r.items.slice(0, 4).map((i) => ({ name: i.listingNameSnap, qty: i.qty, listingId: i.listingId })),
       grandTotalPaise: r.grandTotalPaise,
       placedAt: r.placedAt,
       acceptedAt: r.acceptedAt,
@@ -116,6 +141,7 @@ export async function listOrders(input: { auth: Auth; query: z.infer<typeof List
       pickupCode: r.pickupCode,
       doorWindowExpiresAt: r.doorWindowExpiresAt,
       doorWindowExtendedAt: r.doorWindowExtendedAt,
+      hasPendingReturn: pendingReturnOrderIds.has(r.id),
     })),
   );
 }
@@ -159,13 +185,78 @@ export async function getOrder(input: { auth: Auth; id: string }) {
           where: inArray(heldItems.returnId, returnIds),
           orderBy: asc(heldItems.holdingWindowExpiresAt),
         });
+
+  // Disputes on this order (open AND decided/closed), linked via orderId or one
+  // of the order's returns. A return-decline dispute links via returnId (its
+  // orderId is null), so match both. Direct per-order query — no platform-wide
+  // scan. `heldAmountPaise` is the still-active payout hold for an open dispute
+  // (funds withheld from the retailer until an admin decides).
+  const OPEN_ISSUE_STATUSES = ['open', 'requested_evidence', 'escalated'] as const;
+  const issueRows = await db.query.customerIssues.findMany({
+    where: returnIds.length
+      ? or(eq(customerIssues.orderId, order.id), inArray(customerIssues.returnId, returnIds))
+      : eq(customerIssues.orderId, order.id),
+    columns: {
+      id: true,
+      status: true,
+      subject: true,
+      description: true,
+      openedByActorType: true,
+      createdAt: true,
+      decision: true,
+      decisionNote: true,
+      decidedAt: true,
+      returnId: true,
+    },
+    orderBy: desc(customerIssues.createdAt),
+  });
+  const issueIds = issueRows.map((i) => i.id);
+  const activeHolds = issueIds.length
+    ? await db.query.payoutHolds.findMany({
+        where: and(inArray(payoutHolds.disputeId, issueIds), eq(payoutHolds.status, 'active')),
+        columns: { disputeId: true, amountPaise: true },
+      })
+    : [];
+  const heldByDispute = new Map<string, number>();
+  for (const h of activeHolds) {
+    heldByDispute.set(h.disputeId, (heldByDispute.get(h.disputeId) ?? 0) + Number(h.amountPaise));
+  }
+  const disputes = issueRows.map((i) => ({
+    id: i.id,
+    status: i.status,
+    subject: i.subject,
+    description: i.description,
+    openedByActorType: i.openedByActorType,
+    createdAt: i.createdAt,
+    decision: i.decision,
+    decisionNote: i.decisionNote,
+    decidedAt: i.decidedAt,
+    returnId: i.returnId,
+    heldAmountPaise: heldByDispute.get(i.id) ?? null,
+  }));
+  // Thin open-dispute summary kept for action gating (hides raise-dispute /
+  // request-refund while a dispute is live).
+  const open = disputes.find((d) => (OPEN_ISSUE_STATUSES as readonly string[]).includes(d.status));
+  const openDispute = open ? { id: open.id, status: open.status } : null;
+
   return ok({
     ...order,
     returns: returnsRows,
     refunds: refundsRows,
     heldItems: heldRows,
+    disputes,
+    openDispute,
     availableTransitions: transitionsFrom(order.status as OrderStatus),
   });
+}
+
+/** Retailer marks returned goods physically received → returned_to_store, then
+ *  auto-finalizes the order if every return is resolved. */
+export async function confirmReturnReceived(input: { auth: Auth; id: string }) {
+  const storeId = await getOwnStoreId(input.auth);
+  await loadOwnedOrder(input.id, storeId);
+  await finalizeReturnedOrder(db, input.id, { type: 'retailer', id: input.auth.sub });
+  return ok({ id: input.id });
 }
 
 export async function acceptOrder(input: { auth: Auth; id: string }) {
@@ -243,6 +334,31 @@ export async function handover(input: {
 }) {
   const storeId = await getOwnStoreId(input.auth);
   await loadOwnedOrder(input.id, storeId);
+
+  // If an agent account is named, it must be a delivery-agent in THIS store.
+  let agentNameSnap: string | undefined;
+  if (input.body.assignedAgentId) {
+    const agent = await db.query.retailerAccounts.findFirst({
+      where: eq(retailerAccounts.id, input.body.assignedAgentId),
+      columns: { id: true, storeId: true, subRole: true, status: true, legalName: true },
+    });
+    if (!agent || agent.storeId !== storeId || agent.subRole !== 'delivery_agent') {
+      throw new AppError(
+        422,
+        ErrorCode.InvalidState,
+        'assignedAgentId must be a delivery-agent account in your store',
+      );
+    }
+    if (agent.status !== 'active') {
+      throw new AppError(409, ErrorCode.InvalidState, `Agent account is ${agent.status}`);
+    }
+    agentNameSnap = agent.legalName;
+    await db
+      .update(orders)
+      .set({ assignedAgentId: agent.id })
+      .where(eq(orders.id, input.id));
+  }
+
   const result = await transitionOrder(db, {
     orderId: input.id,
     toStatus: 'picked_up',
@@ -251,6 +367,7 @@ export async function handover(input: {
     reason: 'agent_handover',
     metadata: {
       ...input.body,
+      ...(agentNameSnap ? { assignedAgentName: agentNameSnap } : {}),
       ...(input.auth.impersonating
         ? { impersonatingAdminSessionId: input.auth.impersonating.sessionId }
         : {}),
@@ -340,64 +457,15 @@ export async function markUndelivered(input: {
   const storeId = await getOwnStoreId(input.auth);
   await loadOwnedOrder(input.id, storeId);
 
-  const cfg = await db.query.platformConfig.findFirst({
-    where: eq(platformConfig.key, 'undelivered_retry_budget'),
-  });
-  const retryBudget = cfg && typeof cfg.value === 'number' ? (cfg.value as number) : 1;
-
-  const existingAttempts = await db
-    .select({ attemptNumber: deliveryAttempts.attemptNumber })
-    .from(deliveryAttempts)
-    .where(eq(deliveryAttempts.orderId, input.id));
-  const attemptsSoFar = existingAttempts.length;
-  const nextAttempt =
-    existingAttempts.reduce((max, a) => Math.max(max, a.attemptNumber), 0) + 1;
-
-  await db.insert(deliveryAttempts).values({
-    id: newId(IdPrefix.DeliveryAttempt),
+  const result = await recordUndelivered(db, {
     orderId: input.id,
-    deliveryAgentId: null,
-    attemptNumber: nextAttempt,
-    outcome: 'undelivered',
-    notes: input.body.reason,
-    proofPhotos: [],
-  });
-
-  await transitionOrder(db, {
-    orderId: input.id,
-    toStatus: 'undelivered',
-    actorType: 'retailer',
-    actorId: input.auth.sub,
+    actor: { type: 'retailer', id: input.auth.sub },
     reason: input.body.reason,
-    metadata: {
-      attemptNumber: nextAttempt,
-      ...(input.auth.impersonating
-        ? { impersonatingAdminSessionId: input.auth.impersonating.sessionId }
-        : {}),
-    },
+    metadata: input.auth.impersonating
+      ? { impersonatingAdminSessionId: input.auth.impersonating.sessionId }
+      : {},
   });
-
-  const totalAttemptsAfterThis = attemptsSoFar + 1;
-  if (totalAttemptsAfterThis < 1 + retryBudget) {
-    const retry = await transitionOrder(db, {
-      orderId: input.id,
-      toStatus: 'out_for_delivery',
-      actorType: 'system',
-      actorId: 'system',
-      reason: 'retry_within_budget',
-      metadata: { retryNumber: totalAttemptsAfterThis + 1 },
-    });
-    return ok({ ...retry, retryWithinBudget: true });
-  }
-  const final = await transitionOrder(db, {
-    orderId: input.id,
-    toStatus: 'returning_to_store',
-    actorType: 'system',
-    actorId: 'system',
-    reason: 'retry_budget_exhausted',
-    metadata: { totalAttempts: totalAttemptsAfterThis },
-  });
-  return ok({ ...final, retryWithinBudget: false });
+  return ok(result);
 }
 
 export async function requestCancel(input: {
@@ -407,6 +475,17 @@ export async function requestCancel(input: {
 }) {
   const storeId = await getOwnStoreId(input.auth);
   const order = await loadOwnedOrder(input.id, storeId);
+  // A cancellation request only makes sense pre-shipment. Once the order is in
+  // transit or coming back as a return, delivery/return decisions govern it —
+  // mirror the UI which only offers this on routing/accepted/packed.
+  const CANCELLABLE: OrderStatus[] = ['routing', 'accepted', 'packed'];
+  if (!CANCELLABLE.includes(order.status as OrderStatus)) {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      `Cannot request cancellation once the order is '${order.status}'`,
+    );
+  }
   const marker = await logTransitionMarker(db, {
     orderId: order.id,
     toStatus: order.status as OrderStatus,

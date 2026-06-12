@@ -7,7 +7,7 @@
  *               For each non-kept item, inserts a `returns` row (kind='door_return') with the
  *               agent disposition and starts the verification window.
  */
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
 import {
   orderItems,
@@ -22,12 +22,20 @@ import { IdPrefix, newId } from '@/shared/ids.js';
 import { logTransitionMarker, transitionOrder } from './transition.js';
 import type { ActorType, OrderStatus } from './state-machine.js';
 
-export type DoorDecision = 'kept' | 'returned' | 'refused';
+// Per-item door outcomes:
+//  - kept            → customer keeps the item (normal delivery).
+//  - returned        → customer hands a clean item back; goods travel to the store
+//                      and await store verification (refund on accept / dispute on decline).
+//  - refused         → customer refuses the delivery outright; goods travel back.
+//  - return_rejected → customer tried to return a wrong/defective/changed item and the
+//                      AGENT rejects the return at the door: the item STAYS with the
+//                      customer (counts as delivered, no refund), evidence is captured.
+export type DoorDecision = 'kept' | 'returned' | 'refused' | 'return_rejected';
 
 export type DoorItemDecision = {
   orderItemId: string;
   decision: DoorDecision;
-  /** Required for 'refused' (with photos). Optional for 'returned'. */
+  /** Required (with ≥1 photo) for 'refused' and 'return_rejected'. Optional for 'returned'. */
   reason?: string | undefined;
   photos?: string[] | undefined;
 };
@@ -36,13 +44,20 @@ const DECISION_TO_OUTCOME = {
   kept: 'at_door_kept',
   returned: 'at_door_returned',
   refused: 'at_door_refused',
+  return_rejected: 'at_door_return_rejected',
 } as const;
 
 const DECISION_TO_AGENT_DISPOSITION = {
   kept: 'kept',
   returned: 'returned',
   refused: 'refused',
+  return_rejected: 'return_rejected',
 } as const;
+
+/** Decisions where the customer keeps the goods (delivered, no goods movement). */
+const STAYS_WITH_CUSTOMER = new Set<DoorDecision>(['kept', 'return_rejected']);
+/** Decisions that require a reason + at least one evidence photo. */
+const NEEDS_EVIDENCE = new Set<DoorDecision>(['refused', 'return_rejected']);
 
 // §9 — defaults if platform_config rows are absent. 10-min initial window, 5-min
 // one-shot extension match the values used by the dashboard's prior mock.
@@ -180,6 +195,7 @@ export async function closeDoor(
   keptCount: number;
   returnedCount: number;
   refusedCount: number;
+  returnRejectedCount: number;
 }> {
   const order = await database.query.orders.findFirst({
     where: eq(orders.id, orderId),
@@ -214,19 +230,20 @@ export async function closeDoor(
         `Item ${d.orderItemId} is not on this order`,
       );
     }
-    if (d.decision === 'refused') {
+    if (NEEDS_EVIDENCE.has(d.decision)) {
+      const what = d.decision === 'refused' ? 'Refusing a delivery' : 'Rejecting a return';
       if (!d.reason || d.reason.trim().length < 3) {
         throw new AppError(
           422,
           ErrorCode.DoorVisitRefuseRequiresEvidence,
-          'Refusing an item requires a reason',
+          `${what} requires a reason`,
         );
       }
       if (!d.photos || d.photos.length === 0) {
         throw new AppError(
           422,
           ErrorCode.DoorVisitRefuseRequiresEvidence,
-          'Refusing an item requires at least one photo',
+          `${what} requires at least one photo`,
         );
       }
     }
@@ -235,6 +252,7 @@ export async function closeDoor(
   const keptCount = perItemDecisions.filter((d) => d.decision === 'kept').length;
   const returnedCount = perItemDecisions.filter((d) => d.decision === 'returned').length;
   const refusedCount = perItemDecisions.filter((d) => d.decision === 'refused').length;
+  const returnRejectedCount = perItemDecisions.filter((d) => d.decision === 'return_rejected').length;
 
   // Verification window for any door-return rows we create.
   const cfg = await database.query.platformConfig.findFirst({
@@ -257,8 +275,9 @@ export async function closeDoor(
         .set({ outcome })
         .where(eq(orderItems.id, d.orderItemId));
 
-      if (d.decision === 'kept') {
-        // Finalise stock for kept items now (mirror standard delivery).
+      if (STAYS_WITH_CUSTOMER.has(d.decision)) {
+        // Customer keeps the item (a normal keep, or a return the agent rejected at
+        // the door). Finalise stock now (mirror standard delivery).
         await tx
           .update(variants)
           .set({
@@ -266,8 +285,27 @@ export async function closeDoor(
             reserved: sql`GREATEST(${variants.reserved} - ${it.qty}, 0)`,
           })
           .where(eq(variants.id, it.variantId));
+
+        if (d.decision === 'return_rejected') {
+          // Record the rejected-at-door return for audit/evidence. Born resolved
+          // (storeDecision='rejected_at_door'): goods stayed with the customer, so
+          // NO held item and NO refund — and it never enters the store's pending
+          // verification queue (which filters storeDecision='pending').
+          const rid = newId(IdPrefix.Return);
+          await tx.insert(returns).values({
+            id: rid,
+            orderItemId: d.orderItemId,
+            kind: 'door_return',
+            reasonText: d.reason ?? null,
+            photos: d.photos ?? [],
+            agentDisposition: 'return_rejected',
+            storeDecision: 'rejected_at_door',
+            storeDecidedAt: new Date(),
+          });
+          returnIds.push(rid);
+        }
       } else {
-        // Insert door-return row.
+        // returned / refused → goods travel back to the store; await verification.
         const rid = newId(IdPrefix.Return);
         await tx.insert(returns).values({
           id: rid,
@@ -284,8 +322,11 @@ export async function closeDoor(
     }
   });
 
-  // Decide order transition.
-  const toStatus: OrderStatus = keptCount > 0 ? 'delivered' : 'returning_to_store';
+  // Decide order transition. The order is 'delivered' if ANY item stays with the
+  // customer (kept or return_rejected); only an all-returned/refused visit goes
+  // back to the store.
+  const staysCount = keptCount + returnRejectedCount;
+  const toStatus: OrderStatus = staysCount > 0 ? 'delivered' : 'returning_to_store';
   await transitionOrder(database, {
     orderId,
     toStatus,
@@ -296,6 +337,7 @@ export async function closeDoor(
       keptCount,
       returnedCount,
       refusedCount,
+      returnRejectedCount,
       returnIds,
     },
   });
@@ -307,8 +349,44 @@ export async function closeDoor(
     keptCount,
     returnedCount,
     refusedCount,
+    returnRejectedCount,
   };
 }
 
 // quench unused
 void inArray;
+
+/**
+ * Sweep expired try-on door windows. A customer who didn't return anything
+ * within the window has effectively KEPT the items, so auto-close all-kept →
+ * delivered. A grace period after expiry lets the live board show the lapsed
+ * card (sorted to the bottom) for the day before the system finalizes it.
+ */
+const DOOR_SWEEP_GRACE_MS = 30 * 60 * 1000; // 30 min after expiry
+
+export async function processDoorWindowSweep(database: typeof Db): Promise<number> {
+  const cutoff = new Date(Date.now() - DOOR_SWEEP_GRACE_MS);
+  const stuck = await database.query.orders.findMany({
+    where: and(eq(orders.status, 'at_door'), lt(orders.doorWindowExpiresAt, cutoff)),
+    columns: { id: true },
+  });
+  let closed = 0;
+  for (const o of stuck) {
+    const items = await database.query.orderItems.findMany({
+      where: eq(orderItems.orderId, o.id),
+      columns: { id: true },
+    });
+    try {
+      await closeDoor(
+        database,
+        o.id,
+        { type: 'system', id: 'system' },
+        items.map((it) => ({ orderItemId: it.id, decision: 'kept' as const })),
+      );
+      closed++;
+    } catch {
+      // best-effort; leave for the next sweep / manual handling
+    }
+  }
+  return closed;
+}

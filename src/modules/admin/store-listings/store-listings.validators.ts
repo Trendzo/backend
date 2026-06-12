@@ -9,7 +9,6 @@ export const CreateListingBody = z.object({
   brandId: z.string().min(1),
   categoryId: z.string().min(1),
   gender: z.enum(['her', 'him', 'unisex']),
-  badge: z.enum(['new', 'hot', 'trending', 'none']).default('none'),
   listingPolicy: z.enum(['return', 'replace', 'final_sale']).default('return'),
   galleryUrls: z.array(z.string().url()).default([]),
   hsn: z.string().trim().max(8).optional(),

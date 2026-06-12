@@ -20,6 +20,10 @@ export const BrandsQuery = z.object({
     .transform((v) => v === 'true'),
 });
 
+export const SizeScalesQuery = z.object({
+  categoryId: z.string().optional(),
+});
+
 export const CollectionsQuery = z.object({
   kind: CollectionKindEnum.optional(),
   gender: GenderEnum.optional(),

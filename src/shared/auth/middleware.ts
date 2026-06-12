@@ -1,9 +1,12 @@
 import { eq } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
 import { db } from '@/db/client.js';
-import { consumers } from '@/db/schema/index.js';
+import { consumers, retailerAccounts } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { verifyAccessToken, type AccessTokenPayload, type TokenKind } from './jwt.js';
+
+/** HTTP methods that never mutate state — allowed for terminated retailers. */
+const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
  * Augment FastifyRequest so handlers can read the authenticated principal off `req.auth`
@@ -56,6 +59,27 @@ export function requireAuth(...allowedKinds: TokenKind[]): preHandlerAsyncHookHa
       }
       if (row.status === 'closed') {
         throw new AppError(401, ErrorCode.ConsumerClosed, 'Account is closed');
+      }
+    }
+    if (payload.kind === 'retailer') {
+      // Terminated retailers retain read-only access so owners/managers can
+      // retrieve their records (orders, invoices, statements) after the store
+      // is shut down. Any mutating verb is rejected here, centrally, so no
+      // individual controller needs its own terminated-check.
+      const row = await db.query.retailerAccounts.findFirst({
+        where: eq(retailerAccounts.id, payload.sub),
+        columns: { status: true, permanentSuspend: true },
+      });
+      if (!row) {
+        throw AppError.unauthorized('Account not found');
+      }
+      const locked = row.status === 'terminated' || row.permanentSuspend;
+      if (locked && !READ_METHODS.has(req.method.toUpperCase())) {
+        throw new AppError(
+          403,
+          ErrorCode.Forbidden,
+          'Account is terminated — access is read-only. Contact support to export or restore your data.',
+        );
       }
     }
     req.auth = payload;

@@ -29,6 +29,28 @@ export const attributeTemplates = pgTable('attribute_templates', {
     >()
     .notNull(),
   isPlatformDefault: boolean('is_platform_default').notNull().default(false),
+  // Usage tracking for "suggest my recent / popular templates" sorting.
+  // usageCount = number of times attached to a listing; lastUsedAt = most
+  // recent attach or variant-create under a listing carrying this template.
+  usageCount: integer('usage_count').notNull().default(0),
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true, mode: 'date' }),
+});
+
+/**
+ * Platform size scales for the system color → size variant flow. Each row is
+ * one sizing system ("UK", "EU", "Letter", "Waist (in)", …) with its pick-list
+ * values. `categorySlugs` names the category slugs the scale applies to —
+ * empty array = universal (offered for every category). The wizard resolves
+ * a listing's category (walking up the parent chain) against these to decide
+ * which size systems to offer; free-typed sizes are always accepted on top.
+ */
+export const sizeScales = pgTable('size_scales', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(), // e.g. "UK", "Letter sizes", "Waist (in)"
+  values: jsonb('values').$type<string[]>().notNull(),
+  categorySlugs: jsonb('category_slugs').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  sortOrder: integer('sort_order').notNull().default(0),
+  isActive: boolean('is_active').notNull().default(true),
 });
 
 export const aiCatalogSubmissions = pgTable('ai_catalog_submissions', {

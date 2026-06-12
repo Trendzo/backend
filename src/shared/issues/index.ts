@@ -9,6 +9,7 @@ import {
   customerIssueMessages,
   customerIssueTransitions,
   customerIssues,
+  heldItems,
   orders,
   policyEnforcementActions,
   returns as returnsTable,
@@ -29,6 +30,8 @@ import { notifyConsumer } from '@/shared/notify-consumer.js';
 import { notify } from '@/shared/notify.js';
 import { recordAdjustment } from '@/shared/settlement/adjustments.js';
 import { autoReleaseHoldsForDispute } from '@/shared/settlement/holds.js';
+import { createRefundForReturns } from '@/shared/refunds/create-refund.js';
+import { finalizeReturnedOrder } from '@/shared/orders/finalize-return.js';
 
 type IssueKind = (typeof issueKindEnum.enumValues)[number];
 type AwaitingParty = (typeof awaitingPartyEnum.enumValues)[number];
@@ -112,25 +115,26 @@ export async function createIssue(input: CreateIssueInput): Promise<{ issueId: s
       reason: 'created',
     });
   });
-  // Always inform the store that someone (possibly the store themselves) opened an issue.
+  // Always inform the store that someone (possibly the store themselves) opened a
+  // dispute. The query/complaint/dispute kind is no longer surfaced — all are
+  // presented as disputes — so the copy is uniform.
   await notifyStoreAccounts({
     storeId: input.storeId,
     kind: 'issue',
-    title: `New ${input.kind} opened`,
+    title: `New dispute opened`,
     body: input.subject,
-    deepLink: `/issues/${id}`,
+    deepLink: `/disputes/${id}`,
     payload: { issueId: id, kind: input.kind },
   });
-  // §22 — also alert every admin when a *dispute* is opened so the queue stays fresh.
-  if (input.kind === 'dispute') {
-    await notifyAllAdmins({
-      kind: 'issue',
-      title: `New dispute opened`,
-      body: input.subject,
-      deepLink: `/admin/issues/${id}`,
-      payload: { issueId: id, storeId: input.storeId, orderId: input.orderId ?? null },
-    });
-  }
+  // §22 — alert every admin when a dispute is opened so the queue stays fresh.
+  // Every kind now lands in the single Disputes queue, so always fan out.
+  await notifyAllAdmins({
+    kind: 'issue',
+    title: `New dispute opened`,
+    body: input.subject,
+    deepLink: `/admin/disputes/${id}`,
+    payload: { issueId: id, storeId: input.storeId, orderId: input.orderId ?? null },
+  });
   return { issueId: id };
 }
 
@@ -150,7 +154,7 @@ export async function addIssueMessage(
   const issue = await db.query.customerIssues.findFirst({
     where: eq(customerIssues.id, input.issueId),
   });
-  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Issue not found');
+  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Dispute not found');
   const id = newId(IdPrefix.IssueMessage);
   const now = new Date();
   await db.transaction(async (tx) => {
@@ -178,9 +182,9 @@ async function fanOutMessageNotification(
   senderType: SenderType,
   bodyPreview: string,
 ): Promise<void> {
-  const title = 'New message on issue';
+  const title = 'New message on dispute';
   const body = bodyPreview.length > 120 ? `${bodyPreview.slice(0, 117)}…` : bodyPreview;
-  const deepLink = `/issues/${issue.id}`;
+  const deepLink = `/disputes/${issue.id}`;
   const payload = { issueId: issue.id };
   const tasks: Promise<unknown>[] = [];
   if (senderType !== 'retailer') {
@@ -237,7 +241,7 @@ export async function setAwaitingParty(input: SetAwaitingInput): Promise<void> {
   const issue = await db.query.customerIssues.findFirst({
     where: eq(customerIssues.id, input.issueId),
   });
-  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Issue not found');
+  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Dispute not found');
   await db.transaction(async (tx) => {
     await tx
       .update(customerIssues)
@@ -261,9 +265,9 @@ async function notifyAwaitee(
   issue: typeof customerIssues.$inferSelect,
   party: AwaitingParty,
 ): Promise<void> {
-  const title = 'Issue needs your response';
+  const title = 'Dispute needs your response';
   const body = issue.subject;
-  const deepLink = `/issues/${issue.id}`;
+  const deepLink = `/disputes/${issue.id}`;
   const payload = { issueId: issue.id };
   if (party === 'retailer') {
     await notifyStoreAccounts({
@@ -309,9 +313,9 @@ export async function requestEvidence(input: RequestEvidenceInput): Promise<void
   const issue = await db.query.customerIssues.findFirst({
     where: eq(customerIssues.id, input.issueId),
   });
-  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Issue not found');
+  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Dispute not found');
   if (issue.status === 'decided') {
-    throw new AppError(409, ErrorCode.InvalidState, 'Issue already decided');
+    throw new AppError(409, ErrorCode.InvalidState, 'Dispute already decided');
   }
   await db.transaction(async (tx) => {
     await tx
@@ -353,7 +357,7 @@ export async function assignAdmin(input: AssignAdminInput): Promise<void> {
   const issue = await db.query.customerIssues.findFirst({
     where: eq(customerIssues.id, input.issueId),
   });
-  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Issue not found');
+  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Dispute not found');
   const nextParty: AwaitingParty = input.awaitingParty ?? issue.awaitingParty;
   await db.transaction(async (tx) => {
     await tx
@@ -376,9 +380,9 @@ export async function assignAdmin(input: AssignAdminInput): Promise<void> {
     recipientKind: 'admin',
     recipientId: input.adminId,
     kind: 'issue',
-    title: 'Issue assigned to you',
+    title: 'Dispute assigned to you',
     body: issue.subject,
-    deepLink: `/issues/${issue.id}`,
+    deepLink: `/disputes/${issue.id}`,
     payload: { issueId: issue.id },
   });
 }
@@ -393,9 +397,9 @@ export async function escalateIssue(input: {
   const issue = await db.query.customerIssues.findFirst({
     where: eq(customerIssues.id, input.issueId),
   });
-  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Issue not found');
+  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Dispute not found');
   if (issue.status === 'decided') {
-    throw new AppError(409, ErrorCode.InvalidState, 'Issue already decided');
+    throw new AppError(409, ErrorCode.InvalidState, 'Dispute already decided');
   }
   await db.transaction(async (tx) => {
     await tx
@@ -416,9 +420,9 @@ export async function escalateIssue(input: {
   // §22 — escalation alerts every admin so super-admins can adopt.
   await notifyAllAdmins({
     kind: 'issue',
-    title: 'Issue escalated to super-admin',
+    title: 'Dispute escalated to super-admin',
     body: input.note,
-    deepLink: `/admin/issues/${input.issueId}`,
+    deepLink: `/admin/disputes/${input.issueId}`,
     payload: { issueId: input.issueId, kind: issue.kind, storeId: issue.storeId },
   });
 }
@@ -429,9 +433,9 @@ export async function closeIssue(input: { issueId: string; adminId: string }): P
   const issue = await db.query.customerIssues.findFirst({
     where: eq(customerIssues.id, input.issueId),
   });
-  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Issue not found');
+  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Dispute not found');
   if (issue.closedAt) {
-    throw new AppError(409, ErrorCode.InvalidState, 'Issue already closed');
+    throw new AppError(409, ErrorCode.InvalidState, 'Dispute already closed');
   }
   await db.transaction(async (tx) => {
     await tx
@@ -473,6 +477,44 @@ export interface DecideIssueInput {
   adminId: string;
 }
 
+/**
+ * Apply the financial outcome of a return dispute. `refundConsumer=true` issues
+ * the (previously-withheld) consumer refund and marks the goods restocked;
+ * either way the goods are resolved and the order is finalized.
+ */
+async function settleDisputedReturn(
+  returnId: string,
+  adminId: string,
+  refundConsumer: boolean,
+): Promise<void> {
+  const ret = await db.query.returns.findFirst({
+    where: eq(returnsTable.id, returnId),
+    with: { orderItem: { columns: { orderId: true } } },
+  });
+  if (!ret) return;
+  const orderId = ret.orderItem.orderId;
+
+  if (refundConsumer) {
+    await createRefundForReturns(db, {
+      orderId,
+      returnIds: [returnId],
+      reason: `Dispute resolved — refund for return ${returnId}`,
+      actor: { type: 'admin', id: adminId },
+    }).catch(() => undefined);
+  }
+  // Resolve the shelved goods (guard: resolved requires disposition + resolvedAt).
+  await db
+    .update(heldItems)
+    .set({
+      status: 'resolved',
+      disposition: refundConsumer ? 'restocked' : 'forfeited_to_store',
+      resolvedAt: new Date(),
+    })
+    .where(eq(heldItems.returnId, returnId));
+  // Drive the order to terminal now that the return is settled.
+  await finalizeReturnedOrder(db, orderId, { type: 'admin', id: adminId }).catch(() => undefined);
+}
+
 export async function decideIssue(input: DecideIssueInput): Promise<{
   issueId: string;
   decision: IssueDecision;
@@ -482,14 +524,17 @@ export async function decideIssue(input: DecideIssueInput): Promise<{
   const issue = await db.query.customerIssues.findFirst({
     where: eq(customerIssues.id, input.issueId),
   });
-  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Issue not found');
+  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Dispute not found');
   if (issue.status === 'decided') {
-    throw new AppError(409, ErrorCode.InvalidState, 'Issue already decided');
+    throw new AppError(409, ErrorCode.InvalidState, 'Dispute already decided');
   }
 
   let adjustmentId: string | null = null;
   let releasedHoldCount = 0;
   let appliedAdjustmentPaise: bigint | null = null;
+  // null = no return to settle; true = refund consumer; false = forfeit to store.
+  // Settled AFTER the issue is committed as 'decided' so the order can finalize.
+  let settleRefundConsumer: boolean | null = null;
   // Resolve effective decision + amount: per-item array overrides top-level when present.
   let effectiveDecision = input.decision;
   let effectiveAmount = input.adjustmentPaise ?? 0;
@@ -517,12 +562,20 @@ export async function decideIssue(input: DecideIssueInput): Promise<{
     adjustmentId = r.adjustmentId;
     appliedAdjustmentPaise = BigInt(effectiveAmount);
     releasedHoldCount = await autoReleaseHoldsForDispute(issue.id, input.adminId);
+    // Favour-consumer on a return dispute: issue the (withheld) refund + restock.
+    // Deferred until after the issue is marked 'decided' below so the order can
+    // finalize (returned_to_store → cancelled) — finalizeReturnedOrder refuses to
+    // terminalize while it still sees an OPEN dispute on the order/return.
+    if (issue.returnId) settleRefundConsumer = true;
   } else if (
     effectiveDecision === 'no_refund' ||
     effectiveDecision === 'fresh_delivery' ||
     effectiveDecision === 'pickup'
   ) {
     releasedHoldCount = await autoReleaseHoldsForDispute(issue.id, input.adminId);
+    // Favour-retailer: hold released → retailer paid; no refund. Forfeit + finalize
+    // (also deferred until after the 'decided' commit, same reason as above).
+    if (issue.returnId) settleRefundConsumer = false;
   }
 
   const now = new Date();
@@ -560,10 +613,18 @@ export async function decideIssue(input: DecideIssueInput): Promise<{
     });
   });
 
+  // Now that the dispute is committed as 'decided', settle the return: issue the
+  // refund (or forfeit), resolve the shelved goods, and finalize the order to a
+  // terminal state. Deferred to here so finalizeReturnedOrder no longer sees this
+  // dispute as open and can take returned_to_store → cancelled.
+  if (issue.returnId && settleRefundConsumer !== null) {
+    await settleDisputedReturn(issue.returnId, input.adminId, settleRefundConsumer);
+  }
+
   // Notify retailer (issue resolution + payout if money moved).
-  const title = `Issue decided: ${effectiveDecision}`;
+  const title = `Dispute decided: ${effectiveDecision}`;
   const body = input.decisionNote;
-  const deepLink = `/issues/${issue.id}`;
+  const deepLink = `/disputes/${issue.id}`;
   await notifyStoreAccounts({
     storeId: issue.storeId,
     kind: 'issue',
@@ -577,7 +638,7 @@ export async function decideIssue(input: DecideIssueInput): Promise<{
       storeId: issue.storeId,
       kind: 'payout',
       title: 'Payout adjustment recorded',
-      body: `Issue ${issue.id} debited ${appliedAdjustmentPaise} paise on next payout cycle.`,
+      body: `Dispute ${issue.id} debited ${appliedAdjustmentPaise} paise on next payout cycle.`,
       deepLink,
       payload: {
         issueId: issue.id,
@@ -655,7 +716,7 @@ export async function changeIssueKind(input: {
   const issue = await db.query.customerIssues.findFirst({
     where: eq(customerIssues.id, input.issueId),
   });
-  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Issue not found');
+  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Dispute not found');
   if (issue.status === 'decided') {
     throw new AppError(409, ErrorCode.InvalidState, 'Cannot change kind of a decided issue');
   }
@@ -693,7 +754,7 @@ export async function flagPartyForAbuse(input: {
   const issue = await db.query.customerIssues.findFirst({
     where: eq(customerIssues.id, input.issueId),
   });
-  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Issue not found');
+  if (!issue) throw new AppError(404, ErrorCode.NotFound, 'Dispute not found');
 
   if (input.party === 'consumer') {
     if (issue.openedByActorType !== 'consumer') {

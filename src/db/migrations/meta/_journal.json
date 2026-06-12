@@ -190,6 +190,48 @@
       "when": 1779281516236,
       "tag": "0026_modern_sage",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1781098198309,
+      "tag": "0027_fine_vindicator",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1781105729133,
+      "tag": "0028_curvy_maginty",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1781168528965,
+      "tag": "0029_shocking_blackheart",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1781185035584,
+      "tag": "0030_previous_hawkeye",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1781241238087,
+      "tag": "0031_puzzling_mephistopheles",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1781241262640,
+      "tag": "0032_high_black_knight",
+      "breakpoints": true
     }
   ]
 }

@@ -169,9 +169,10 @@ export async function retailerLogin(input: { body: z.infer<typeof LoginBody> }) 
     }
     throw new AppError(401, ErrorCode.InvalidCredentials, 'Email or password is incorrect');
   }
-  if (retailer.status === 'terminated') {
-    throw new AppError(403, ErrorCode.Forbidden, 'Account has been terminated');
-  }
+  // Terminated retailers may still sign in — they get read-only access so
+  // owners/managers can retrieve their records (orders, invoices, statements).
+  // Every mutating request is rejected centrally in `requireAuth` (see
+  // shared/auth/middleware.ts), and store-level guards block publishes anyway.
   const passwordOk = await verifyPassword(password, retailer.passwordHash);
   if (!passwordOk) {
     throw new AppError(401, ErrorCode.InvalidCredentials, 'Email or password is incorrect');
@@ -191,6 +192,7 @@ export async function retailerLogin(input: { body: z.infer<typeof LoginBody> }) 
       gstin: retailer.gstin,
       status: retailer.status,
       storeId: retailer.storeId,
+      subRole: retailer.subRole,
     },
   });
 }

@@ -16,6 +16,7 @@ import { seedClubbingMatrix } from './clubbing-matrix.js';
 import { seedDelegationModes } from './delegation-modes.js';
 import { seedDemoRetailer } from './demo-retailer.js';
 import { seedPlatformConfig } from './platform-config.js';
+import { seedSizeScales } from './size-scales.js';
 import { seedSubRoles } from './sub-roles.js';
 
 async function main(): Promise<void> {
@@ -39,6 +40,9 @@ async function main(): Promise<void> {
 
   console.log('Seeding catalog defaults (brands + categories)…');
   await seedCatalogDefaults(db);
+
+  console.log('Seeding size_scales…');
+  await seedSizeScales(db);
 
   console.log('Seeding demo retailer (demo@closetx.local)…');
   await seedDemoRetailer(db);

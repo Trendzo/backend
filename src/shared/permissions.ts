@@ -24,7 +24,7 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 
 // ───── Sub-role unions ────────────────────────────────────────────────────
 export type AdminSubRole = 'super_admin' | 'ops_admin' | 'support';
-export type RetailerSubRole = 'owner' | 'manager' | 'staff';
+export type RetailerSubRole = 'owner' | 'manager' | 'staff' | 'delivery_agent';
 
 // ───── Action catalogs ────────────────────────────────────────────────────
 // Listed explicitly so typos at call sites become TS errors.
@@ -154,6 +154,12 @@ export const RETAILER_ACTIONS = [
   'disputes.view',
   'disputes.respond',
   'issues.create',
+  // Delivery agent (retailer sub-role 'delivery_agent'). `delivery.view`/`delivery.act`
+  // scope the agent's own assigned-delivery surface; `delivery.assign` lets owners/
+  // managers assign an agent to an order at handover.
+  'delivery.view',
+  'delivery.act',
+  'delivery.assign',
   // Promotions / vouchers
   'promotions.view',
   'promotions.create',
@@ -172,6 +178,14 @@ export const RETAILER_ACTIONS = [
   'early_disbursement.request',
   'invoicing.view',
   'fees.view',
+  // Offline POS (counter sales). `pos.sell` rings + holds; `pos.view` reads history,
+  // day summary, reprints; `pos.refund` voids/returns; `pos.labels` prints barcodes;
+  // `pos.settings` edits tax/receipt config.
+  'pos.sell',
+  'pos.view',
+  'pos.refund',
+  'pos.labels',
+  'pos.settings',
   // Reports / AI / notifications / community
   'reports.view',
   'ai_catalog.generate',
@@ -273,6 +287,20 @@ const RETAILER_STAFF_ALLOWED: RetailerAction[] = [
   'vouchers.view',
   'notifications.read',
   'application.messages.view',
+  // Staff run the counter: sell + read. Refunds/voids, labels and settings stay
+  // owner/manager by default (owners can grant more via the sub-role editor).
+  'pos.sell',
+  'pos.view',
+  'pos.labels',
+];
+
+// Delivery-agent defaults — only the agent's own delivery surface. Everything
+// else (catalog, finance, staff, returns verification, etc.) is denied; the agent
+// dashboard is a narrow, focused view of assigned deliveries.
+const RETAILER_AGENT_ALLOWED: RetailerAction[] = [
+  'delivery.view',
+  'delivery.act',
+  'notifications.read',
 ];
 
 function retailerDefaultsForSubRole(subRole: RetailerSubRole): Record<RetailerAction, boolean> {
@@ -282,6 +310,11 @@ function retailerDefaultsForSubRole(subRole: RetailerSubRole): Record<RetailerAc
   if (subRole === 'manager') {
     const map = fullRetailerMap(true);
     for (const a of RETAILER_OWNER_RESERVED) map[a] = false;
+    return map;
+  }
+  if (subRole === 'delivery_agent') {
+    const map = fullRetailerMap(false);
+    for (const a of RETAILER_AGENT_ALLOWED) map[a] = true;
     return map;
   }
   // staff
@@ -300,6 +333,7 @@ const RETAILER_DEFAULTS: Record<RetailerSubRole, Record<RetailerAction, boolean>
   owner: retailerDefaultsForSubRole('owner'),
   manager: retailerDefaultsForSubRole('manager'),
   staff: retailerDefaultsForSubRole('staff'),
+  delivery_agent: retailerDefaultsForSubRole('delivery_agent'),
 };
 
 // ───── Resolution ─────────────────────────────────────────────────────────

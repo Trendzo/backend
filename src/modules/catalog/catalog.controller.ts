@@ -7,6 +7,7 @@ import {
   collectionListings,
   collections,
   productListings,
+  sizeScales,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
@@ -14,6 +15,7 @@ import type {
   BrandsQuery,
   CategoriesQuery,
   CollectionsQuery,
+  SizeScalesQuery,
 } from './catalog.validators.js';
 
 /**
@@ -32,6 +34,41 @@ export async function listCategories(input: { query: z.infer<typeof CategoriesQu
     ...(where && { where }),
     orderBy: [asc(categories.sortOrder), asc(categories.label)],
   });
+  return ok(rows);
+}
+
+/**
+ * Size scales applicable to a category — drives the size pick-lists in the
+ * product wizard's color → size editor. With `categoryId`, returns universal
+ * scales (empty categorySlugs) plus any whose slugs match the category or one
+ * of its ancestors; without it, returns every active scale.
+ */
+export async function listSizeScales(input: { query: z.infer<typeof SizeScalesQuery> }) {
+  const all = await db.query.sizeScales.findMany({
+    where: eq(sizeScales.isActive, true),
+    orderBy: [asc(sizeScales.sortOrder), asc(sizeScales.name)],
+  });
+  if (!input.query.categoryId) return ok(all);
+
+  // Collect the category's slug plus every ancestor slug (cycle-guarded).
+  const slugs = new Set<string>();
+  let cursor: string | null = input.query.categoryId;
+  const seen = new Set<string>();
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const cat: { slug: string; parentId: string | null } | undefined =
+      await db.query.categories.findFirst({
+        where: eq(categories.id, cursor),
+        columns: { slug: true, parentId: true },
+      });
+    if (!cat) break;
+    slugs.add(cat.slug);
+    cursor = cat.parentId;
+  }
+
+  const rows = all.filter(
+    (s) => s.categorySlugs.length === 0 || s.categorySlugs.some((slug) => slugs.has(slug)),
+  );
   return ok(rows);
 }
 

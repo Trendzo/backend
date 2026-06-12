@@ -15,6 +15,7 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { openReturn } from '@/shared/returns/open-return.js';
 import { verifyReturn } from '@/shared/returns/verify-return.js';
+import { declineReturn } from '@/shared/returns/decline-return.js';
 import {
   forceDispose,
   markCollectedAtCounter,
@@ -22,6 +23,7 @@ import {
 } from '@/shared/held-items/dispositions.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
+  DeclineBody,
   ListHeldQuery,
   ListReturnsQuery,
   OpenCounterBody,
@@ -40,7 +42,9 @@ async function getOwnStoreId(auth: Auth): Promise<string> {
   });
   if (!r) throw AppError.unauthorized('Retailer account not found');
   if (!r.storeId) throw new AppError(409, ErrorCode.NotOwner, 'No store linked');
-  if (r.status !== 'active')
+  // `terminated` passes: read-only access to historical returns. Mutations are
+  // rejected centrally in requireAuth (shared/auth/middleware.ts).
+  if (r.status !== 'active' && r.status !== 'terminated')
     throw new AppError(403, ErrorCode.RetailerNotApproved, `${r.status}`);
   return r.storeId;
 }
@@ -108,6 +112,22 @@ export async function verifyReturnHandler(input: {
   const r = await verifyReturn(db, {
     returnId: input.id,
     decision: input.body.decision,
+    reasonNote: input.body.reasonNote,
+    actor: { type: 'retailer', id: input.auth.sub },
+    expectedStoreId: storeId,
+  });
+  return ok(r);
+}
+
+/** Decline a return — opens a dispute and holds funds until an admin decides. */
+export async function declineReturnHandler(input: {
+  auth: Auth;
+  id: string;
+  body: z.infer<typeof DeclineBody>;
+}) {
+  const storeId = await getOwnStoreId(input.auth);
+  const r = await declineReturn(db, {
+    returnId: input.id,
     reasonNote: input.body.reasonNote,
     rejectPhotos: input.body.rejectPhotos,
     actor: { type: 'retailer', id: input.auth.sub },

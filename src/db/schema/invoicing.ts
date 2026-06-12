@@ -49,9 +49,12 @@ export const invoices = pgTable(
     sequenceNo: integer('sequence_no').notNull(),
     invoiceNumber: text('invoice_number').notNull(), // human-readable composed value
 
-    orderId: text('order_id')
-      .notNull()
-      .references(() => orders.id),
+    // Nullable: an invoice belongs to EITHER a marketplace order OR an offline POS
+    // (counter) sale, never both. The check constraint below enforces exactly-one.
+    orderId: text('order_id').references(() => orders.id),
+    // Soft FK to pos_sales (kept plain to avoid an invoices<->pos_sales import cycle;
+    // the hard FK lives on pos_sales.invoiceId). Set for kind = 'pos_tax_invoice'.
+    posSaleId: text('pos_sale_id'),
     storeId: text('store_id')
       .notNull()
       .references(() => retailerStores.id),
@@ -95,7 +98,13 @@ export const invoices = pgTable(
       t.sequenceNo,
     ),
     orderIdx: index('invoices_order_idx').on(t.orderId),
+    posSaleIdx: index('invoices_pos_sale_idx').on(t.posSaleId),
     storeIdx: index('invoices_store_idx').on(t.storeId),
+    // An invoice has exactly one source: a marketplace order OR a POS sale.
+    sourceGuard: check(
+      'invoices_source_guard',
+      sql`(${t.orderId} IS NOT NULL) <> (${t.posSaleId} IS NOT NULL)`,
+    ),
     // GST split must match jurisdiction — same invariant as orders.
     gstSplitGuard: check(
       'invoices_gst_split_guard',

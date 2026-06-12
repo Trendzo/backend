@@ -16,8 +16,11 @@ export const IdPrefix = {
   BankAccount: 'bnk',
   Listing: 'lst',
   Variant: 'var',
+  VariantGroup: 'vgrp',
+  SizeScale: 'ssc',
   Brand: 'brd',
   Category: 'cat',
+  Media: 'med',
   Collection: 'col',
   Promotion: 'prm',
   VoucherCode: 'vch',
@@ -75,4 +78,10 @@ export const IdPrefix = {
   Banner: 'bnr',
   BannerDismissal: 'bdm',
   EmailOutbox: 'eml',
+  // Offline POS (counter sales)
+  PosSale: 'pos',
+  PosSaleItem: 'posi',
+  PosPayment: 'posp',
+  PosCustomer: 'posc',
+  PosReturnLine: 'posrl',
 } as const;

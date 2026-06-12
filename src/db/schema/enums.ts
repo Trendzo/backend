@@ -12,7 +12,12 @@ export const retailerAccountStatus = pgEnum('retailer_account_status', [
   'active',
   'terminated', // account permanently dead (rejection, admin termination, staff revoke)
 ]);
-export const retailerSubRole = pgEnum('retailer_sub_role', ['owner', 'manager', 'staff']);
+export const retailerSubRole = pgEnum('retailer_sub_role', [
+  'owner',
+  'manager',
+  'staff',
+  'delivery_agent',
+]);
 export const adminAccountStatus = pgEnum('admin_account_status', ['active', 'revoked']);
 export const adminSubRole = pgEnum('admin_sub_role', ['super_admin', 'ops_admin', 'support']);
 export const deliveryAgentStatus = pgEnum('delivery_agent_status', ['active', 'inactive']);
@@ -165,6 +170,10 @@ export const inventoryAdjustmentReason = pgEnum('inventory_adjustment_reason', [
   'return_restock',
   'damage_writeoff',
   'audit_correction',
+  // ===== Offline POS (counter sales) =====
+  'pos_sale', // stock sold over the counter
+  'pos_return_restock', // returned counter item put back on the shelf
+  'pos_void_restock', // a completed sale voided same-day; stock restored
 ]);
 
 // ===== Store =====
@@ -179,7 +188,11 @@ export const pauseVisibility = pgEnum('pause_visibility', ['visible', 'hidden'])
 
 // ===== Catalog =====
 export const gender = pgEnum('gender', ['her', 'him', 'unisex']);
-export const listingBadge = pgEnum('listing_badge', ['new', 'hot', 'trending', 'none']);
+// How the retailer structures a listing's variants:
+//   single     — one system-created default variant (default group only)
+//   color_size — system parent-child flow: color groups, size variants
+//   custom     — retailer-defined attribute template (flat axes, default group)
+export const variantMode = pgEnum('variant_mode', ['single', 'color_size', 'custom']);
 export const listingPolicy = pgEnum('listing_policy', ['return', 'replace', 'final_sale']);
 export const listingStatus = pgEnum('listing_status', ['draft', 'active', 'retired', 'taken_down']);
 export const aiCatalogMode = pgEnum('ai_catalog_mode', ['without_model', 'with_model']);
@@ -246,6 +259,8 @@ export const orderItemOutcome = pgEnum('order_item_outcome', [
   'at_door_kept',
   'at_door_returned',
   'at_door_refused',
+  'at_door_return_rejected', // customer tried to return wrong/defective item; agent rejected → customer keeps it, no refund
+
   'at_store_pending_verification',
   'store_accepted_return',
   'store_rejected_held',
@@ -282,11 +297,17 @@ export const returnReasonCategory = pgEnum('return_reason_category', [
   'doesnt_fit',
   'other',
 ]);
-export const agentDisposition = pgEnum('agent_disposition', ['kept', 'returned', 'refused']);
+export const agentDisposition = pgEnum('agent_disposition', [
+  'kept',
+  'returned',
+  'refused',
+  'return_rejected', // agent rejected the customer's return at the door (wrong/defective)
+]);
 export const storeReturnDecision = pgEnum('store_return_decision', [
   'pending',
   'accepted',
-  'rejected',
+  'rejected', // store rejected on receipt; goods shelved as a held item
+  'rejected_at_door', // agent rejected at the door; goods stayed with customer (no held item, no refund)
 ]);
 export const heldItemStatus = pgEnum('held_item_status', ['holding', 'expired', 'resolved']);
 export const heldItemDisposition = pgEnum('held_item_disposition', [
@@ -348,7 +369,17 @@ export const invoiceKind = pgEnum('invoice_kind', [
   'supplementary_invoice',
   'commission_invoice',
   'bill_of_supply',
+  'pos_tax_invoice', // offline counter-sale GST invoice (retailer's own GSTIN → walk-in)
 ]);
+
+// ===== Offline POS (counter sales) =====
+export const posSaleStatus = pgEnum('pos_sale_status', [
+  'held', // parked bill; no stock movement yet
+  'completed', // settled; stock decremented, invoice issued
+  'voided', // completed sale reversed same-day
+]);
+export const posTenderMethod = pgEnum('pos_tender_method', ['cash', 'card', 'upi']);
+export const posPricingMode = pgEnum('pos_pricing_mode', ['tax_inclusive', 'tax_exclusive']);
 export const invoiceStatus = pgEnum('invoice_status', ['draft', 'issued', 'credited']);
 export const payoutStatus = pgEnum('payout_status', [
   'pending',

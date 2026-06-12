@@ -185,11 +185,27 @@ export async function placeOrder(
   if (variantRows.length !== variantIds.length) {
     throw new AppError(404, ErrorCode.NotFound, 'One or more variants not found');
   }
-  // Ensure every variant belongs to the chosen store.
+  // Ensure every variant belongs to the chosen store, its listing is live, and
+  // the variant itself is published (isActive). An unpublished variant/SKU or a
+  // non-active listing must not be purchasable.
   for (const v of variantRows) {
     if (v.listing.storeId !== input.storeId) {
       throw AppError.validation(
         `Variant ${v.id} belongs to a different store than the chosen store`,
+      );
+    }
+    if (v.listing.status !== 'active') {
+      throw new AppError(
+        409,
+        ErrorCode.InvalidState,
+        `Product "${v.listing.name}" is not available for purchase`,
+      );
+    }
+    if (!v.isActive) {
+      throw new AppError(
+        409,
+        ErrorCode.InvalidState,
+        `Variant "${v.attributesLabel}" is not available for purchase`,
       );
     }
   }

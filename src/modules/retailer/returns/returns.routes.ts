@@ -16,6 +16,7 @@ import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
 import { requirePermission } from '@/shared/permissions.js';
 import * as ctrl from './returns.controller.js';
 import {
+  DeclineBody,
   IdParam,
   ListHeldQuery,
   ListReturnsQuery,
@@ -82,6 +83,20 @@ const retailerReturnsRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (req) =>
       ctrl.verifyReturnHandler({
+        auth: getAuth(req),
+        id: req.params.id,
+        body: req.body,
+      }),
+  );
+
+  app.post(
+    '/returns/:id/decline',
+    {
+      preHandler: requirePermission('returns.accept'),
+      schema: { params: IdParam, body: DeclineBody },
+    },
+    async (req) =>
+      ctrl.declineReturnHandler({
         auth: getAuth(req),
         id: req.params.id,
         body: req.body,

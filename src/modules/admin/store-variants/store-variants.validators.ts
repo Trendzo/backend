@@ -7,6 +7,9 @@ export const StoreListingParam = z.object({ storeId: z.string(), listingId: z.st
 const VariantInput = z.object({
   attributes: z.record(z.string(), z.string()),
   attributesLabel: z.string().trim().min(1).max(120),
+  // Optional explicit parent group; otherwise resolved from the color
+  // attribute (creating the color group when missing) or the default group.
+  groupId: z.string().optional(),
   sku: z.string().trim().min(1).max(64).optional(),
   pricePaise: PositivePaiseSchema,
   stock: StockSchema.default(0),

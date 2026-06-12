@@ -48,6 +48,15 @@ const retailerOrderRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   app.post(
+    '/:id/confirm-return-received',
+    {
+      preHandler: requirePermission('orders.mark_delivered'),
+      schema: { params: IdParam },
+    },
+    async (req) => ctrl.confirmReturnReceived({ auth: getAuth(req), id: req.params.id }),
+  );
+
+  app.post(
     '/:id/pack',
     {
       preHandler: requirePermission('orders.pack'),

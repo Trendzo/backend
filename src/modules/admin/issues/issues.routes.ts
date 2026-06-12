@@ -127,6 +127,12 @@ const adminIssuesRoutes: FastifyPluginAsyncZod = async (app) => {
     async () => ctrl.getWorkload(),
   );
 
+  app.get(
+    '/issues-counts',
+    { preHandler: requirePermission('disputes.view') },
+    async () => ctrl.getCounts(),
+  );
+
   app.post(
     '/issues/bulk-close',
     {

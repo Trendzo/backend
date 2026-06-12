@@ -30,6 +30,23 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { ActorType } from '@/shared/orders/state-machine.js';
 
+/**
+ * Refund amount that WOULD be due for these returns, without creating anything.
+ * Used to size the payout hold when a return is disputed. Mirrors the per-item
+ * sum in createRefundForReturns (orderItem.netLinePaise).
+ */
+export async function quoteReturnRefundPaise(
+  database: typeof Db,
+  returnIds: string[],
+): Promise<number> {
+  if (returnIds.length === 0) return 0;
+  const retRows = await database.query.returns.findMany({
+    where: inArray(returns.id, returnIds),
+    with: { orderItem: true },
+  });
+  return retRows.reduce((sum, r) => sum + r.orderItem.netLinePaise, 0);
+}
+
 export async function createRefundForReturns(
   database: typeof Db,
   input: {

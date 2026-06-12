@@ -93,7 +93,6 @@ export async function createListing(input: {
       ...(input.body.hsn !== undefined && { hsn: input.body.hsn }),
       ...(input.body.templateId !== undefined && { templateId: input.body.templateId }),
       gender: input.body.gender,
-      badge: input.body.badge,
       listingPolicy: input.body.listingPolicy,
       galleryUrls: input.body.galleryUrls,
       status: 'draft',

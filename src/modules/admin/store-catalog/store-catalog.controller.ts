@@ -97,7 +97,12 @@ export async function getListing(input: { storeId: string; listingId: string }) 
       eq(productListings.id, input.listingId),
       eq(productListings.storeId, input.storeId),
     ),
-    with: { variants: true, brand: true, category: true },
+    with: {
+      variants: true,
+      variantGroups: { orderBy: (t, { asc }) => [asc(t.sortOrder), asc(t.name)] },
+      brand: true,
+      category: true,
+    },
   });
   if (!listing) throw new AppError(404, ErrorCode.NotFound, 'Listing not found');
   return ok(listing);

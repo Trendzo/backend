@@ -162,14 +162,35 @@ export async function listTemplates(input: { auth: Auth }) {
         id: t.id,
         name: t.name,
         isPlatformDefault: t.isPlatformDefault,
+        ownerStoreId: t.ownerStoreId,
         axes: axesRecordToArray(
           t.axes as Record<string, { type: AxisType; required: boolean; values?: string[] }>,
         ),
         usedByListingCount: row?.n ?? 0,
+        usageCount: t.usageCount,
+        lastUsedAt: t.lastUsedAt ? t.lastUsedAt.toISOString() : null,
         updatedAt: null as string | null,
       };
     }),
   );
+
+  // Suggestion order: the store's own templates first (most recently used), then
+  // platform/other templates by popularity (most used). The wizard renders this
+  // order directly.
+  const isOwn = (s: string | null) => s === storeId;
+  withCounts.sort((a, b) => {
+    const aOwn = isOwn(a.ownerStoreId);
+    const bOwn = isOwn(b.ownerStoreId);
+    if (aOwn !== bOwn) return aOwn ? -1 : 1;
+    if (aOwn) {
+      // own → last used desc (nulls last)
+      const at = a.lastUsedAt ? Date.parse(a.lastUsedAt) : -Infinity;
+      const bt = b.lastUsedAt ? Date.parse(b.lastUsedAt) : -Infinity;
+      return bt - at;
+    }
+    // platform/others → most used desc
+    return b.usageCount - a.usageCount;
+  });
 
   return ok(withCounts);
 }
@@ -197,12 +218,35 @@ export async function getTemplate(input: { auth: Auth; id: string }) {
     id: t.id,
     name: t.name,
     isPlatformDefault: t.isPlatformDefault,
+    ownerStoreId: t.ownerStoreId,
     axes: axesRecordToArray(
       t.axes as Record<string, { type: AxisType; required: boolean; values?: string[] }>,
     ),
     usedByListingCount: row?.n ?? 0,
+    usageCount: t.usageCount,
+    lastUsedAt: t.lastUsedAt ? t.lastUsedAt.toISOString() : null,
     updatedAt: null as string | null,
   });
+}
+
+/**
+ * Bump a template's usage stats. Called when a listing attaches a template.
+ * `incrementCount=false` only refreshes lastUsedAt (e.g. on variant create) so
+ * usageCount stays = number of listings the template was attached to.
+ */
+export async function bumpTemplateUsage(
+  templateId: string,
+  opts: { incrementCount: boolean } = { incrementCount: true },
+): Promise<void> {
+  await db
+    .update(attributeTemplates)
+    .set({
+      lastUsedAt: new Date(),
+      ...(opts.incrementCount && {
+        usageCount: sql`${attributeTemplates.usageCount} + 1`,
+      }),
+    })
+    .where(eq(attributeTemplates.id, templateId));
 }
 
 export async function createTemplate(input: {

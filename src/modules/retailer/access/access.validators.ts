@@ -3,7 +3,7 @@ import { EmailSchema } from '@/shared/validation/common.js';
 
 export const IdParam = z.object({ id: z.string() });
 
-export const SubRoleEnum = z.enum(['owner', 'manager', 'staff']);
+export const SubRoleEnum = z.enum(['owner', 'manager', 'staff', 'delivery_agent']);
 
 export const PatchStaffBody = z.object({ subRole: SubRoleEnum });
 

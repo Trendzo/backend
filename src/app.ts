@@ -6,13 +6,9 @@ import {
   validatorCompiler,
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
-import { eq } from 'drizzle-orm';
 import type { LoggerOptions } from 'pino';
 import { env } from '@/config/env.js';
-import { db } from '@/db/client.js';
-import { retailerAccounts } from '@/db/schema/index.js';
 import { AppError } from '@/shared/errors/app-error.js';
-import { verifyAccessToken } from '@/shared/auth/jwt.js';
 import { fail, ok } from '@/shared/http/envelope.js';
 import authRoutes from '@/modules/auth/auth.routes.js';
 import retailerProfileRoutes from '@/modules/retailer/profile/profile.routes.js';
@@ -38,7 +34,9 @@ import adminPlatformRoutes from '@/modules/admin/platform/platform.routes.js';
 import adminDisputeRoutes from '@/modules/admin/disputes/disputes.routes.js';
 import retailerDisputeRoutes from '@/modules/retailer/disputes/disputes.routes.js';
 import retailerOrderRoutes from '@/modules/retailer/orders/orders.routes.js';
+import retailerDeliveriesRoutes from '@/modules/retailer/deliveries/deliveries.routes.js';
 import retailerInventoryRoutes from '@/modules/retailer/inventory/inventory.routes.js';
+import retailerPosRoutes from '@/modules/retailer/pos/pos.routes.js';
 import adminReturnsRoutes from '@/modules/admin/returns/returns.routes.js';
 import retailerReturnsRoutes from '@/modules/retailer/returns/returns.routes.js';
 import authPhase1Routes from '@/modules/auth/access/access.routes.js';
@@ -54,6 +52,7 @@ import adminModerationRoutes from '@/modules/admin/moderation/moderation.routes.
 import adminInventoryRoutes from '@/modules/admin/inventory/inventory.routes.js';
 import retailerAiCatalogRoutes from '@/modules/retailer/ai-catalog/ai-catalog.routes.js';
 import retailerCatalogRoutes from '@/modules/retailer/catalog/catalog.routes.js';
+import retailerMediaRoutes from '@/modules/retailer/media/media.routes.js';
 import retailerInvoicingRoutes from '@/modules/retailer/invoicing/invoicing.routes.js';
 import retailerSettlementRoutes from '@/modules/retailer/settlement/settlement.routes.js';
 import adminSettlementRoutes from '@/modules/admin/settlement/settlement.routes.js';
@@ -177,30 +176,10 @@ export function buildApp() {
     async (api) => {
       api.get('/ping', () => ok({ pong: true }));
 
-      // Block terminated retailer accounts from all /retailer/* routes.
-      // /retailer/me is exempt — the dashboard banner polls it to display the termination state.
-      api.addHook('preHandler', async (req) => {
-        const path = req.url.split('?')[0] ?? req.url;
-        if (!path.includes('/retailer')) return;
-        if (path.endsWith('/retailer/me')) return;
-        const authHeader = req.headers.authorization;
-        if (!authHeader?.startsWith('Bearer ')) return;
-        let sub: string;
-        try {
-          const payload = verifyAccessToken(authHeader.slice(7));
-          if (payload.kind !== 'retailer') return;
-          sub = payload.sub;
-        } catch {
-          return; // invalid/expired token — downstream requireAuth will reject it
-        }
-        const row = await db.query.retailerAccounts.findFirst({
-          where: eq(retailerAccounts.id, sub),
-          columns: { status: true, permanentSuspend: true },
-        });
-        if (row && (row.status === 'terminated' || row.permanentSuspend)) {
-          throw AppError.forbidden('This account has been terminated');
-        }
-      });
+      // Terminated retailers keep READ access (owners/managers can retrieve
+      // orders, invoices, statements after shutdown); every mutating request
+      // is rejected centrally inside `requireAuth` — see
+      // shared/auth/middleware.ts. No route-level hook needed here.
       await api.register(authRoutes, { prefix: '/auth' });
       await api.register(catalogRoutes, { prefix: '/catalog' });
       await api.register(pincodeRoutes, { prefix: '/pincode' });
@@ -225,7 +204,9 @@ export function buildApp() {
       await api.register(adminDisputeRoutes, { prefix: '/admin' });
       await api.register(retailerDisputeRoutes, { prefix: '/retailer' });
       await api.register(retailerOrderRoutes, { prefix: '/retailer/orders' });
+      await api.register(retailerDeliveriesRoutes, { prefix: '/retailer/deliveries' });
       await api.register(retailerInventoryRoutes, { prefix: '/retailer/inventory' });
+      await api.register(retailerPosRoutes, { prefix: '/retailer/pos' });
       await api.register(adminReturnsRoutes, { prefix: '/admin' });
       await api.register(retailerReturnsRoutes, { prefix: '/retailer' });
       await api.register(uploadRoutes, { prefix: '/uploads' });
@@ -248,6 +229,7 @@ export function buildApp() {
       await api.register(adminInventoryRoutes, { prefix: '/admin' });
       // §5 Catalog — attribute templates
       await api.register(retailerCatalogRoutes, { prefix: '/retailer' });
+      await api.register(retailerMediaRoutes, { prefix: '/retailer' });
       // §17 Tax Invoices
       await api.register(retailerInvoicingRoutes, { prefix: '/retailer' });
       // §18 Settlement

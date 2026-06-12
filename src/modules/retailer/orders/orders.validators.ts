@@ -32,6 +32,10 @@ export const PickupHandoverBody = z.object({
 
 export const HandoverBody = z
   .object({
+    // Preferred: assign a store delivery-agent account. The order then surfaces in
+    // that agent's delivery list. Free-text name/phone remain as a fallback for an
+    // external courier with no account.
+    assignedAgentId: z.string().trim().min(1).optional(),
     agentName: z.string().trim().min(1).max(120).optional(),
     agentPhone: z.string().trim().min(1).max(20).optional(),
   })
@@ -61,7 +65,7 @@ export const DoorCloseBody = z.object({
     .array(
       z.object({
         orderItemId: z.string().min(1),
-        decision: z.enum(['kept', 'returned', 'refused']),
+        decision: z.enum(['kept', 'returned', 'refused', 'return_rejected']),
         reason: z.string().trim().max(500).optional(),
         photos: z.array(z.string().url()).optional(),
       }),

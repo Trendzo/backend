@@ -30,3 +30,4 @@ export * from './inventory.js';
 export * from './community.js';
 export * from './analytics-events.js';
 export * from './notifications-extra.js';
+export * from './pos.js';

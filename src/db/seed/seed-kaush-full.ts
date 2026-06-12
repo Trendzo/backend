@@ -30,6 +30,7 @@ import {
   returns,
   supportMessages,
   supportTickets,
+  variantGroups,
   variants,
 } from '@/db/schema/index.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
@@ -106,7 +107,7 @@ async function main() {
 
   const listingSpecs = [
     {
-      name: 'Cotton Wrap Dress', gender: 'her' as const, categoryId: catDresses, badge: 'new' as const,
+      name: 'Cotton Wrap Dress', gender: 'her' as const, categoryId: catDresses,
       variants: [
         { label: 'S / Ivory', pricePaise: paise(1299), stock: 10 },
         { label: 'M / Ivory', pricePaise: paise(1299), stock: 8 },
@@ -114,7 +115,7 @@ async function main() {
       ],
     },
     {
-      name: 'Linen Shirt', gender: 'him' as const, categoryId: catShirts, badge: 'trending' as const,
+      name: 'Linen Shirt', gender: 'him' as const, categoryId: catShirts,
       variants: [
         { label: 'M / White', pricePaise: paise(999), stock: 15 },
         { label: 'L / White', pricePaise: paise(999), stock: 12 },
@@ -122,14 +123,14 @@ async function main() {
       ],
     },
     {
-      name: 'Embroidered Kurta', gender: 'her' as const, categoryId: catTops, badge: 'hot' as const,
+      name: 'Embroidered Kurta', gender: 'her' as const, categoryId: catTops,
       variants: [
         { label: 'S / Mustard', pricePaise: paise(799), stock: 20 },
         { label: 'M / Mustard', pricePaise: paise(799), stock: 18 },
       ],
     },
     {
-      name: 'Oversized Tee', gender: 'unisex' as const, categoryId: catFallback, badge: 'none' as const,
+      name: 'Oversized Tee', gender: 'unisex' as const, categoryId: catFallback,
       variants: [
         { label: 'M / Black', pricePaise: paise(599), stock: 30 },
         { label: 'L / Black', pricePaise: paise(599), stock: 25 },
@@ -142,14 +143,26 @@ async function main() {
     const listingId = newId(IdPrefix.Listing);
     await db.insert(productListings).values({
       id: listingId, storeId, brandId, categoryId: spec.categoryId,
-      name: spec.name, gender: spec.gender, badge: spec.badge,
-      listingPolicy: 'return', galleryUrls: [], status: 'active',
+      name: spec.name, gender: spec.gender,
+      listingPolicy: 'return', galleryUrls: [], variantMode: 'color_size', status: 'active',
     });
+    await db.insert(variantGroups).values({
+      id: newId(IdPrefix.VariantGroup), listingId, storeId, name: 'Default', isDefault: true,
+    });
+    const colors = [...new Set(spec.variants.map((v) => v.label.split(' / ')[1] ?? 'Default'))];
+    const groupIdByColor = new Map<string, string>();
+    for (const [i, color] of colors.entries()) {
+      const gid = newId(IdPrefix.VariantGroup);
+      await db.insert(variantGroups).values({ id: gid, listingId, storeId, name: color, sortOrder: i });
+      groupIdByColor.set(color, gid);
+    }
     for (const v of spec.variants) {
+      const size = v.label.split(' / ')[0] ?? 'M';
+      const color = v.label.split(' / ')[1] ?? 'Default';
       const varId = newId(IdPrefix.Variant);
       await db.insert(variants).values({
-        id: varId, listingId,
-        attributes: { Size: v.label.split(' / ')[0] ?? 'M', Color: v.label.split(' / ')[1] ?? 'Default' },
+        id: varId, listingId, storeId, groupId: groupIdByColor.get(color)!,
+        attributes: { size, color },
         attributesLabel: v.label, imageUrls: [], stock: v.stock, reserved: 0, pricePaise: v.pricePaise,
       });
       seededVariants.push({ id: varId, listingId, pricePaise: v.pricePaise, label: v.label, listingName: spec.name });

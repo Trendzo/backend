@@ -21,6 +21,7 @@ import {
   productListings,
   refundDisbursements,
   refunds,
+  retailerAccounts,
   returns,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
@@ -122,7 +123,7 @@ export async function listOrders(input: { query: z.infer<typeof ListOrdersQuery>
     limit: pageSize,
     offset,
     with: {
-      store: { columns: { id: true, legalName: true } },
+      store: { columns: { id: true, legalName: true, contactPhone: true } },
       items: { columns: { id: true } },
     },
   });
@@ -144,6 +145,44 @@ export async function listOrders(input: { query: z.infer<typeof ListOrdersQuery>
             .filter((v): v is string => !!v && orderIds.includes(v)),
         );
 
+  // Resolve a single payment status per order from the (possibly multi-row)
+  // payment retry chain: a succeeded payment wins, else pending, else failed,
+  // else superseded. Mirrors the paymentState filter's "any succeeded = paid".
+  const PAYMENT_STATUS_RANK: Record<string, number> = {
+    succeeded: 4,
+    pending: 3,
+    failed: 2,
+    superseded: 1,
+  };
+  const paymentStatusByOrder = new Map<string, string>();
+  if (orderIds.length > 0) {
+    const paymentRows = await db
+      .select({ orderId: payments.orderId, status: payments.status })
+      .from(payments)
+      .where(inArray(payments.orderId, orderIds));
+    for (const p of paymentRows) {
+      if (!p.orderId) continue;
+      const prev = paymentStatusByOrder.get(p.orderId);
+      if (!prev || (PAYMENT_STATUS_RANK[p.status] ?? 0) > (PAYMENT_STATUS_RANK[prev] ?? 0)) {
+        paymentStatusByOrder.set(p.orderId, p.status);
+      }
+    }
+  }
+
+  // Owner phone per store — fallback for the Store column when the store has no
+  // contact phone set. One bulk query keyed by storeId.
+  const storeIds = [...new Set(rows.map((r) => r.storeId).filter((v): v is string => !!v))];
+  const ownerPhoneByStore = new Map<string, string>();
+  if (storeIds.length > 0) {
+    const owners = await db
+      .select({ storeId: retailerAccounts.storeId, phone: retailerAccounts.phone })
+      .from(retailerAccounts)
+      .where(and(inArray(retailerAccounts.storeId, storeIds), eq(retailerAccounts.subRole, 'owner')));
+    for (const o of owners) {
+      if (o.storeId && !ownerPhoneByStore.has(o.storeId)) ownerPhoneByStore.set(o.storeId, o.phone);
+    }
+  }
+
   return ok({
     rows: rows.map((r) => ({
       id: r.id,
@@ -151,10 +190,13 @@ export async function listOrders(input: { query: z.infer<typeof ListOrdersQuery>
       status: r.status,
       storeId: r.storeId,
       storeName: r.storeNameSnap,
+      storePhone: r.store?.contactPhone ?? (r.storeId ? ownerPhoneByStore.get(r.storeId) ?? null : null),
       consumerId: r.consumerId,
       consumerName: r.consumerNameSnap,
+      consumerPhone: r.consumerPhoneSnap,
       deliveryMethod: r.deliveryMethod,
       paymentMethod: r.paymentMethod,
+      paymentStatus: paymentStatusByOrder.get(r.id) ?? null,
       itemCount: r.items.length,
       grandTotalPaise: r.grandTotalPaise,
       placedAt: r.placedAt,

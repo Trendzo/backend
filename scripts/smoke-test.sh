@@ -59,13 +59,13 @@ echo "  using brandId=$BRAND_ID  categoryId=$CAT_ID"
 
 #───────────────────────────────────────────────────────────────────────
 say "3. Admin login (happy)"
-hit POST /api/v1/auth/admin/login '{"email":"admin@closetx.local","password":"admin1234"}'
+hit POST /api/v1/auth/admin/login '{"email":"admin@trendzo.local","password":"admin1234"}'
 expect_status 200 "POST /auth/admin/login (correct credentials)"
 ADMIN_TOKEN=$(if command -v jq >/dev/null; then jq -r '.data.token' <<<"$BODY"; else jget token; fi)
 echo "  ADMIN_TOKEN=${ADMIN_TOKEN:0:30}…"
 
 say "4. Admin login (wrong password)"
-hit POST /api/v1/auth/admin/login '{"email":"admin@closetx.local","password":"WRONGPASS"}'
+hit POST /api/v1/auth/admin/login '{"email":"admin@trendzo.local","password":"WRONGPASS"}'
 expect_status 401 "POST /auth/admin/login (bad password)"
 [[ "$BODY" == *invalid_credentials* ]] && pass "  envelope carries 'invalid_credentials' code" || fail "  expected code 'invalid_credentials' in error body"
 

@@ -20,7 +20,12 @@ export const OpenCounterBody = z.object({
 });
 
 export const VerifyBody = z.object({
-  decision: z.enum(['accepted', 'rejected']),
+  // Accept only. Declining a return goes through /returns/:id/decline (opens a dispute).
+  decision: z.literal('accepted'),
+  reasonNote: z.string().trim().max(500).optional(),
+});
+
+export const DeclineBody = z.object({
   reasonNote: z.string().trim().max(500).optional(),
   rejectPhotos: z.array(z.string().url()).max(5).optional(),
 });

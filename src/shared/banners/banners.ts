@@ -9,7 +9,6 @@ import {
   bannerDismissals,
   banners,
   consumers,
-  heldItems,
   kycReverifications,
   policyEnforcementActions,
   retailerAccounts,
@@ -266,36 +265,9 @@ async function fetchDerivedRetailerBanners(storeId: string): Promise<BannerRow[]
     });
   }
 
-  // Holding-window soon-to-expire (next 24h)
-  const soon = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  const expiring = await db
-    .select({ id: heldItems.id, expiresAt: heldItems.holdingWindowExpiresAt })
-    .from(heldItems)
-    .where(
-      and(
-        eq(heldItems.storeId, storeId),
-        eq(heldItems.status, 'holding'),
-        lt(heldItems.holdingWindowExpiresAt, soon),
-        gt(heldItems.holdingWindowExpiresAt, now),
-      ),
-    )
-    .limit(5);
-  if (expiring.length > 0) {
-    derived.push({
-      id: `derived:holding-expiry:${storeId}`,
-      source: 'derived',
-      scope: 'store',
-      storeId,
-      severity: 'warning',
-      title: `${expiring.length} held item${expiring.length === 1 ? '' : 's'} expiring soon`,
-      body: 'Resolve to avoid auto-forfeit.',
-      deepLink: `/retailer/held-items`,
-      dismissible: true,
-      activeFrom: now.toISOString(),
-      activeUntil: expiring[0]!.expiresAt.toISOString(),
-      createdAt: now.toISOString(),
-    });
-  }
+  // (Held-item holding-window banners removed: the retailer keeps the returned
+  // goods regardless of outcome, and disposition is set automatically when the
+  // dispute is decided — there's nothing for the store to act on.)
 
   return derived;
 }

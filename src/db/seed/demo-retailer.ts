@@ -22,6 +22,7 @@ import {
   productListings,
   retailerAccounts,
   retailerStores,
+  variantGroups,
   variants,
 } from '@/db/schema/index.js';
 import { hashPassword } from '@/shared/auth/password.js';
@@ -125,7 +126,6 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
     name: string;
     gender: 'her' | 'him' | 'unisex';
     categoryId: string;
-    badge: 'new' | 'hot' | 'trending' | 'none';
     variants: { label: string; pricePaise: number; stock: number }[];
   };
 
@@ -135,7 +135,6 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
       name: 'Floral Wrap Dress',
       gender: 'her',
       categoryId: catDresses,
-      badge: 'new',
       variants: [
         { label: 'XS / Ivory', pricePaise: paise(1499), stock: 8 },
         { label: 'S / Ivory', pricePaise: paise(1499), stock: 12 },
@@ -148,7 +147,6 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
       name: 'Solid Linen Co-ord Set',
       gender: 'her',
       categoryId: catTops,
-      badge: 'trending',
       variants: [
         { label: 'S / Sage', pricePaise: paise(2199), stock: 10 },
         { label: 'M / Sage', pricePaise: paise(2199), stock: 15 },
@@ -162,7 +160,6 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
       name: 'Embroidered Kurta',
       gender: 'her',
       categoryId: catTops,
-      badge: 'hot',
       variants: [
         { label: 'S / Mustard', pricePaise: paise(999), stock: 20 },
         { label: 'M / Mustard', pricePaise: paise(999), stock: 18 },
@@ -174,7 +171,6 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
       name: 'Cropped Blazer',
       gender: 'her',
       categoryId: catTops,
-      badge: 'none',
       variants: [
         { label: 'XS / Black', pricePaise: paise(2799), stock: 5 },
         { label: 'S / Black', pricePaise: paise(2799), stock: 7 },
@@ -187,7 +183,6 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
       name: 'Slim Fit Oxford Shirt',
       gender: 'him',
       categoryId: catShirts,
-      badge: 'new',
       variants: [
         { label: 'S / White', pricePaise: paise(1299), stock: 15 },
         { label: 'M / White', pricePaise: paise(1299), stock: 20 },
@@ -201,7 +196,6 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
       name: 'Relaxed Linen Shirt',
       gender: 'him',
       categoryId: catShirts,
-      badge: 'none',
       variants: [
         { label: 'M / Ecru', pricePaise: paise(1799), stock: 10 },
         { label: 'L / Ecru', pricePaise: paise(1799), stock: 8 },
@@ -213,7 +207,6 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
       name: 'Cotton Jogger Pants',
       gender: 'unisex',
       categoryId: catApparel,
-      badge: 'none',
       variants: [
         { label: 'S / Charcoal', pricePaise: paise(899), stock: 25 },
         { label: 'M / Charcoal', pricePaise: paise(899), stock: 30 },
@@ -225,7 +218,6 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
       name: 'Printed Oversized Tee',
       gender: 'unisex',
       categoryId: catApparel,
-      badge: 'trending',
       variants: [
         { label: 'S / Vintage Wash', pricePaise: paise(699), stock: 35 },
         { label: 'M / Vintage Wash', pricePaise: paise(699), stock: 40 },
@@ -246,19 +238,45 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
       categoryId: spec.categoryId,
       name: spec.name,
       gender: spec.gender,
-      badge: spec.badge,
       listingPolicy: 'return',
       galleryUrls: [],
+      variantMode: 'color_size',
       status: 'active',
     });
+    await database.insert(variantGroups).values({
+      id: newId(IdPrefix.VariantGroup),
+      listingId: spec.id,
+      storeId,
+      name: 'Default',
+      isDefault: true,
+    });
+
+    // Color groups first (label format is "Size / Color"), then size variants.
+    const colors = [...new Set(spec.variants.map((v) => v.label.split(' / ')[1] ?? 'Default'))];
+    const groupIdByColor = new Map<string, string>();
+    for (const [i, color] of colors.entries()) {
+      const gid = newId(IdPrefix.VariantGroup);
+      await database.insert(variantGroups).values({
+        id: gid,
+        listingId: spec.id,
+        storeId,
+        name: color,
+        sortOrder: i,
+      });
+      groupIdByColor.set(color, gid);
+    }
 
     variantsByListing[spec.id] = [];
     for (const v of spec.variants) {
+      const size = v.label.split(' / ')[0] ?? 'M';
+      const color = v.label.split(' / ')[1] ?? 'Default';
       const varId = newId(IdPrefix.Variant);
       await database.insert(variants).values({
         id: varId,
         listingId: spec.id,
-        attributes: { Size: v.label.split(' / ')[0] ?? 'M', Color: v.label.split(' / ')[1] ?? 'Default' },
+        storeId,
+        groupId: groupIdByColor.get(color)!,
+        attributes: { size, color },
         attributesLabel: v.label,
         imageUrls: [],
         stock: v.stock,

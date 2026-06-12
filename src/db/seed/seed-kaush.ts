@@ -20,6 +20,7 @@ import {
   productListings,
   retailerAccounts,
   retailerStores,
+  variantGroups,
   variants,
 } from '@/db/schema/index.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
@@ -87,14 +88,13 @@ async function main() {
     name: string;
     gender: 'her' | 'him' | 'unisex';
     categoryId: string;
-    badge: 'new' | 'hot' | 'trending' | 'none';
     variants: { label: string; pricePaise: number; stock: number }[];
   };
 
   const listingSpecs: ListingSpec[] = [
     {
       name: 'Floral Wrap Midi Dress',
-      gender: 'her', categoryId: catDresses, badge: 'new',
+      gender: 'her', categoryId: catDresses,
       variants: [
         { label: 'XS / Ivory', pricePaise: paise(1499), stock: 8 },
         { label: 'S / Ivory', pricePaise: paise(1499), stock: 14 },
@@ -104,7 +104,7 @@ async function main() {
     },
     {
       name: 'Linen Co-ord Set',
-      gender: 'her', categoryId: catTops, badge: 'trending',
+      gender: 'her', categoryId: catTops,
       variants: [
         { label: 'S / Sage', pricePaise: paise(2199), stock: 12 },
         { label: 'M / Sage', pricePaise: paise(2199), stock: 18 },
@@ -115,7 +115,7 @@ async function main() {
     },
     {
       name: 'Embroidered Kurta',
-      gender: 'her', categoryId: catTops, badge: 'hot',
+      gender: 'her', categoryId: catTops,
       variants: [
         { label: 'S / Mustard', pricePaise: paise(999), stock: 22 },
         { label: 'M / Mustard', pricePaise: paise(999), stock: 18 },
@@ -124,7 +124,7 @@ async function main() {
     },
     {
       name: 'Cropped Blazer',
-      gender: 'her', categoryId: catTops, badge: 'none',
+      gender: 'her', categoryId: catTops,
       variants: [
         { label: 'XS / Black', pricePaise: paise(2799), stock: 5 },
         { label: 'S / Black', pricePaise: paise(2799), stock: 7 },
@@ -134,7 +134,7 @@ async function main() {
     },
     {
       name: 'Slim Fit Oxford Shirt',
-      gender: 'him', categoryId: catShirts, badge: 'new',
+      gender: 'him', categoryId: catShirts,
       variants: [
         { label: 'S / White', pricePaise: paise(1299), stock: 16 },
         { label: 'M / White', pricePaise: paise(1299), stock: 20 },
@@ -145,7 +145,7 @@ async function main() {
     },
     {
       name: 'Relaxed Linen Shirt',
-      gender: 'him', categoryId: catShirts, badge: 'none',
+      gender: 'him', categoryId: catShirts,
       variants: [
         { label: 'M / Ecru', pricePaise: paise(1799), stock: 10 },
         { label: 'L / Ecru', pricePaise: paise(1799), stock: 8 },
@@ -154,7 +154,7 @@ async function main() {
     },
     {
       name: 'Cotton Jogger Pants',
-      gender: 'unisex', categoryId: catFallback, badge: 'none',
+      gender: 'unisex', categoryId: catFallback,
       variants: [
         { label: 'S / Charcoal', pricePaise: paise(899), stock: 25 },
         { label: 'M / Charcoal', pricePaise: paise(899), stock: 30 },
@@ -163,7 +163,7 @@ async function main() {
     },
     {
       name: 'Printed Oversized Tee',
-      gender: 'unisex', categoryId: catFallback, badge: 'trending',
+      gender: 'unisex', categoryId: catFallback,
       variants: [
         { label: 'S / Vintage Wash', pricePaise: paise(699), stock: 35 },
         { label: 'M / Vintage Wash', pricePaise: paise(699), stock: 42 },
@@ -185,18 +185,36 @@ async function main() {
       categoryId: spec.categoryId,
       name: spec.name,
       gender: spec.gender,
-      badge: spec.badge,
       listingPolicy: 'return',
       galleryUrls: [],
+      variantMode: 'color_size',
       status: 'active',
     });
+    await db.insert(variantGroups).values({
+      id: newId(IdPrefix.VariantGroup),
+      listingId,
+      storeId,
+      name: 'Default',
+      isDefault: true,
+    });
+    const colors = [...new Set(spec.variants.map((v) => v.label.split(' / ')[1] ?? 'Default'))];
+    const groupIdByColor = new Map<string, string>();
+    for (const [i, color] of colors.entries()) {
+      const gid = newId(IdPrefix.VariantGroup);
+      await db.insert(variantGroups).values({ id: gid, listingId, storeId, name: color, sortOrder: i });
+      groupIdByColor.set(color, gid);
+    }
 
     for (const v of spec.variants) {
+      const size = v.label.split(' / ')[0] ?? 'M';
+      const color = v.label.split(' / ')[1] ?? 'Default';
       const varId = newId(IdPrefix.Variant);
       await db.insert(variants).values({
         id: varId,
         listingId,
-        attributes: { Size: v.label.split(' / ')[0] ?? 'M', Color: v.label.split(' / ')[1] ?? 'Default' },
+        storeId,
+        groupId: groupIdByColor.get(color)!,
+        attributes: { size, color },
         attributesLabel: v.label,
         imageUrls: [],
         stock: v.stock,

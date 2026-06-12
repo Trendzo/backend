@@ -30,7 +30,7 @@ jget() { jq -r "$1" </tmp/.body; }
 say 'SECTION 1 — Setup'
 node scripts/reset-data.mjs >/dev/null 2>&1 && pass 'reset user data'
 
-hit POST /api/v1/auth/admin/login '{"email":"admin@closetx.local","password":"admin1234"}'
+hit POST /api/v1/auth/admin/login '{"email":"admin@trendzo.local","password":"admin1234"}'
 expect 200 'admin login'
 ADMIN=$(jget '.data.token')
 

@@ -1,7 +1,7 @@
-import { and, desc, eq, lt } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
-import { customerIssues, returns as returnsTable, orderItems } from '@/db/schema/index.js';
+import { customerIssues, heldItems, returns as returnsTable, orderItems } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import {
@@ -44,6 +44,10 @@ function shapeIssueRow(r: typeof customerIssues.$inferSelect) {
     storeId: r.storeId,
     orderId: r.orderId,
     returnId: r.returnId,
+    // Polymorphic target for the UI: an order-linked dispute points at the order,
+    // a return-decline dispute (orderId null) points at the return.
+    targetKind: (r.orderId ? 'order' : 'return') as 'order' | 'return',
+    targetId: r.orderId ?? r.returnId,
     openedByActorType: r.openedByActorType,
     openedByActorId: r.openedByActorId,
     subject: r.subject,
@@ -91,28 +95,25 @@ export async function getIssue(input: { id: string }) {
   if (!d) throw new AppError(404, ErrorCode.NotFound, 'Issue not found');
   // Door/store-verification evidence: if issue ties to an order, gather returns rows on its order items;
   // if issue ties to a return directly, fetch that return.
-  const evidencePhotos: {
-    source: string;
-    returnId?: string;
-    photos: string[];
-    consumerPhotos: string[];
-    storeRejectPhotos: string[];
-    agentDisposition: string | null;
-    storeDecision: string | null;
-  }[] = [];
+  // Flat list of photos tied to this dispute's return(s), each tagged with who
+  // provided it. Empty arrays contribute nothing (so no broken/empty tiles).
+  const evidencePhotos: { url: string; source: string; label: string }[] = [];
+  const pushReturnPhotos = (
+    r: typeof returnsTable.$inferSelect,
+    origin: 'return' | 'order-item-return',
+  ) => {
+    for (const url of r.consumerPhotos ?? []) evidencePhotos.push({ url, source: 'consumer', label: 'Customer' });
+    for (const url of r.photos ?? []) evidencePhotos.push({ url, source: 'return', label: 'Return opened' });
+    for (const url of r.storeRejectPhotos ?? []) evidencePhotos.push({ url, source: 'store', label: 'Store decline' });
+    void origin;
+  };
+  // Track the return ids tied to this dispute so we can also surface the physical
+  // goods (held items) sitting at the store for them.
+  const returnIds = new Set<string>();
   if (d.issue.returnId) {
+    returnIds.add(d.issue.returnId);
     const r = await db.query.returns.findFirst({ where: eq(returnsTable.id, d.issue.returnId) });
-    if (r) {
-      evidencePhotos.push({
-        source: 'return',
-        returnId: r.id,
-        photos: r.photos,
-        consumerPhotos: r.consumerPhotos,
-        storeRejectPhotos: r.storeRejectPhotos,
-        agentDisposition: r.agentDisposition,
-        storeDecision: r.storeDecision,
-      });
-    }
+    if (r) pushReturnPhotos(r, 'return');
   }
   if (d.issue.orderId) {
     const items = await db.query.orderItems.findMany({
@@ -125,19 +126,33 @@ export async function getIssue(input: { id: string }) {
         where: (rt, { inArray }) => inArray(rt.orderItemId, itemIds),
       });
       for (const r of rtns) {
+        returnIds.add(r.id);
         if (d.issue.returnId && r.id === d.issue.returnId) continue;
-        evidencePhotos.push({
-          source: 'order-item-return',
-          returnId: r.id,
-          photos: r.photos,
-          consumerPhotos: r.consumerPhotos,
-          storeRejectPhotos: r.storeRejectPhotos,
-          agentDisposition: r.agentDisposition,
-          storeDecision: r.storeDecision,
-        });
+        pushReturnPhotos(r, 'order-item-return');
       }
     }
   }
+  // Held items = the returned physical goods now sitting at the store for these
+  // returns (a declined return shelves the item pending this dispute's outcome).
+  const heldRows = returnIds.size
+    ? await db.query.heldItems.findMany({
+        where: inArray(heldItems.returnId, [...returnIds]),
+        columns: {
+          id: true,
+          status: true,
+          disposition: true,
+          holdingWindowExpiresAt: true,
+          resolvedAt: true,
+        },
+      })
+    : [];
+  const held = heldRows.map((h) => ({
+    id: h.id,
+    status: h.status,
+    disposition: h.disposition,
+    holdingWindowExpiresAt: h.holdingWindowExpiresAt?.toISOString() ?? null,
+    resolvedAt: h.resolvedAt?.toISOString() ?? null,
+  }));
   const partyContext = await getPartyFlagContext(d.issue);
   return ok({
     ...shapeIssueRow(d.issue),
@@ -161,6 +176,7 @@ export async function getIssue(input: { id: string }) {
       at: t.at.toISOString(),
     })),
     evidencePhotos,
+    heldItems: held,
     partyContext,
   });
 }
@@ -276,6 +292,24 @@ export async function postFlagParty(input: {
 export async function getWorkload() {
   const rows = await getAdminWorkload();
   return ok(rows);
+}
+
+/** Sidebar badge source: issues/disputes awaiting an admin decision. */
+export async function getCounts() {
+  const openStatuses: Array<typeof customerIssues.$inferSelect.status> = [
+    'open',
+    'requested_evidence',
+    'escalated',
+  ];
+  const rows = await db.query.customerIssues.findMany({
+    where: and(
+      inArray(customerIssues.status, openStatuses),
+      eq(customerIssues.awaitingParty, 'admin'),
+    ),
+    columns: { kind: true },
+  });
+  const pendingDisputes = rows.filter((r) => r.kind === 'dispute').length;
+  return ok({ pendingDisputes, pendingIssues: rows.length });
 }
 
 export async function postBulkClose(input: { body: z.infer<typeof BulkCloseBody>; auth: Auth }) {

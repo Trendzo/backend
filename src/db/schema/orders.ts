@@ -25,7 +25,7 @@ import {
   taxSplitKind,
 } from './enums.js';
 import { consumers, deliveryAgents } from './identity.js';
-import { retailerStores } from './store.js';
+import { retailerAccounts, retailerStores } from './store.js';
 import { productListings, variants } from './products.js';
 
 /**
@@ -108,6 +108,10 @@ export const orders = pgTable(
       .notNull()
       .references(() => retailerStores.id),
     addressId: text('address_id').references(() => addresses.id), // nullable for pickup
+    // §9 — store staff (retailer sub-role 'delivery_agent') assigned to deliver this
+    // order. Set at handover. Nullable: unassigned, pickup, or an external courier
+    // recorded only by name/phone snapshot in the handover transition marker.
+    assignedAgentId: text('assigned_agent_id').references(() => retailerAccounts.id),
     deliveryMethod: deliveryMethod('delivery_method').notNull(),
     paymentMethod: paymentMethod('payment_method').notNull(),
     paymentMethodLabel: text('payment_method_label').notNull(), // human-readable snap, e.g. "UPI · GPay"
