@@ -513,6 +513,7 @@ export const communityPostStatus = pgEnum('community_post_status', [
   'taken_down',
   'hidden_pending_review',
 ]);
+export const moodboardStatus = pgEnum('moodboard_status', ['active', 'taken_down']);
 export const productReviewStatus = pgEnum('product_review_status', [
   'active',
   'taken_down',

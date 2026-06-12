@@ -10,6 +10,7 @@ import {
   communityPosts,
   consumerBans,
   consumerFlags,
+  consumerLoyalty,
   consumerWallets,
   consumers,
   customerIssues,
@@ -117,11 +118,9 @@ export async function buildConsumerProfile(consumerId: string): Promise<Consumer
       limit: 5,
       columns: { id: true, kind: true, status: true, subject: true, lastMessageAt: true },
     }),
-    db
-      .select({ balance: sql<number>`coalesce(sum(${loyaltyTransactions.points})::int, 0)` })
-      .from(loyaltyTransactions)
-      .where(eq(loyaltyTransactions.consumerId, consumerId))
-      .then((rows) => rows[0]!),
+    db.query.consumerLoyalty
+      .findFirst({ where: eq(consumerLoyalty.consumerId, consumerId) })
+      .then((row) => ({ balance: row?.balancePoints ?? 0 })),
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(loyaltyTransactions)

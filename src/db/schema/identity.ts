@@ -24,12 +24,15 @@ export const consumers = pgTable(
     // Drives the consumer-app HER/HIM home-feed swap. Nullable until the user picks one;
     // the existing `gender` enum (her|him|unisex) is reused — `unisex` reads as "show all".
     genderPreference: gender('gender_preference'),
+    // Per-consumer share code for referrals (derived from id at creation; unique).
+    referralCode: text('referral_code'),
     signupAt: timestamp('signup_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     status: consumerStatus('status').notNull().default('active'),
   },
   (t) => ({
     emailIdx: uniqueIndex('consumers_email_idx').on(t.email),
     phoneIdx: uniqueIndex('consumers_phone_idx').on(t.phone),
+    referralCodeIdx: uniqueIndex('consumers_referral_code_idx').on(t.referralCode),
   }),
 );
 

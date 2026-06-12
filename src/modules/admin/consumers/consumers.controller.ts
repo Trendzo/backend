@@ -28,6 +28,7 @@ import type {
   CreateConsumerBody,
   CreateFlagBody,
   FlagsQuery,
+  IssueGiftCardBody,
   LiftBanBody,
   ListBansQuery,
   ListQuery,
@@ -171,6 +172,66 @@ export async function getConsumerGiftCards(input: { id: string }) {
       expiresOn: c.expiresOn,
     })),
   });
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: string; cause?: { code?: string } };
+  return e?.code === '23505' || e?.cause?.code === '23505';
+}
+
+function genGiftCardCode(): string {
+  return ('GC' + newId(IdPrefix.GiftCard).slice(3, 13)).toUpperCase();
+}
+
+/** Deterministic unique referral code derived from the consumer id (id is unique). */
+function referralCodeFor(consumerId: string): string {
+  return ('CX' + consumerId.slice(4, 12)).toUpperCase();
+}
+
+/** Issue a gift card to a consumer. Code is caller-supplied or auto-generated. */
+export async function issueGiftCard(input: {
+  id: string;
+  adminId: string;
+  body: z.infer<typeof IssueGiftCardBody>;
+}) {
+  const { id, adminId, body } = input;
+  const consumer = await db.query.consumers.findFirst({
+    where: eq(consumers.id, id),
+    columns: { id: true },
+  });
+  if (!consumer) throw new AppError(404, ErrorCode.NotFound, 'Consumer not found');
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // Normalize to uppercase so redemption (also uppercased) is case-insensitive end-to-end.
+    const code = (body.code ?? genGiftCardCode()).trim().toUpperCase();
+    try {
+      const [created] = await db
+        .insert(giftCards)
+        .values({
+          id: newId(IdPrefix.GiftCard),
+          consumerId: id,
+          code,
+          balancePaise: body.balancePaise,
+          expiresOn: body.expiresOn,
+          issuedBy: adminId,
+        })
+        .returning();
+      return ok({
+        id: created!.id,
+        consumerId: created!.consumerId,
+        code: created!.code,
+        balancePaise: created!.balancePaise,
+        expiresOn: created!.expiresOn,
+      });
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+      // Caller-supplied code already taken — not retryable. Generated codes retry.
+      if (body.code) {
+        throw new AppError(409, ErrorCode.GiftCardInvalid, 'Gift card code already exists');
+      }
+    }
+  }
+  throw new AppError(503, ErrorCode.InternalError, 'Could not allocate a unique gift card code');
 }
 
 export async function listFlags(input: { id: string; query: z.infer<typeof FlagsQuery> }) {
@@ -322,6 +383,7 @@ export async function createConsumer(input: {
     name: body.name,
     passwordHash,
     genderPreference: body.genderPreference ?? null,
+    referralCode: referralCodeFor(id),
   });
   await recordAudit({
     actor: input.auth,
@@ -364,6 +426,7 @@ export async function mintTestConsumer(input: { body: z.infer<typeof MintTestBod
     phone,
     name,
     passwordHash,
+    referralCode: referralCodeFor(consumerId),
   });
 
   const addressId = newId(IdPrefix.Address);

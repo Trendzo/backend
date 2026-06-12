@@ -38,6 +38,7 @@ export const PlaceTestOrderBody = z.object({
   couponCode: z.string().trim().optional(),
   voucherCode: z.string().trim().optional(),
   pointsToRedeem: z.number().int().nonnegative().optional(),
+  applyWallet: z.boolean().optional(),
   idempotencyKey: z.string().min(1).optional(),
 });
 

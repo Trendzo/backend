@@ -11,6 +11,7 @@ import {
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
+import { applyLoyaltyDelta } from '@/shared/loyalty/apply-delta.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
   ConsumerSearchQuery,
@@ -222,29 +223,20 @@ export async function adjustLoyalty(input: {
   });
   if (!consumer) throw new AppError(404, ErrorCode.NotFound, 'Consumer not found');
 
-  const last = await db.query.loyaltyTransactions.findFirst({
-    where: eq(loyaltyTransactions.consumerId, consumer.id),
-    orderBy: desc(loyaltyTransactions.at),
-  });
-  const balanceBefore = last?.balanceAfterPoints ?? 0;
-  const newBalance = balanceBefore + body.points;
-  if (newBalance < 0) {
-    throw new AppError(
-      409,
-      ErrorCode.InsufficientPoints,
-      `Adjustment would drop loyalty balance below zero (current ${balanceBefore})`,
-    );
-  }
-  const [created] = await db
-    .insert(loyaltyTransactions)
-    .values({
-      id: newId(IdPrefix.LoyaltyTx),
+  // Route through the CAS-guarded balance row; applyLoyaltyDelta rejects an adjustment that
+  // would drive the balance below zero (409 InsufficientPoints).
+  const created = await db.transaction(async (tx) => {
+    await applyLoyaltyDelta(tx, {
       consumerId: consumer.id,
-      kind: 'adjustment',
       points: body.points,
-      balanceAfterPoints: newBalance,
+      kind: 'adjustment',
       note: body.note,
-    })
-    .returning();
+    });
+    const row = await tx.query.loyaltyTransactions.findFirst({
+      where: eq(loyaltyTransactions.consumerId, consumer.id),
+      orderBy: desc(loyaltyTransactions.at),
+    });
+    return row!;
+  });
   return ok(created);
 }

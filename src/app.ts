@@ -87,6 +87,15 @@ import retailerIssuesRoutes from '@/modules/retailer/issues/issues.routes.js';
 import consumerIssuesRoutes from '@/modules/consumer/issues/issues.routes.js';
 import consumerCommunityRoutes from '@/modules/consumer/community/community.routes.js';
 import consumerEventsRoutes from '@/modules/consumer/events/events.routes.js';
+import consumerCheckoutRoutes from '@/modules/consumer/checkout/checkout.routes.js';
+import consumerGiftCardRoutes from '@/modules/consumer/gift-cards/gift-cards.routes.js';
+import consumerMoodboardRoutes from '@/modules/consumer/moodboards/moodboards.routes.js';
+import consumerReferralRoutes from '@/modules/consumer/referrals/referrals.routes.js';
+import consumerWalletRoutes from '@/modules/consumer/wallet/wallet.routes.js';
+import consumerLoyaltyRoutes from '@/modules/consumer/loyalty/loyalty.routes.js';
+import consumerCartRoutes from '@/modules/consumer/cart/cart.routes.js';
+import publicMoodboardRoutes from '@/modules/consumer/moodboards/public.routes.js';
+import adminMoodboardRoutes from '@/modules/admin/moodboards/moodboards.routes.js';
 import retailerPushRoutes from '@/modules/retailer/push/push.routes.js';
 import adminPushRoutes from '@/modules/admin/push/push.routes.js';
 import consumerPushRoutes from '@/modules/consumer/push/push.routes.js';
@@ -282,6 +291,24 @@ export function buildApp() {
       await api.register(consumerCommunityRoutes, { prefix: '/consumer/community' });
       // §21 Analytics event ingest
       await api.register(consumerEventsRoutes, { prefix: '/consumer/events' });
+      // Consumer checkout: quote, place order, order history
+      await api.register(consumerCheckoutRoutes, { prefix: '/consumer/checkout' });
+      // Consumer gift cards: list + redeem-to-wallet
+      await api.register(consumerGiftCardRoutes, { prefix: '/consumer/gift-cards' });
+      // Consumer moodboards: owner CRUD + items
+      await api.register(consumerMoodboardRoutes, { prefix: '/consumer/moodboards' });
+      // Consumer referrals: my code/stats + redeem
+      await api.register(consumerReferralRoutes, { prefix: '/consumer/referrals' });
+      // Consumer wallet: balance + ledger (read-only)
+      await api.register(consumerWalletRoutes, { prefix: '/consumer/wallet' });
+      // Consumer loyalty: points balance + ledger (read-only)
+      await api.register(consumerLoyaltyRoutes, { prefix: '/consumer/loyalty' });
+      // Consumer cart: cross-device sync for logged-in users
+      await api.register(consumerCartRoutes, { prefix: '/consumer/cart' });
+      // Public share read for moodboards (UNAUTHENTICATED — no auth hook)
+      await api.register(publicMoodboardRoutes, { prefix: '/public/moodboards' });
+      // Admin moodboard moderation (takedown/restore)
+      await api.register(adminMoodboardRoutes, { prefix: '/admin/moodboards' });
       // §22 Push subscriptions
       await api.register(retailerPushRoutes, { prefix: '/retailer/push-subscriptions' });
       await api.register(adminPushRoutes, { prefix: '/admin/push-subscriptions' });

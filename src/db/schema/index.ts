@@ -28,6 +28,8 @@ export * from './store-ops.js';
 export * from './moderation.js';
 export * from './inventory.js';
 export * from './community.js';
+export * from './moodboards.js';
+export * from './referrals.js';
 export * from './analytics-events.js';
 export * from './notifications-extra.js';
 export * from './pos.js';

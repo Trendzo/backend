@@ -29,6 +29,7 @@ export const IdPrefix = {
   ConsumerFlag: 'cfg',
   WalletTx: 'wtx',
   LoyaltyTx: 'lty',
+  LoyaltyAccount: 'lac',
   ClubbingRule: 'clb',
   // Orders
   Order: 'ord',
@@ -64,6 +65,10 @@ export const IdPrefix = {
   // §20 Consumer Management
   ConsumerBan: 'bban',
   CommunityPost: 'cpst',
+  Moodboard: 'mbd',
+  MoodboardItem: 'mbi',
+  Referral: 'rfr',
+  Cart: 'crt',
   ProductReview: 'rev',
   ModerationReport: 'mrp',
   ModerationAction: 'mac',

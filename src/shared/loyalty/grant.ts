@@ -12,19 +12,20 @@
  * Earn claw-back: refunds also reverse the earned portion proportionally (kind='adjustment')
  * so the consumer doesn't keep points for items they returned. This too bypasses the ban
  * check (it's a debit, not a credit).
+ *
+ * All point mutations go through applyLoyaltyDelta (CAS on the consumer_loyalty balance row);
+ * this module never writes loyalty_transactions directly.
  */
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db } from '@/db/client.js';
-import {
-  consumerFlags,
-  loyaltyTransactions,
-  orders,
-  platformConfig,
-} from '@/db/schema/index.js';
+import { consumerFlags, orders, platformConfig } from '@/db/schema/index.js';
 import type { LoyaltyConfig } from '@/shared/discounts/types.js';
 import { loyaltyEarned } from '@/shared/discounts/loyalty.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
-import { IdPrefix, newId } from '@/shared/ids.js';
+import { applyLoyaltyDelta, loyaltyBalance } from './apply-delta.js';
+
+/** Any executor with a relational `query` surface — the global db or an open transaction. */
+type Executor = Pick<typeof db, 'query'>;
 
 const LOYALTY_CONFIG_KEYS = [
   'loyalty_point_value_paise',
@@ -57,10 +58,11 @@ export async function loadLoyaltyConfig(): Promise<LoyaltyConfig> {
 
 /**
  * Returns true iff the consumer has an open (unresolved) `rewards_ban` flag.
- * Open = `resolved_at IS NULL`.
+ * Open = `resolved_at IS NULL`. Pass a transaction as `exec` to read the check inside the
+ * caller's snapshot.
  */
-export async function isRewardsBanned(consumerId: string): Promise<boolean> {
-  const row = await db.query.consumerFlags.findFirst({
+export async function isRewardsBanned(consumerId: string, exec: Executor = db): Promise<boolean> {
+  const row = await exec.query.consumerFlags.findFirst({
     where: and(
       eq(consumerFlags.consumerId, consumerId),
       eq(consumerFlags.kind, 'rewards_ban'),
@@ -72,21 +74,9 @@ export async function isRewardsBanned(consumerId: string): Promise<boolean> {
 }
 
 /**
- * Latest loyalty balance for a consumer. Reads the most recent ledger row; null = 0.
- */
-async function currentLoyaltyBalance(consumerId: string): Promise<number> {
-  const last = await db.query.loyaltyTransactions.findFirst({
-    where: eq(loyaltyTransactions.consumerId, consumerId),
-    orderBy: desc(loyaltyTransactions.at),
-    columns: { balanceAfterPoints: true },
-  });
-  return last?.balanceAfterPoints ?? 0;
-}
-
-/**
- * Credit loyalty for a delivered order. Idempotent — re-calling for an order whose
- * `loyaltyEarnedPoints` is already set is a no-op. Skips earn (returns 0) when the
- * consumer is rewards-banned. Returns the credited points (0 if skipped).
+ * Credit loyalty for a delivered order. Idempotent under concurrency — the earn is claimed by
+ * flipping `orders.loyaltyEarnedPoints` from 0 inside the transaction, so only one writer
+ * credits. Skips earn (returns 0) when the consumer is rewards-banned. Returns credited points.
  *
  * Computation: post-promo, pre-tax basis = `itemsSubtotalPaise - retailerPromoPaise -
  * platformPromoPaise - couponPaise - pointsRedeemedPaise`. This matches the engine.
@@ -99,10 +89,6 @@ export async function grantLoyaltyOnDelivery(orderId: string): Promise<number> {
   if (order.loyaltyEarnedPoints > 0) return 0; // already credited
   if (order.status !== 'delivered') return 0; // gate — only delivered earns
 
-  if (await isRewardsBanned(order.consumerId)) {
-    return 0;
-  }
-
   const cfg = await loadLoyaltyConfig();
   const basis =
     order.itemsSubtotalPaise -
@@ -113,25 +99,27 @@ export async function grantLoyaltyOnDelivery(orderId: string): Promise<number> {
   const points = loyaltyEarned(basis, cfg);
   if (points <= 0) return 0;
 
-  const balanceBefore = await currentLoyaltyBalance(order.consumerId);
-  const balanceAfter = balanceBefore + points;
+  return db.transaction(async (tx) => {
+    if (await isRewardsBanned(order.consumerId, tx)) return 0;
 
-  await db.transaction(async (tx) => {
-    await tx.insert(loyaltyTransactions).values({
-      id: newId(IdPrefix.LoyaltyTx),
+    // Claim the earn atomically: only the writer that flips loyaltyEarnedPoints 0 → points
+    // credits, so a concurrent re-delivery webhook can't double-earn.
+    const [claimed] = await tx
+      .update(orders)
+      .set({ loyaltyEarnedPoints: points })
+      .where(and(eq(orders.id, order.id), eq(orders.loyaltyEarnedPoints, 0)))
+      .returning({ id: orders.id });
+    if (!claimed) return 0;
+
+    await applyLoyaltyDelta(tx, {
       consumerId: order.consumerId,
-      kind: 'earn',
       points,
-      balanceAfterPoints: balanceAfter,
+      kind: 'earn',
       refOrderId: order.id,
       note: `Earn on delivery ${order.id}`,
     });
-    await tx
-      .update(orders)
-      .set({ loyaltyEarnedPoints: points })
-      .where(eq(orders.id, order.id));
+    return points;
   });
-  return points;
 }
 
 /**
@@ -141,7 +129,8 @@ export async function grantLoyaltyOnDelivery(orderId: string): Promise<number> {
  *
  * Input: `pointsRedeemedClawbackPaise` = sum of `pointsClawbackPaise` across refund
  * lines (matches what `create-refund.ts` already computes). Earn claw-back is computed
- * pro-rata from `order.loyaltyEarnedPoints` × (refundLinesTotal / itemsSubtotal).
+ * pro-rata from `order.loyaltyEarnedPoints` × (refundLinesTotal / itemsSubtotal), then
+ * capped to the live balance read inside the transaction so it can never overshoot zero.
  */
 export async function creditBackOnRefund(input: {
   orderId: string;
@@ -155,57 +144,53 @@ export async function creditBackOnRefund(input: {
   if (!order) throw new AppError(404, ErrorCode.OrderNotFound, `Order ${input.orderId} not found`);
 
   const cfg = await loadLoyaltyConfig();
-  let balance = await currentLoyaltyBalance(order.consumerId);
-  let creditedPoints = 0;
-  let clawedBackPoints = 0;
 
   // 1) Restore redeemed points (credit) — regardless of rewards_ban.
-  if (input.pointsRedeemedClawbackPaise > 0) {
-    creditedPoints = Math.floor(input.pointsRedeemedClawbackPaise / cfg.pointValuePaise);
-  }
+  const creditedPoints =
+    input.pointsRedeemedClawbackPaise > 0
+      ? Math.floor(input.pointsRedeemedClawbackPaise / cfg.pointValuePaise)
+      : 0;
 
-  // 2) Claw back proportional earned points (debit via adjustment).
-  if (order.loyaltyEarnedPoints > 0 && order.itemsSubtotalPaise > 0) {
-    const proportion = Math.min(1, input.refundedLinesTotalPaise / order.itemsSubtotalPaise);
-    clawedBackPoints = Math.floor(order.loyaltyEarnedPoints * proportion);
-    // Don't claw back more than the available balance + the credit we're about to add.
-    // (Edge case: consumer already spent their earned points; we can't negate beyond zero.)
-    const cap = balance + creditedPoints;
-    if (clawedBackPoints > cap) clawedBackPoints = cap;
-  }
+  // 2) Proportional earned-points claw-back (uncapped here; capped to live balance in the tx).
+  const desiredClawback =
+    order.loyaltyEarnedPoints > 0 && order.itemsSubtotalPaise > 0
+      ? Math.floor(
+          order.loyaltyEarnedPoints *
+            Math.min(1, input.refundedLinesTotalPaise / order.itemsSubtotalPaise),
+        )
+      : 0;
 
-  if (creditedPoints === 0 && clawedBackPoints === 0) {
+  if (creditedPoints === 0 && desiredClawback === 0) {
     return { creditedPoints: 0, clawedBackPoints: 0 };
   }
 
+  let clawedBackPoints = 0;
   await db.transaction(async (tx) => {
     if (creditedPoints > 0) {
-      balance += creditedPoints;
-      await tx.insert(loyaltyTransactions).values({
-        id: newId(IdPrefix.LoyaltyTx),
+      await applyLoyaltyDelta(tx, {
         consumerId: order.consumerId,
-        kind: 'refund_credit',
         points: creditedPoints,
-        balanceAfterPoints: balance,
+        kind: 'refund_credit',
         refOrderId: order.id,
         note: `Refund credit ${input.refundId}`,
       });
     }
-    if (clawedBackPoints > 0) {
-      balance -= clawedBackPoints;
-      await tx.insert(loyaltyTransactions).values({
-        id: newId(IdPrefix.LoyaltyTx),
-        consumerId: order.consumerId,
-        kind: 'adjustment',
-        points: -clawedBackPoints,
-        balanceAfterPoints: balance,
-        refOrderId: order.id,
-        note: `Earn claw-back on refund ${input.refundId}`,
-      });
+    if (desiredClawback > 0) {
+      // Cap against the authoritative balance *after* the credit above — the consumer may
+      // have already spent earned points, and we can't drive the balance below zero.
+      const bal = await loyaltyBalance(tx, order.consumerId);
+      clawedBackPoints = Math.min(desiredClawback, bal);
+      if (clawedBackPoints > 0) {
+        await applyLoyaltyDelta(tx, {
+          consumerId: order.consumerId,
+          points: -clawedBackPoints,
+          kind: 'adjustment',
+          refOrderId: order.id,
+          note: `Earn claw-back on refund ${input.refundId}`,
+        });
+      }
     }
   });
 
   return { creditedPoints, clawedBackPoints };
 }
-
-void sql;

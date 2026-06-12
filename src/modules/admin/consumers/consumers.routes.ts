@@ -11,6 +11,7 @@ import {
   IdBanParam,
   IdFlagParam,
   IdParam,
+  IssueGiftCardBody,
   LiftBanBody,
   ListBansQuery,
   ListQuery,
@@ -101,6 +102,16 @@ const adminConsumersRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: { params: IdParam },
     },
     async (req) => ctrl.getConsumerGiftCards({ id: req.params.id }),
+  );
+
+  app.post(
+    '/:id/gift-cards',
+    {
+      preHandler: requirePermission('consumers.create'),
+      schema: { params: IdParam, body: IssueGiftCardBody },
+    },
+    async (req) =>
+      ctrl.issueGiftCard({ id: req.params.id, adminId: getAuth(req).sub, body: req.body }),
   );
 
   app.get(

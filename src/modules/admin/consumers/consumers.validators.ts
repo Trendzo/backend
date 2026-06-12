@@ -21,6 +21,14 @@ export const UnsuspendBody = z.preprocess(
 
 export const CloseBody = z.object({ reason: z.string().trim().min(1).max(500) });
 
+export const IssueGiftCardBody = z.object({
+  balancePaise: z.number().int().positive(),
+  /** Calendar date 'YYYY-MM-DD'. */
+  expiresOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expiresOn must be YYYY-MM-DD'),
+  /** Optional custom code; auto-generated when omitted. */
+  code: z.string().trim().min(1).max(64).optional(),
+});
+
 export const FlagsQuery = z.object({
   includeResolved: z
     .enum(['true', 'false'])

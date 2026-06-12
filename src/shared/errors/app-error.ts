@@ -56,6 +56,11 @@ export const ErrorCode = {
   GiftCardExpired: 'gift_card_expired',
   GiftCardAlreadyRedeemed: 'gift_card_already_redeemed',
 
+  // Referrals
+  ReferralCodeInvalid: 'referral_code_invalid',
+  ReferralSelf: 'referral_self',
+  ReferralAlreadyUsed: 'referral_already_used',
+
   // Idempotency
   AlreadyClaimed: 'already_claimed',
   AlreadySpun: 'already_spun',
@@ -66,6 +71,7 @@ export const ErrorCode = {
   OrderNotFound: 'order_not_found',
   OrderTransitionInvalid: 'order_transition_invalid',
   OrderStockUnavailable: 'order_stock_unavailable',
+  OrderPriceChanged: 'order_price_changed',
   OrderStoreUnavailable: 'order_store_unavailable',
   OrderRetryBudgetExhausted: 'order_retry_budget_exhausted',
   OrderCancellationNotAllowed: 'order_cancellation_not_allowed',

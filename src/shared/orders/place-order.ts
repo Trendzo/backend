@@ -21,47 +21,31 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
 import {
-  addresses,
-  consumers,
-  loyaltyTransactions,
+  consumerWallets,
   orderGroups,
   orderItems,
   orders,
   payments,
-  platformConfig,
   promotionConsumerUsage,
   promotionRedemptions,
   promotions,
-  retailerStores,
   variants,
-  voucherCodes,
+  walletTransactions,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
-import { compute } from '@/shared/discounts/compute.js';
-import type {
-  Cart,
-  CartLine,
-  EngineConfig,
-  EnginePromotion,
-  PricingBreakdown,
-} from '@/shared/discounts/types.js';
+import type { PricingBreakdown } from '@/shared/discounts/types.js';
 import {
   bumpPromotionCounter,
   bumpVoucherCodeCounter,
 } from '@/modules/admin/promotions/redemption-counter.js';
-import type {
-  AppliedTo,
-  ClubbingDefaultValue,
-  DiscountType,
-  Mechanism,
-  PromotionConfig,
-  Scope,
-} from '@/shared/promotions/schemas.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import {
   buildOrderItemSnapshot,
   buildOrderSnapshot,
 } from '@/shared/snapshots/order-snapshot.js';
+import { applyLoyaltyDelta } from '@/shared/loyalty/apply-delta.js';
+import { ensureWallet } from '@/shared/wallet/ensure-wallet.js';
+import { computeQuote, resolveWalletApplyPaise } from './compute-quote.js';
 import { generatePickupCode } from './pickup-code.js';
 import { transitionOrder } from './transition.js';
 
@@ -82,6 +66,9 @@ export type PlaceOrderInput = {
   voucherCode?: string | undefined;
   /** Loyalty points to redeem. */
   pointsToRedeem?: number | undefined;
+  /** Apply wallet balance as a partial tender alongside `paymentMethod`. Wallet-only
+   *  (`paymentMethod === 'wallet'`) always applies and must fully cover the total. */
+  applyWallet?: boolean | undefined;
   /** Idempotency key — duplicate requests return the existing order. */
   idempotencyKey: string;
   /** Who initiated this placement (admin user id for the test surface). */
@@ -100,6 +87,10 @@ export type PlaceOrderResult = {
   groupId: string;
   status: string;
   pricing: PricingBreakdown;
+  /** Amount debited from the wallet (0 if wallet not used). */
+  walletAppliedPaise: number;
+  /** Amount charged to the gateway tender = grandTotal − walletApplied. */
+  amountChargedPaise: number;
   alreadyExisted: boolean;
 };
 
@@ -118,303 +109,82 @@ export async function placeOrder(
       groupId: existing.groupId,
       status: existing.status,
       pricing: pricingFromOrderRow(existing),
+      walletAppliedPaise: existing.walletAppliedPaise,
+      amountChargedPaise: existing.grandTotalPaise - existing.walletAppliedPaise,
       alreadyExisted: true,
     };
   }
 
-  // ── Pre-load static data (consumer, address, store, items) ──
-  const consumer = await database.query.consumers.findFirst({
-    where: eq(consumers.id, input.consumerId),
-  });
-  if (!consumer) throw new AppError(404, ErrorCode.NotFound, 'Consumer not found');
-
-  const store = await database.query.retailerStores.findFirst({
-    where: eq(retailerStores.id, input.storeId),
-  });
-  if (!store) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
-  if (store.status !== 'active') {
-    throw new AppError(
-      409,
-      ErrorCode.OrderStoreUnavailable,
-      `Store ${input.storeId} is not active (status='${store.status}')`,
-    );
-  }
-
-  let address: typeof addresses.$inferSelect | undefined;
-  if (input.addressId) {
-    address = await database.query.addresses.findFirst({
-      where: eq(addresses.id, input.addressId),
-    });
-    if (!address) throw new AppError(404, ErrorCode.NotFound, 'Address not found');
-  } else if (input.deliveryMethod !== 'pickup') {
-    // Fall back to the consumer's default address when caller omits addressId.
-    address = await database.query.addresses.findFirst({
-      where: and(eq(addresses.consumerId, consumer.id), eq(addresses.isDefault, true)),
-    });
-    if (!address) {
-      throw AppError.validation(
-        'addressId is required for non-pickup orders and no default address is set',
-      );
-    }
-  }
-
-  if (input.items.length === 0) {
-    throw AppError.validation('At least one item is required');
-  }
-
-  // Try-and-Buy is prepaid only — payment must clear before agent doors-up the order.
-  // COD on a try-on order would mean settling cash at the door for items the customer
-  // can still refuse, which is operationally infeasible.
-  if (input.deliveryMethod === 'try_and_buy' && input.paymentMethod === 'cod') {
-    throw new AppError(
-      400,
-      ErrorCode.ValidationError,
-      'Try-and-Buy orders are prepaid only — COD is not allowed',
-    );
-  }
-
-  const variantIds = input.items.map((i) => i.variantId);
-  const variantRows = await database.query.variants.findMany({
-    where: inArray(variants.id, variantIds),
-    with: {
-      listing: {
-        with: { brand: true, category: true },
-      },
-    },
-  });
-  if (variantRows.length !== variantIds.length) {
-    throw new AppError(404, ErrorCode.NotFound, 'One or more variants not found');
-  }
-  // Ensure every variant belongs to the chosen store, its listing is live, and
-  // the variant itself is published (isActive). An unpublished variant/SKU or a
-  // non-active listing must not be purchasable.
-  for (const v of variantRows) {
-    if (v.listing.storeId !== input.storeId) {
-      throw AppError.validation(
-        `Variant ${v.id} belongs to a different store than the chosen store`,
-      );
-    }
-    if (v.listing.status !== 'active') {
-      throw new AppError(
-        409,
-        ErrorCode.InvalidState,
-        `Product "${v.listing.name}" is not available for purchase`,
-      );
-    }
-    if (!v.isActive) {
-      throw new AppError(
-        409,
-        ErrorCode.InvalidState,
-        `Variant "${v.attributesLabel}" is not available for purchase`,
-      );
-    }
-  }
-
-  // ── Build the cart for the pricing engine ──
-  const variantById = new Map(variantRows.map((v) => [v.id, v]));
-  const cartLines: CartLine[] = input.items.map((it) => {
-    const v = variantById.get(it.variantId)!;
-    const line: CartLine = {
-      lineId: v.id,
-      listingId: v.listing.id,
-      variantId: v.id,
-      unitPricePaise: v.pricePaise,
-      qty: it.qty,
-      gstRatePct: 5, // apparel default; real consumer cart picks per HSN
-    };
-    if (v.listing.brandId) line.brandId = v.listing.brandId;
-    if (v.listing.categoryId) line.categoryId = v.listing.categoryId;
-    return line;
-  });
-
-  const cart: Cart = {
-    consumerId: consumer.id,
-    consumerStateCode: address?.stateCode ?? store.stateCode,
-    storeStateCode: store.stateCode,
+  // ── Resolve + price everything (read-only, shared with the /checkout/quote path) ──
+  // computeQuote performs all the same loads, promotion gating (G1/G2/G4 + store
+  // gating) and pricing the consumer quote endpoint uses, so the placed total always
+  // matches the quoted total. It does NOT reserve stock — that happens atomically
+  // inside the transaction below.
+  const quote = await computeQuote(database, {
+    consumerId: input.consumerId,
+    storeId: input.storeId,
+    items: input.items,
     deliveryMethod: input.deliveryMethod,
     paymentMethod: input.paymentMethod,
-    lines: cartLines,
-  };
-
-  // ── Resolve promotions ──
-  const promoIds = new Set<string>();
-  let voucherCodeId: string | undefined;
-  let voucherCodePromotionId: string | undefined;
-
-  if (input.couponCode) {
-    const promo = await database.query.promotions.findFirst({
-      where: and(eq(promotions.name, input.couponCode), eq(promotions.mechanism, 'coupon')),
-    });
-    if (!promo) {
-      throw new AppError(404, ErrorCode.CouponInvalid, `No coupon "${input.couponCode}" found`);
-    }
-    promoIds.add(promo.id);
-  }
-
-  if (input.voucherCode) {
-    const code = await database.query.voucherCodes.findFirst({
-      where: eq(voucherCodes.code, input.voucherCode.toUpperCase()),
-    });
-    if (!code) {
-      throw new AppError(404, ErrorCode.CouponInvalid, 'Voucher code not found');
-    }
-    if (code.totalUses != null && code.redeemedCount >= code.totalUses) {
-      throw new AppError(409, ErrorCode.VoucherAlreadyRedeemed, 'Voucher already redeemed');
-    }
-    // §13 P6 — targeted vouchers are reserved for a specific consumer.
-    if (code.assignedConsumerId && code.assignedConsumerId !== consumer.id) {
-      throw new AppError(
-        409,
-        ErrorCode.CouponInvalid,
-        'Voucher is reserved for a different consumer',
-      );
-    }
-    promoIds.add(code.promotionId);
-    voucherCodeId = code.id;
-    voucherCodePromotionId = code.promotionId;
-  }
-
-  const promoRows =
-    promoIds.size === 0
-      ? []
-      : await database.query.promotions.findMany({
-          where: inArray(promotions.id, [...promoIds]),
-        });
-
-  // G1: Validate status and validity window before applying any promotion.
-  const now = new Date();
-  const validPromoRows = promoRows.filter((p) => {
-    const isActive = p.status === 'active';
-    const inWindow = p.validFrom <= now && p.validUntil >= now;
-    if (!isActive || !inWindow) {
-      const wasExplicit =
-        (input.couponCode && p.mechanism === 'coupon') ||
-        (input.voucherCode && p.mechanism === 'voucher');
-      if (wasExplicit) {
-        throw new AppError(
-          409,
-          ErrorCode.CouponInvalid,
-          `Promotion "${p.name}" is ${!isActive ? p.status : 'outside its validity window'}`,
-        );
-      }
-      return false; // silently drop auto-applied offers that are no longer active
-    }
-    return true;
+    ...(input.addressId !== undefined && { addressId: input.addressId }),
+    ...(input.couponCode !== undefined && { couponCode: input.couponCode }),
+    ...(input.voucherCode !== undefined && { voucherCode: input.voucherCode }),
+    ...(input.pointsToRedeem !== undefined && { pointsToRedeem: input.pointsToRedeem }),
+    ...(input.applyWallet !== undefined && { applyWallet: input.applyWallet }),
   });
-
-  const enginePromos: EnginePromotion[] = validPromoRows.map((p) => {
-    const promo: EnginePromotion = {
-      id: p.id,
-      mechanism: p.mechanism as Mechanism,
-      discountType: p.discountType as DiscountType,
-      appliedTo: p.appliedTo as AppliedTo,
-      config: p.config as unknown as PromotionConfig,
-      scope: p.scope as unknown as Scope,
-      stackableWith: p.stackableWith,
-      nonStackable: p.nonStackable,
-    };
-    if (voucherCodeId && p.id === voucherCodePromotionId) {
-      promo.voucherCodeId = voucherCodeId;
-    }
-    return promo;
-  });
-
-  // Loyalty balance — always fetched (used for redemption math and loyaltyTierFilter checks).
-  const loyaltyLast = await database.query.loyaltyTransactions.findFirst({
-    where: eq(loyaltyTransactions.consumerId, consumer.id),
-    orderBy: (t, { desc }) => desc(t.at),
-  });
-  const consumerLoyaltyBalance = loyaltyLast?.balanceAfterPoints ?? 0;
-
-  // G2: Enforce firstOrderOnly — the engine can't do this DB lookup itself.
-  if (enginePromos.some((p) => p.scope?.firstOrderOnly)) {
-    const priorOrder = await database.query.orders.findFirst({
-      where: and(eq(orders.consumerId, consumer.id), sql`${orders.status} != 'payment_failed'`),
-      columns: { id: true },
-    });
-    if (priorOrder) {
-      for (let i = enginePromos.length - 1; i >= 0; i--) {
-        if (!enginePromos[i]!.scope?.firstOrderOnly) continue;
-        const isExplicit =
-          (input.couponCode && enginePromos[i]!.mechanism === 'coupon') ||
-          (input.voucherCode && enginePromos[i]!.mechanism === 'voucher');
-        if (isExplicit) {
-          throw new AppError(409, ErrorCode.CouponInvalid, 'This offer is for first-time orders only');
-        }
-        enginePromos.splice(i, 1);
-      }
-    }
-  }
-
-  // G4: Enforce loyaltyTierFilter — derive consumer tier from balance vs. platform thresholds.
-  if (enginePromos.some((p) => p.scope?.loyaltyTierFilter?.length)) {
-    const tierCfg = await database.query.platformConfig.findMany({
-      where: inArray(platformConfig.key, [
-        'loyalty_tier_silver_min',
-        'loyalty_tier_gold_min',
-        'loyalty_tier_platinum_min',
-      ]),
-    });
-    const silver = (tierCfg.find((c) => c.key === 'loyalty_tier_silver_min')?.value as number | undefined) ?? 500;
-    const gold   = (tierCfg.find((c) => c.key === 'loyalty_tier_gold_min')?.value   as number | undefined) ?? 2000;
-    const plat   = (tierCfg.find((c) => c.key === 'loyalty_tier_platinum_min')?.value as number | undefined) ?? 5000;
-    const consumerTier: 'bronze' | 'silver' | 'gold' | 'platinum' =
-      consumerLoyaltyBalance >= plat ? 'platinum'
-        : consumerLoyaltyBalance >= gold ? 'gold'
-        : consumerLoyaltyBalance >= silver ? 'silver'
-        : 'bronze';
-    for (let i = enginePromos.length - 1; i >= 0; i--) {
-      const filter = enginePromos[i]!.scope?.loyaltyTierFilter;
-      if (filter?.length && !filter.includes(consumerTier)) {
-        enginePromos.splice(i, 1);
-      }
-    }
-  }
-
-  // §13 A5 — scope.storeIds gating. The pricing engine's eligibility filter is
-  // per-line and ignores storeIds (the cart already represents one store), so we
-  // drop here. Explicit coupons/vouchers throw — auto-applied offers silently drop.
-  for (let i = enginePromos.length - 1; i >= 0; i--) {
-    const storeIds = enginePromos[i]!.scope?.storeIds;
-    if (storeIds?.length && !storeIds.includes(store.id)) {
-      const promo = enginePromos[i]!;
-      const isExplicit =
-        (input.couponCode && promo.mechanism === 'coupon') ||
-        (input.voucherCode && promo.mechanism === 'voucher');
-      if (isExplicit) {
-        throw new AppError(
-          409,
-          ErrorCode.CouponInvalid,
-          'This promotion is not available for this store',
-        );
-      }
-      enginePromos.splice(i, 1);
-    }
-  }
-
-  const clubbingRows = await database.query.clubbingMatrixEntries.findMany();
-  const clubbingMatrix = clubbingRows.map((r) => ({
-    appliedToA: r.appliedToA as AppliedTo,
-    appliedToB: r.appliedToB as AppliedTo,
-    defaultValue: r.defaultValue as ClubbingDefaultValue,
-  }));
-
-  const engineConfig = await loadEngineConfig(database, store);
-
-  const breakdown = compute({
+  const {
+    consumer,
+    store,
+    address,
+    variantById,
     cart,
-    promotions: enginePromos,
-    clubbingMatrix,
-    config: engineConfig,
-    pointsToRedeem: input.pointsToRedeem ?? 0,
-    consumerLoyaltyBalance,
-  });
-
-  // ── Per-item allocations (proportional to line subtotal) ──
-  const lineAllocations = allocateDiscountsToLines(cartLines, breakdown);
+    enginePromos,
+    engineConfig,
+    breakdown,
+    lineAllocations,
+  } = quote;
 
   // ── Transactional write ──
-  const placed = await database.transaction(async (tx) => {
+  // The pre-tx idempotency check above is advisory; two requests with the same key can both
+  // pass it and race into the transaction. The unique index on orders.idempotency_key lets at
+  // most one commit — the loser hits 23505 here. Rather than surface a raw DB error, we replay
+  // the winning order, so placement is truly idempotent under concurrency.
+  type PlacementTxResult = {
+    orderId: string;
+    groupId: string;
+    paymentId: string;
+    walletAppliedPaise: number;
+    amountChargedPaise: number;
+    effectiveOutcome: PaymentOutcome;
+  };
+  let placed: PlacementTxResult;
+  try {
+    placed = await runPlacementTx();
+  } catch (err) {
+    const code = (err as { code?: string; cause?: { code?: string } })?.code
+      ?? (err as { cause?: { code?: string } })?.cause?.code;
+    if (code === '23505') {
+      const winner = await database.query.orders.findFirst({
+        where: eq(orders.idempotencyKey, input.idempotencyKey),
+      });
+      // A row under this exact (unique) key means a concurrent placement won — replay it.
+      if (winner) {
+        return {
+          orderId: winner.id,
+          groupId: winner.groupId,
+          status: winner.status,
+          pricing: pricingFromOrderRow(winner),
+          walletAppliedPaise: winner.walletAppliedPaise,
+          amountChargedPaise: winner.grandTotalPaise - winner.walletAppliedPaise,
+          alreadyExisted: true,
+        };
+      }
+    }
+    throw err;
+  }
+
+  async function runPlacementTx(): Promise<PlacementTxResult> {
+   return database.transaction(async (tx) => {
     // Reserve stock atomically per variant.
     for (const it of input.items) {
       const [updated] = await tx
@@ -433,6 +203,103 @@ export async function placeOrder(
           ErrorCode.OrderStockUnavailable,
           `Insufficient stock for variant ${it.variantId}`,
         );
+      }
+    }
+
+    // ── TOCTOU guards ──
+    // computeQuote ran before this transaction opened, so the breakdown (prices, applied
+    // promotions) is a snapshot. Re-read those inputs inside the tx and reject if they drifted,
+    // so a committed order can never bake in a stale price or an expired promotion. The client
+    // re-quotes on the 409.
+    const variantIds = input.items.map((it) => it.variantId);
+    const liveVariants = await tx.query.variants.findMany({
+      where: inArray(variants.id, variantIds),
+      columns: { id: true, pricePaise: true },
+    });
+    const livePriceById = new Map(liveVariants.map((v) => [v.id, v.pricePaise]));
+    for (const it of input.items) {
+      const quotedPrice = variantById.get(it.variantId)?.pricePaise;
+      const livePrice = livePriceById.get(it.variantId);
+      if (livePrice === undefined || livePrice !== quotedPrice) {
+        throw new AppError(
+          409,
+          ErrorCode.OrderPriceChanged,
+          `Price for variant ${it.variantId} changed since the quote; please review and retry`,
+        );
+      }
+    }
+
+    if (enginePromos.length > 0) {
+      const now = new Date();
+      const livePromos = await tx.query.promotions.findMany({
+        where: inArray(promotions.id, enginePromos.map((p) => p.id)),
+        columns: { id: true, name: true, status: true, validFrom: true, validUntil: true },
+      });
+      const livePromoById = new Map(livePromos.map((p) => [p.id, p]));
+      for (const p of enginePromos) {
+        const live = livePromoById.get(p.id);
+        if (!live || live.status !== 'active' || live.validFrom > now || live.validUntil < now) {
+          throw new AppError(
+            409,
+            ErrorCode.CouponInvalid,
+            `Promotion ${live?.name ?? p.id} is no longer valid; please re-quote`,
+          );
+        }
+      }
+    }
+
+    // ── Wallet tender debit (partial or full) ──
+    // Balance update only here; the ledger row is written after the order row
+    // exists (walletTransactions.refOrderId FKs orders.id). The version CAS +
+    // the unique (walletId, walletVersionAfter) index serialize concurrent debits.
+    let walletAppliedPaise = 0;
+    let walletLedger:
+      | { walletId: string; balanceAfterPaise: number; versionAfter: number }
+      | null = null;
+    const wantsWallet = input.applyWallet === true || input.paymentMethod === 'wallet';
+    if (wantsWallet) {
+      const walletId = await ensureWallet(tx, consumer.id);
+      let settled = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const wallet = await tx.query.consumerWallets.findFirst({
+          where: eq(consumerWallets.id, walletId),
+        });
+        if (!wallet) throw new AppError(500, ErrorCode.InternalError, 'Wallet vanished');
+        const applied = resolveWalletApplyPaise({
+          paymentMethod: input.paymentMethod,
+          applyWallet: input.applyWallet,
+          balancePaise: wallet.balancePaise,
+          totalPaise: breakdown.totalPaise,
+        });
+        // Wallet-only must fully cover the order; partial-apply tolerates a shortfall
+        // (the remainder is charged to the gateway tender).
+        if (input.paymentMethod === 'wallet' && applied < breakdown.totalPaise) {
+          throw new AppError(
+            409,
+            ErrorCode.InsufficientWalletBalance,
+            'Insufficient wallet balance to cover the order',
+          );
+        }
+        if (applied === 0) {
+          settled = true;
+          break;
+        }
+        const newBalance = wallet.balancePaise - applied;
+        const newVersion = wallet.version + 1;
+        const [updated] = await tx
+          .update(consumerWallets)
+          .set({ balancePaise: newBalance, version: newVersion, updatedAt: new Date() })
+          .where(and(eq(consumerWallets.id, walletId), eq(consumerWallets.version, wallet.version)))
+          .returning();
+        if (updated) {
+          walletAppliedPaise = applied;
+          walletLedger = { walletId, balanceAfterPaise: newBalance, versionAfter: newVersion };
+          settled = true;
+          break;
+        }
+      }
+      if (!settled) {
+        throw new AppError(503, ErrorCode.InternalError, 'Wallet CAS retries exhausted');
       }
     }
 
@@ -497,7 +364,7 @@ export async function placeOrder(
       platformPromoPaise: breakdown.platformPromoDiscountPaise,
       couponPaise: breakdown.couponDiscountPaise,
       pointsRedeemedPaise: breakdown.loyaltyDiscountPaise,
-      walletAppliedPaise: 0,
+      walletAppliedPaise,
       taxPaise: breakdown.cgstPaise + breakdown.sgstPaise + breakdown.igstPaise,
       taxSplitKind:
         cart.consumerStateCode === cart.storeStateCode ? 'intra_state' : 'inter_state',
@@ -510,6 +377,20 @@ export async function placeOrder(
       grandTotalPaise: breakdown.totalPaise,
       idempotencyKey: input.idempotencyKey,
     });
+
+    // Wallet ledger row — written now that the order row exists (refOrderId FK).
+    if (walletLedger) {
+      await tx.insert(walletTransactions).values({
+        id: newId(IdPrefix.WalletTx),
+        walletId: walletLedger.walletId,
+        kind: 'debit',
+        amountPaise: -walletAppliedPaise,
+        balanceAfterPaise: walletLedger.balanceAfterPaise,
+        walletVersionAfter: walletLedger.versionAfter,
+        refOrderId: orderId,
+        note: 'Debit at order placement',
+      });
+    }
 
     // Order items.
     for (const it of input.items) {
@@ -551,20 +432,25 @@ export async function placeOrder(
       });
     }
 
-    // Payment row.
+    // Payment row. Wallet already collected its portion; the gateway only charges
+    // the remainder. When wallet fully covers the order the remainder is 0 and the
+    // payment is settled as succeeded regardless of the requested outcome.
+    const amountChargedPaise = breakdown.totalPaise - walletAppliedPaise;
+    const effectiveOutcome: PaymentOutcome =
+      amountChargedPaise === 0 ? 'succeeded' : input.paymentOutcome;
     const paymentId = newId(IdPrefix.Payment);
     const settledAt =
-      input.paymentOutcome === 'succeeded' || input.paymentOutcome === 'failed'
+      effectiveOutcome === 'succeeded' || effectiveOutcome === 'failed'
         ? new Date()
         : null;
     await tx.insert(payments).values({
       id: paymentId,
       orderId,
       method: input.paymentMethod,
-      amountPaise: breakdown.totalPaise,
-      status: input.paymentOutcome,
+      amountPaise: amountChargedPaise,
+      status: effectiveOutcome,
       gatewayRef:
-        input.paymentOutcome === 'succeeded'
+        effectiveOutcome === 'succeeded'
           ? `TEST-${input.idempotencyKey.slice(0, 12)}`
           : null,
       idempotencyKey: `${input.idempotencyKey}#pay`,
@@ -620,37 +506,35 @@ export async function placeOrder(
         });
     }
 
-    // Loyalty redemption (if any) — debit points via CAS.
-    if ((input.pointsToRedeem ?? 0) > 0 && breakdown.loyaltyRedeemedPoints > 0) {
-      // Loyalty has no balance row (just a ledger); we look up the most recent balanceAfterPoints
-      // and write a debit row with kind='redeem' and points = -redeemed.
-      const newPointsBalance =
-        consumerLoyaltyBalance - breakdown.loyaltyRedeemedPoints;
-      if (newPointsBalance < 0) {
-        throw new AppError(
-          409,
-          ErrorCode.InsufficientPoints,
-          `Insufficient points balance`,
-        );
-      }
-      await tx.insert(loyaltyTransactions).values({
-        id: newId(IdPrefix.LoyaltyTx),
+    // Loyalty redemption (if any) — debit points via the CAS-guarded balance row.
+    // applyLoyaltyDelta re-reads the authoritative balance inside this transaction and throws
+    // InsufficientPoints if a concurrent redeem already drew it down, so a stale quote can
+    // never overdraw points.
+    if (breakdown.loyaltyRedeemedPoints > 0) {
+      await applyLoyaltyDelta(tx, {
         consumerId: consumer.id,
-        kind: 'redeem',
         points: -breakdown.loyaltyRedeemedPoints,
-        balanceAfterPoints: newPointsBalance,
+        kind: 'redeem',
         refOrderId: orderId,
-        note: `Redeemed at order placement`,
+        note: 'Redeemed at order placement',
       });
     }
 
-    return { orderId, groupId, paymentId };
-  });
+    return {
+      orderId,
+      groupId,
+      paymentId,
+      walletAppliedPaise,
+      amountChargedPaise,
+      effectiveOutcome,
+    };
+   });
+  }
 
   // ── Drive payment-outcome transitions outside the placement tx so each transition writes
   //    its own audit row cleanly. (transitionOrder is its own transaction-friendly call.)
   let finalStatus: string = 'pending';
-  if (input.paymentOutcome === 'succeeded') {
+  if (placed.effectiveOutcome === 'succeeded') {
     await transitionOrder(database, {
       orderId: placed.orderId,
       toStatus: 'confirmed',
@@ -669,7 +553,7 @@ export async function placeOrder(
     const { dispatchOrder } = await import('./routing.js');
     await dispatchOrder(placed.orderId);
     finalStatus = 'routing';
-  } else if (input.paymentOutcome === 'failed') {
+  } else if (placed.effectiveOutcome === 'failed') {
     await transitionOrder(database, {
       orderId: placed.orderId,
       toStatus: 'payment_failed',
@@ -690,6 +574,8 @@ export async function placeOrder(
     groupId: placed.groupId,
     status: finalStatus,
     pricing: breakdown,
+    walletAppliedPaise: placed.walletAppliedPaise,
+    amountChargedPaise: placed.amountChargedPaise,
     alreadyExisted: false,
   };
 }
@@ -709,60 +595,6 @@ function paymentMethodLabel(method: PlaceOrderInput['paymentMethod']): string {
     case 'gift_card':
       return 'Gift card';
   }
-}
-
-type LineAllocation = {
-  retailerPromo: number;
-  platformPromo: number;
-  coupon: number;
-  points: number;
-  gst: number;
-};
-
-/**
- * Allocate aggregate discounts + tax to individual lines proportionally to line subtotal.
- * Last line picks up rounding crumbs so totals reconcile.
- */
-function allocateDiscountsToLines(
-  lines: CartLine[],
-  breakdown: PricingBreakdown,
-): Map<string, LineAllocation> {
-  const totalSubtotal = lines.reduce((s, l) => s + l.unitPricePaise * l.qty, 0);
-  const totalGst = breakdown.cgstPaise + breakdown.sgstPaise + breakdown.igstPaise;
-  const out = new Map<string, LineAllocation>();
-  let usedRetailer = 0;
-  let usedPlatform = 0;
-  let usedCoupon = 0;
-  let usedPoints = 0;
-  let usedGst = 0;
-
-  lines.forEach((l, idx) => {
-    const lineSubtotal = l.unitPricePaise * l.qty;
-    const isLast = idx === lines.length - 1;
-    const share = totalSubtotal === 0 ? 0 : lineSubtotal / totalSubtotal;
-    const alloc: LineAllocation = {
-      retailerPromo: isLast
-        ? breakdown.retailerPromoDiscountPaise - usedRetailer
-        : Math.floor(breakdown.retailerPromoDiscountPaise * share),
-      platformPromo: isLast
-        ? breakdown.platformPromoDiscountPaise - usedPlatform
-        : Math.floor(breakdown.platformPromoDiscountPaise * share),
-      coupon: isLast
-        ? breakdown.couponDiscountPaise - usedCoupon
-        : Math.floor(breakdown.couponDiscountPaise * share),
-      points: isLast
-        ? breakdown.loyaltyDiscountPaise - usedPoints
-        : Math.floor(breakdown.loyaltyDiscountPaise * share),
-      gst: isLast ? totalGst - usedGst : Math.floor(totalGst * share),
-    };
-    usedRetailer += alloc.retailerPromo;
-    usedPlatform += alloc.platformPromo;
-    usedCoupon += alloc.coupon;
-    usedPoints += alloc.points;
-    usedGst += alloc.gst;
-    out.set(l.lineId, alloc);
-  });
-  return out;
 }
 
 function pricingFromOrderRow(o: typeof orders.$inferSelect): PricingBreakdown {
@@ -794,51 +626,5 @@ function pricingFromOrderRow(o: typeof orders.$inferSelect): PricingBreakdown {
     loyaltyEarnedPoints: 0,
     loyaltyRedeemedPoints: 0,
   };
-}
-
-async function loadEngineConfig(
-  database: typeof Db,
-  store: typeof retailerStores.$inferSelect,
-): Promise<EngineConfig> {
-  const keys = [
-    'loyalty_point_value_paise',
-    'loyalty_earn_rate_bp',
-    'min_redeemable_points',
-    'max_redeem_fraction_bp',
-    'base_delivery_fee_table',
-    'surge_multiplier',
-    'tcs_rate_bp',
-  ];
-  const rows = await database.query.platformConfig.findMany({
-    where: inArray(platformConfig.key, keys),
-  });
-  const map = new Map(rows.map((r) => [r.key, r.value]));
-  const cfg: EngineConfig = {
-    loyalty: {
-      pointValuePaise: (map.get('loyalty_point_value_paise') as number) ?? 100,
-      earnRateBp: (map.get('loyalty_earn_rate_bp') as number) ?? 10000,
-      minRedeemablePoints: (map.get('min_redeemable_points') as number) ?? 100,
-      maxRedeemFractionBp: (map.get('max_redeem_fraction_bp') as number) ?? 10000,
-    },
-    baseDeliveryFee:
-      (map.get('base_delivery_fee_table') as EngineConfig['baseDeliveryFee']) ?? {
-        express: 9900,
-        standard: 4900,
-        pickup: 0,
-        try_and_buy: 9900,
-      },
-    surgeMultiplier: (map.get('surge_multiplier') as number) ?? 1.0,
-    tcsRateBp: (map.get('tcs_rate_bp') as number) ?? 100,
-  };
-  if (store.deliveryOverridePaise !== null) {
-    cfg.deliveryOverridePaise = store.deliveryOverridePaise;
-  }
-  if (store.handlingFeePaise !== null) {
-    cfg.handlingFeePaise = store.handlingFeePaise;
-  }
-  if (store.convenienceFeePaise !== null) {
-    cfg.convenienceFeePaise = store.convenienceFeePaise;
-  }
-  return cfg;
 }
 

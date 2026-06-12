@@ -100,6 +100,10 @@ export const loyaltyTransactions = pgTable(
     kind: loyaltyTransactionKind('kind').notNull(),
     points: integer('points').notNull(), // signed
     balanceAfterPoints: integer('balance_after_points').notNull(),
+    // Optimistic-lock snapshot mirroring wallet_transactions.wallet_version_after. The unique
+    // (consumer_id, balance_version_after) index serializes concurrent loyalty writes for one
+    // consumer so the running balance can never be corrupted by a lost update.
+    balanceVersionAfter: integer('balance_version_after').notNull(),
     refOrderId: text('ref_order_id').references(() => orders.id),
     note: text('note'),
     expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }),
@@ -107,6 +111,11 @@ export const loyaltyTransactions = pgTable(
   },
   (t) => ({
     consumerAtIdx: index('loyalty_transactions_consumer_at_idx').on(t.consumerId, t.at),
+    // CAS guard: two concurrent writes at the same balance version cannot both land.
+    versionUniqueIdx: uniqueIndex('loyalty_transactions_consumer_version_idx').on(
+      t.consumerId,
+      t.balanceVersionAfter,
+    ),
     // Sign of `points` must agree with `kind`. `redeem` debits; `earn`/`refund_credit`/`bonus`
     // credit; `adjustment` may be either sign.
     signByKindGuard: check(
@@ -119,6 +128,32 @@ export const loyaltyTransactions = pgTable(
       'loyalty_transactions_balance_after_non_negative',
       sql`${t.balanceAfterPoints} >= 0`,
     ),
+  }),
+);
+
+/**
+ * Authoritative loyalty balance projection — the points analogue of consumerWallets.
+ * `version` is the optimistic-lock counter for the CAS pattern (read → compute → UPDATE
+ * ... WHERE version = previousVersion → retry on rowcount 0). Every loyaltyTransactions write
+ * goes through applyLoyaltyDelta, which bumps this row and stamps balanceVersionAfter, so the
+ * ledger and this projection are always in lock-step.
+ */
+export const consumerLoyalty = pgTable(
+  'consumer_loyalty',
+  {
+    id: text('id').primaryKey(),
+    consumerId: text('consumer_id')
+      .notNull()
+      .references(() => consumers.id),
+    balancePoints: integer('balance_points').notNull().default(0),
+    version: integer('version').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    consumerIdx: uniqueIndex('consumer_loyalty_consumer_idx').on(t.consumerId),
+    nonNegativeGuard: check('consumer_loyalty_balance_non_negative', sql`${t.balancePoints} >= 0`),
   }),
 );
 
@@ -206,6 +241,13 @@ export const walletTransactionsRelations = relations(walletTransactions, ({ one 
   refund: one(refunds, {
     fields: [walletTransactions.refRefundId],
     references: [refunds.id],
+  }),
+}));
+
+export const consumerLoyaltyRelations = relations(consumerLoyalty, ({ one }) => ({
+  consumer: one(consumers, {
+    fields: [consumerLoyalty.consumerId],
+    references: [consumers.id],
   }),
 }));
 

@@ -63,6 +63,7 @@ export async function placeTestOrder(input: {
     ...(body.couponCode !== undefined && { couponCode: body.couponCode }),
     ...(body.voucherCode !== undefined && { voucherCode: body.voucherCode }),
     ...(body.pointsToRedeem !== undefined && { pointsToRedeem: body.pointsToRedeem }),
+    ...(body.applyWallet !== undefined && { applyWallet: body.applyWallet }),
     idempotencyKey,
     placedByActorType: 'admin',
     placedByActorId: adminId,
