@@ -25,7 +25,9 @@ type Variant = typeof variants.$inferSelect;
  * for pickup orders (no delivery address).
  */
 export function buildOrderSnapshot(input: {
-  consumer: Pick<Consumer, 'name' | 'email' | 'phone'>;
+  // name/email are required strings (not the nullable schema types): the *_snap columns
+  // are NOT NULL, so callers must reject profile-incomplete consumers before snapshotting.
+  consumer: { name: string; email: string; phone: Consumer['phone'] };
   address: Pick<
     Address,
     'line1' | 'line2' | 'city' | 'pincode' | 'stateCode' | 'lat' | 'lng'

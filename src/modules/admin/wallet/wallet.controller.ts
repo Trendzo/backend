@@ -7,7 +7,7 @@ import { ok } from '@/shared/http/envelope.js';
 import type { ListWalletPayoutsQuery } from './wallet.validators.js';
 
 function shapeWalletPayout(
-  p: typeof walletPayouts.$inferSelect & { consumer?: { email: string } | null },
+  p: typeof walletPayouts.$inferSelect & { consumer?: { email: string | null } | null },
 ) {
   return {
     id: p.id,

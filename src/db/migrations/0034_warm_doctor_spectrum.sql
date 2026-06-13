@@ -1,0 +1,2 @@
+ALTER TABLE "orders" ADD COLUMN "delivery_otp" text;--> statement-breakpoint
+ALTER TABLE "orders" ADD CONSTRAINT "orders_delivery_otp_method_guard" CHECK ("orders"."delivery_otp" IS NULL OR "orders"."delivery_method" <> 'pickup');

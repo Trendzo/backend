@@ -18,6 +18,14 @@ const EnvSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 chars'),
   JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
+  // Consumer sessions are long-lived — phone-OTP re-login is high-friction, and there
+  // is no refresh-token flow for MVP (matching the admin/retailer stance).
+  JWT_CONSUMER_ACCESS_EXPIRES_IN: z.string().default('30d'),
+
+  // MSG91 — server-side verification of OTP-widget access tokens. Optional at boot
+  // so dev environments without SMS work, but the consumer OTP login endpoint will
+  // 503 until set (same pattern as Cloudinary below).
+  MSG91_AUTH_KEY: z.string().min(10).optional(),
 
   TCS_RATE_BP: z.coerce.number().int().nonnegative().default(100),
 

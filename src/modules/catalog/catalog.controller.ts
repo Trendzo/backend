@@ -1,4 +1,5 @@
-import { and, asc, eq, lte, gte, or, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, lte, gte, or, isNull, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
@@ -7,7 +8,9 @@ import {
   collectionListings,
   collections,
   productListings,
+  productReviews,
   sizeScales,
+  variants,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
@@ -15,6 +18,8 @@ import type {
   BrandsQuery,
   CategoriesQuery,
   CollectionsQuery,
+  ProductReviewsQuery,
+  ProductsQuery,
   SizeScalesQuery,
 } from './catalog.validators.js';
 
@@ -81,6 +86,164 @@ export async function listBrands(input: { query: z.infer<typeof BrandsQuery> }) 
   return ok(rows);
 }
 
+/**
+ * Listing query + shaping shared by product browse and collection detail so both
+ * return byte-identical product card payloads (variants with availability, groups,
+ * brand, category). Newest-first; callers needing membership order re-sort after.
+ */
+function queryListings(opts: {
+  where?: SQL | undefined;
+  limit?: number | undefined;
+  offset?: number | undefined;
+}) {
+  return db.query.productListings.findMany({
+    ...(opts.where && { where: opts.where }),
+    orderBy: (t, { desc }) => [desc(t.createdAt)],
+    ...(opts.limit !== undefined && { limit: opts.limit }),
+    ...(opts.offset !== undefined && { offset: opts.offset }),
+    with: {
+      brand: { columns: { id: true, name: true } },
+      category: { columns: { id: true, label: true, slug: true } },
+      store: { columns: { id: true, legalName: true } },
+      variants: {
+        where: (v, { eq: veq }) => veq(v.isActive, true),
+        columns: {
+          id: true,
+          groupId: true,
+          attributes: true,
+          attributesLabel: true,
+          imageUrls: true,
+          pricePaise: true,
+          compareAtPrice: true,
+          stock: true,
+          reserved: true,
+        },
+      },
+      variantGroups: {
+        where: (g, { eq: geq }) => geq(g.isActive, true),
+        columns: { id: true, name: true, colorHex: true, isDefault: true, sortOrder: true },
+      },
+    },
+  });
+}
+
+type ListingRow = Awaited<ReturnType<typeof queryListings>>[number];
+
+function shapeListings(rows: ListingRow[]) {
+  return rows
+    .map((l) => {
+      const activeGroupIds = new Set(l.variantGroups.map((g) => g.id));
+      const variants = l.variants
+        // Shoppable = variant active AND its group active.
+        .filter((v) => activeGroupIds.has(v.groupId))
+        .map((v) => ({
+          id: v.id,
+          groupId: v.groupId,
+          attributes: v.attributes,
+          label: v.attributesLabel,
+          imageUrls: v.imageUrls,
+          pricePaise: v.pricePaise,
+          compareAtPricePaise: v.compareAtPrice,
+          available: Math.max(0, v.stock - v.reserved),
+        }));
+      return {
+        id: l.id,
+        storeId: l.storeId,
+        name: l.name,
+        description: l.description,
+        gender: l.gender,
+        listingPolicy: l.listingPolicy,
+        galleryUrls: l.galleryUrls,
+        occasion: l.occasion,
+        brand: l.brand ? { id: l.brand.id, name: l.brand.name } : null,
+        category: { id: l.category.id, label: l.category.label, slug: l.category.slug },
+        store: { id: l.store.id, legalName: l.store.legalName },
+        ratingAvg: Number(l.ratingAvg),
+        ratingCount: l.ratingCount,
+        groups: l.variantGroups
+          .slice()
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((g) => ({ id: g.id, name: g.name, colorHex: g.colorHex, isDefault: g.isDefault })),
+        variants,
+      };
+    })
+    // A listing with zero shoppable variants can't be added to a cart — hide it.
+    .filter((l) => l.variants.length > 0);
+}
+
+/**
+ * Consumer product browse — active listings with their shoppable variants, shaped for
+ * the consumer app's product cards. Public (no auth). Each listing carries its storeId;
+ * checkout requires it (single-store MVP: all seeded listings share one store).
+ */
+export async function listProducts(input: { query: z.infer<typeof ProductsQuery> }) {
+  const { query } = input;
+  const filters = [eq(productListings.status, 'active' as const)];
+  if (query.gender) {
+    // Unisex listings show on both HER and HIM rails.
+    filters.push(or(eq(productListings.gender, query.gender), eq(productListings.gender, 'unisex'))!);
+  }
+  if (query.categoryId) filters.push(eq(productListings.categoryId, query.categoryId));
+  if (query.storeId) filters.push(eq(productListings.storeId, query.storeId));
+  if (query.search) filters.push(ilike(productListings.name, `%${query.search}%`));
+
+  const rows = await queryListings({
+    where: and(...filters),
+    limit: query.limit,
+    offset: query.offset,
+  });
+  return ok(shapeListings(rows));
+}
+
+/** Single active listing for the product detail page. Same shape as the list rows. */
+export async function getProduct(id: string) {
+  const rows = await queryListings({
+    where: and(eq(productListings.id, id), eq(productListings.status, 'active')),
+    limit: 1,
+  });
+  // shapeListings also drops listings with zero shoppable variants — those 404 too.
+  const shaped = shapeListings(rows);
+  if (shaped.length === 0) {
+    throw new AppError(404, ErrorCode.NotFound, 'Product not found');
+  }
+  return ok(shaped[0]);
+}
+
+/**
+ * Public reviews for a listing — active reviews only, newest first. The author is
+ * the reviewer's first name only (consumer PII never leaves the server).
+ */
+export async function listProductReviews(
+  id: string,
+  query: z.infer<typeof ProductReviewsQuery>,
+) {
+  const listing = await db.query.productListings.findFirst({
+    where: and(eq(productListings.id, id), eq(productListings.status, 'active')),
+    columns: { id: true },
+  });
+  if (!listing) {
+    throw new AppError(404, ErrorCode.NotFound, 'Product not found');
+  }
+
+  const rows = await db.query.productReviews.findMany({
+    where: and(eq(productReviews.listingId, id), eq(productReviews.status, 'active')),
+    orderBy: (t, { desc }) => [desc(t.createdAt)],
+    limit: query.limit,
+    offset: query.offset,
+    with: { consumer: { columns: { name: true } } },
+  });
+
+  return ok(
+    rows.map((r) => ({
+      id: r.id,
+      rating: r.rating,
+      body: r.body,
+      createdAt: r.createdAt,
+      author: r.consumer.name?.trim().split(/\s+/)[0] ?? 'ClosetX Shopper',
+    })),
+  );
+}
+
 export async function listCollections(input: { query: z.infer<typeof CollectionsQuery> }) {
   const { query } = input;
   const now = new Date();
@@ -95,14 +258,62 @@ export async function listCollections(input: { query: z.infer<typeof Collections
   }
   if (query.featured !== undefined)
     filters.push(eq(collections.isFeatured, query.featured));
-  // Time-window guard: hide collections whose drop window hasn't started or has ended.
-  filters.push(or(isNull(collections.startsAt), lte(collections.startsAt, now))!);
+  // Time-window guard: hide collections whose window has ended. Not-yet-started
+  // collections stay hidden EXCEPT drops — upcoming drops are listed (with their
+  // future startsAt) so the app can render launch countdowns; getCollection still
+  // 404s their contents until launch.
+  if (query.kind !== 'drop') {
+    filters.push(or(isNull(collections.startsAt), lte(collections.startsAt, now))!);
+  }
   filters.push(or(isNull(collections.endsAt), gte(collections.endsAt, now))!);
   const rows = await db.query.collections.findMany({
     where: and(...filters),
     orderBy: [asc(collections.sortOrder), asc(collections.createdAt)],
   });
-  return ok(rows);
+
+  // Bundle cards need pieces + total price: per explicit member listing take its
+  // cheapest active variant, then count/sum per collection. Auto-resolve kinds
+  // (occasion/brand with no memberships) get 0/0 — their cards don't show these.
+  const ids = rows.map((r) => r.id);
+  const perListing =
+    ids.length === 0
+      ? []
+      : await db
+          .select({
+            collectionId: collectionListings.collectionId,
+            listingId: collectionListings.listingId,
+            minPricePaise: sql<number>`min(${variants.pricePaise})`,
+          })
+          .from(collectionListings)
+          .innerJoin(
+            productListings,
+            and(
+              eq(productListings.id, collectionListings.listingId),
+              eq(productListings.status, 'active'),
+            ),
+          )
+          .innerJoin(
+            variants,
+            and(eq(variants.listingId, productListings.id), eq(variants.isActive, true)),
+          )
+          .where(inArray(collectionListings.collectionId, ids))
+          .groupBy(collectionListings.collectionId, collectionListings.listingId);
+
+  const stats = new Map<string, { count: number; sum: number }>();
+  for (const r of perListing) {
+    const s = stats.get(r.collectionId) ?? { count: 0, sum: 0 };
+    s.count += 1;
+    s.sum += Number(r.minPricePaise);
+    stats.set(r.collectionId, s);
+  }
+
+  return ok(
+    rows.map((c) => ({
+      ...c,
+      listingCount: stats.get(c.id)?.count ?? 0,
+      pricePaise: stats.get(c.id)?.sum ?? 0,
+    })),
+  );
 }
 
 export async function getCollection(slug: string) {
@@ -120,39 +331,48 @@ export async function getCollection(slug: string) {
 
   // US-5.8.2: brand and occasion collections auto-resolve from live catalog so
   // newly published listings in a featured brand/occasion appear without admin
-  // having to manually re-add them.
-  let listings: Array<typeof productListings.$inferSelect & { sortOrder: number }>;
+  // having to manually re-add them. All branches return shaped listings (same
+  // payload as /catalog/products) so the consumer app's product mapper works.
+  let listings: ReturnType<typeof shapeListings>;
   if (c.kind === 'brand' && c.brandId) {
-    const rows = await db.query.productListings.findMany({
-      where: and(
-        eq(productListings.brandId, c.brandId),
-        eq(productListings.status, 'active'),
-      ),
-      orderBy: (t, { desc }) => [desc(t.createdAt)],
+    const rows = await queryListings({
+      where: and(eq(productListings.brandId, c.brandId), eq(productListings.status, 'active')),
     });
-    listings = rows.map((r, i) => ({ ...r, sortOrder: i }));
+    listings = shapeListings(rows);
   } else if (c.kind === 'occasion' && c.occasionTag) {
-    const rows = await db.query.productListings.findMany({
+    const rows = await queryListings({
       where: and(
         sql`${productListings.occasion} @> ${JSON.stringify([c.occasionTag])}::jsonb`,
         eq(productListings.status, 'active'),
       ),
-      orderBy: (t, { desc }) => [desc(t.createdAt)],
     });
-    listings = rows.map((r, i) => ({ ...r, sortOrder: i }));
+    listings = shapeListings(rows);
   } else {
     const memberships = await db
-      .select({ listing: productListings, sortOrder: collectionListings.sortOrder })
+      .select({
+        listingId: collectionListings.listingId,
+        sortOrder: collectionListings.sortOrder,
+      })
       .from(collectionListings)
-      .innerJoin(productListings, eq(productListings.id, collectionListings.listingId))
-      .where(
-        and(
-          eq(collectionListings.collectionId, c.id),
+      .where(eq(collectionListings.collectionId, c.id))
+      .orderBy(asc(collectionListings.sortOrder));
+    if (memberships.length === 0) {
+      listings = [];
+    } else {
+      const rows = await queryListings({
+        where: and(
+          inArray(
+            productListings.id,
+            memberships.map((m) => m.listingId),
+          ),
           eq(productListings.status, 'active'),
         ),
-      )
-      .orderBy(asc(collectionListings.sortOrder));
-    listings = memberships.map((m) => ({ ...m.listing, sortOrder: m.sortOrder }));
+      });
+      const order = new Map(memberships.map((m) => [m.listingId, m.sortOrder]));
+      listings = shapeListings(rows).sort(
+        (a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0),
+      );
+    }
   }
 
   return ok({ ...c, listings });

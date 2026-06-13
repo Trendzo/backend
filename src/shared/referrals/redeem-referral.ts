@@ -93,7 +93,8 @@ export async function redeemReferral(
     );
 
     return {
-      referrerName: referrer.name,
+      // OTP-only consumers may not have set a name yet.
+      referrerName: referrer.name ?? 'Your friend',
       referrerPointsGranted: referrerGranted,
       refereePointsGranted: refereeGranted,
     };

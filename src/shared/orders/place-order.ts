@@ -46,7 +46,7 @@ import {
 import { applyLoyaltyDelta } from '@/shared/loyalty/apply-delta.js';
 import { ensureWallet } from '@/shared/wallet/ensure-wallet.js';
 import { computeQuote, resolveWalletApplyPaise } from './compute-quote.js';
-import { generatePickupCode } from './pickup-code.js';
+import { generateDeliveryOtp, generatePickupCode } from './pickup-code.js';
 import { transitionOrder } from './transition.js';
 
 export type PaymentOutcome = 'succeeded' | 'failed' | 'pending';
@@ -143,6 +143,18 @@ export async function placeOrder(
     breakdown,
     lineAllocations,
   } = quote;
+
+  // Phone-OTP signups start with only a verified phone; order snapshots freeze
+  // consumer name + email as NOT NULL columns, so both must exist before placement.
+  const { name: consumerName, email: consumerEmail } = consumer;
+  if (!consumerName || !consumerEmail) {
+    throw new AppError(
+      409,
+      ErrorCode.ProfileIncomplete,
+      'Add your name and email to your profile before placing an order',
+    );
+  }
+  const snapshotConsumer = { name: consumerName, email: consumerEmail, phone: consumer.phone };
 
   // ── Transactional write ──
   // The pre-tx idempotency check above is advisory; two requests with the same key can both
@@ -316,7 +328,7 @@ export async function placeOrder(
 
     const orderId = newId(IdPrefix.Order);
     const snap = buildOrderSnapshot({
-      consumer,
+      consumer: snapshotConsumer,
       address: address ?? null,
       store,
     });
@@ -327,6 +339,8 @@ export async function placeOrder(
     if (input.deliveryMethod === 'pickup') {
       pickupCode = generatePickupCode();
     }
+    // Door deliveries carry a numeric OTP the consumer reads to the agent at handover.
+    const deliveryOtp = input.deliveryMethod === 'pickup' ? null : generateDeliveryOtp();
 
     // §9 — refuse real consumer pickup orders without a slot snap. Admin test
     // placement falls through with NULLs (slot can be backfilled by the admin
@@ -356,6 +370,7 @@ export async function placeOrder(
       ...snap,
       tcsRateBpSnap: engineConfig.tcsRateBp,
       pickupCode,
+      deliveryOtp,
       pickupSlotId: input.pickupSlotId ?? null,
       pickupSlotStart: input.pickupSlotStart ?? null,
       pickupSlotEnd: input.pickupSlotEnd ?? null,

@@ -4,6 +4,13 @@ export const CollectionKindEnum = z.enum(['outfit', 'occasion', 'drop', 'edit', 
 export const GenderEnum = z.enum(['her', 'him', 'unisex']);
 
 export const SlugParam = z.object({ slug: z.string() });
+export const IdParam = z.object({ id: z.string() });
+
+/** Public reviews for a listing's detail page. */
+export const ProductReviewsQuery = z.object({
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  offset: z.coerce.number().int().nonnegative().default(0),
+});
 
 export const CategoriesQuery = z.object({
   gender: GenderEnum.optional(),
@@ -22,6 +29,16 @@ export const BrandsQuery = z.object({
 
 export const SizeScalesQuery = z.object({
   categoryId: z.string().optional(),
+});
+
+/** Consumer product browse. Public; only active listings/variants are returned. */
+export const ProductsQuery = z.object({
+  gender: GenderEnum.optional(),
+  categoryId: z.string().optional(),
+  storeId: z.string().optional(),
+  search: z.string().trim().min(1).max(120).optional(),
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  offset: z.coerce.number().int().nonnegative().default(0),
 });
 
 export const CollectionsQuery = z.object({

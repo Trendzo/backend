@@ -37,6 +37,11 @@ export const QuoteBody = z.object({
  * self-declare 'succeeded'); replace with a gateway-driven outcome/webhook before
  * production.
  */
+/** Consumer-initiated cancellation. Reason is optional free text for the audit log. */
+export const CancelOrderBody = z.object({
+  reason: z.string().trim().min(1).max(300).optional(),
+});
+
 export const PlaceOrderBody = QuoteBody.extend({
   paymentOutcome: PaymentOutcomeEnum.default('succeeded'),
   idempotencyKey: z.string().min(1).optional(),

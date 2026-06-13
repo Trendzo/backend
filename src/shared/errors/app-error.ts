@@ -109,6 +109,10 @@ export const ErrorCode = {
   ConsumerBanned: 'consumer_banned',
   ConsumerSuspended: 'consumer_suspended',
   ConsumerClosed: 'consumer_closed',
+
+  // Consumer profile — OTP-only signups have no name/email until they complete
+  // their profile; order placement requires both (order snapshots are NOT NULL).
+  ProfileIncomplete: 'profile_incomplete',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

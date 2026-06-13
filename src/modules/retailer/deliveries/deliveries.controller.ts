@@ -135,7 +135,12 @@ export async function doorClose(input: {
   body: z.infer<typeof DoorCloseBody>;
 }) {
   const { agentId } = await getAgent(input.auth);
-  await loadAssignedOrder(input.id, agentId);
+  const order = await loadAssignedOrder(input.id, agentId);
+  // Handover proof: orders that carry a delivery OTP can only be closed with the
+  // consumer-spoken code. Legacy orders (NULL otp) close without one.
+  if (order.deliveryOtp && input.body.otp !== order.deliveryOtp) {
+    throw new AppError(403, ErrorCode.ValidationError, 'Delivery OTP missing or incorrect');
+  }
   const r = await closeDoor(db, input.id, actorOf(input.auth), input.body.items);
   return ok(r);
 }

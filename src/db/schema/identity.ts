@@ -17,10 +17,14 @@ export const consumers = pgTable(
   'consumers',
   {
     id: text('id').primaryKey(),
-    email: text('email').notNull(),
+    // email/name/passwordHash are nullable: phone-OTP signups start with only a verified
+    // phone and fill name/email in later (required before placing an order — snapshots
+    // need them). passwordHash stays null for OTP-only consumers.
+    email: text('email'),
     phone: text('phone').notNull(),
-    name: text('name').notNull(),
-    passwordHash: text('password_hash').notNull(), // bcrypt
+    name: text('name'),
+    passwordHash: text('password_hash'), // bcrypt
+
     // Drives the consumer-app HER/HIM home-feed swap. Nullable until the user picks one;
     // the existing `gender` enum (her|him|unisex) is reused — `unisex` reads as "show all".
     genderPreference: gender('gender_preference'),

@@ -24,7 +24,11 @@ import type { ActorType } from '@/shared/orders/state-machine.js';
 export type OpenReturnItemInput = {
   orderItemId: string;
   reasonText?: string | undefined;
+  /** Categorical reason — consumer-app standard returns. */
+  reasonCategory?: 'damaged' | 'wrong_item' | 'not_as_described' | 'doesnt_fit' | 'other' | undefined;
   photos?: string[] | undefined;
+  /** Consumer-submitted evidence photos (stored separately from store-side photos). */
+  consumerPhotos?: string[] | undefined;
 };
 
 const RETURN_WINDOW_DAYS = 7;
@@ -125,7 +129,9 @@ export async function openReturn(
         orderItemId: it.orderItemId,
         kind: 'standard_return',
         reasonText: it.reasonText ?? null,
+        reasonCategory: it.reasonCategory ?? null,
         photos: it.photos ?? [],
+        consumerPhotos: it.consumerPhotos ?? [],
         agentDisposition: null,
         // Counter returns are immediately at the store; consumer-app returns wait for the
         // bag to physically arrive before verification can begin. Both states carry

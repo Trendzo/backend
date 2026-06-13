@@ -20,7 +20,8 @@ import { IdPrefix, newId } from '@/shared/ids.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import { computeQuote } from '@/shared/orders/compute-quote.js';
 import { placeOrder } from '@/shared/orders/place-order.js';
-import type { PlaceOrderBody, QuoteBody } from './checkout.validators.js';
+import { cancelOrder } from '@/shared/orders/cancel.js';
+import type { CancelOrderBody, PlaceOrderBody, QuoteBody } from './checkout.validators.js';
 
 type Auth = AccessTokenPayload;
 type QuoteInput = z.infer<typeof QuoteBody>;
@@ -102,6 +103,30 @@ export async function listOrders(input: { auth: Auth }) {
     orderBy: [desc(orders.placedAt)],
   });
   return ok(rows.map(orderListRow));
+}
+
+/**
+ * Consumer-initiated cancellation. Ownership enforced here; the state machine
+ * decides whether 'consumer' may cancel from the order's current status
+ * (pending/payment_failed/confirmed/accepted — not after packing).
+ */
+export async function cancelConsumerOrder(input: {
+  auth: Auth;
+  id: string;
+  body: z.infer<typeof CancelOrderBody>;
+}) {
+  const order = await db.query.orders.findFirst({
+    where: and(eq(orders.id, input.id), eq(orders.consumerId, input.auth.sub)),
+    columns: { id: true },
+  });
+  if (!order) throw new AppError(404, ErrorCode.NotFound, 'Order not found');
+  const result = await cancelOrder(db, {
+    orderId: input.id,
+    actorType: 'consumer',
+    actorId: input.auth.sub,
+    reason: input.body.reason ?? 'Cancelled by customer',
+  });
+  return ok(result);
 }
 
 /** One order with line items — ownership enforced via the consumerId filter. */

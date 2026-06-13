@@ -25,6 +25,9 @@ export const DoorCloseBody = z.object({
       }),
     )
     .min(1),
+  // Consumer-spoken delivery OTP. Required (and verified) when the order carries one;
+  // legacy orders placed before the OTP column may close without it.
+  otp: z.string().trim().min(4).max(8).optional(),
 });
 
 export const MarkUndeliveredBody = z.object({

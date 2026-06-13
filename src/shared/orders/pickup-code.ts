@@ -23,3 +23,17 @@ export function generatePickupCode(): string {
   }
   return out;
 }
+
+/**
+ * 6-digit numeric delivery OTP. Stored on `orders.delivery_otp` for door deliveries
+ * (express/standard/try-and-buy); the consumer reads it to the agent, who supplies it
+ * on door close. Numeric (not base32) because it's spoken over a doorstep handover.
+ */
+export function generateDeliveryOtp(): string {
+  const bytes = randomBytes(6);
+  let out = '';
+  for (let i = 0; i < 6; i++) {
+    out += String(bytes[i]! % 10);
+  }
+  return out;
+}

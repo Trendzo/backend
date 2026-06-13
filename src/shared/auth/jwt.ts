@@ -26,11 +26,14 @@ type DecodedAccessTokenPayload = AccessTokenPayload & {
   exp: number;
 };
 
-export function signAccessToken(payload: AccessTokenPayload): string {
+export function signAccessToken(
+  payload: AccessTokenPayload,
+  opts?: { expiresIn?: string },
+): string {
   // jsonwebtoken accepts ms-style strings ('15m', '7d') at runtime; the strict TS overload
   // narrows to a literal union that env vars can't hit, so cast through unknown.
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, {
-    expiresIn: env.JWT_ACCESS_EXPIRES_IN as unknown as number,
+    expiresIn: (opts?.expiresIn ?? env.JWT_ACCESS_EXPIRES_IN) as unknown as number,
   });
 }
 

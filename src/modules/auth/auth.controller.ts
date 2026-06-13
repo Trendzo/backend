@@ -3,15 +3,18 @@ import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
   adminAccounts,
+  consumers,
   retailerAccounts,
   retailerApplications,
 } from '@/db/schema/index.js';
+import { env } from '@/config/env.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { signAccessToken } from '@/shared/auth/jwt.js';
 import { hashPassword, verifyPassword } from '@/shared/auth/password.js';
+import { verifyMsg91AccessToken } from '@/shared/msg91/verify.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
-import type { LoginBody, SignupBody } from './auth.validators.js';
+import type { LoginBody, Msg91VerifyBody, SignupBody } from './auth.validators.js';
 
 /**
  * Auth controller. Three identity domains; each login produces a token tagged with `kind`
@@ -137,6 +140,72 @@ export async function retailerSignup(input: { body: z.infer<typeof SignupBody> }
       kycVerified: true,
     },
   });
+}
+
+/** Deterministic unique referral code derived from the consumer id (id is unique). */
+function referralCodeFor(consumerId: string): string {
+  return ('CX' + consumerId.slice(4, 12)).toUpperCase();
+}
+
+function shapeConsumer(c: typeof consumers.$inferSelect) {
+  return {
+    id: c.id,
+    phone: c.phone,
+    name: c.name,
+    email: c.email,
+    genderPreference: c.genderPreference,
+    referralCode: c.referralCode,
+    // Order placement snapshots require both; the app routes incomplete profiles
+    // through the complete-profile step before checkout.
+    profileComplete: !!(c.name && c.email),
+  };
+}
+
+/**
+ * Consumer phone-OTP login (MSG91). The client completes the OTP flow against MSG91's
+ * widget API and posts the resulting access token here; we re-verify it server-side,
+ * then find-or-create the consumer by verified phone. Login and signup are the same
+ * endpoint — first OTP verify creates the account.
+ */
+export async function consumerOtpLogin(input: { body: z.infer<typeof Msg91VerifyBody> }) {
+  const phone = await verifyMsg91AccessToken(input.body.accessToken);
+
+  let consumer = await db.query.consumers.findFirst({
+    where: eq(consumers.phone, phone),
+  });
+
+  if (!consumer) {
+    const id = newId(IdPrefix.Consumer);
+    try {
+      const inserted = await db
+        .insert(consumers)
+        .values({ id, phone, referralCode: referralCodeFor(id), status: 'active' })
+        .returning();
+      consumer = inserted[0]!;
+    } catch (err) {
+      // Two first-logins racing on the same phone — the loser re-reads the winner's row.
+      const code = (err as { code?: string }).code;
+      if (code !== '23505') throw err;
+      consumer = await db.query.consumers.findFirst({ where: eq(consumers.phone, phone) });
+      if (!consumer) {
+        throw new AppError(500, ErrorCode.InternalError, 'Could not create account');
+      }
+    }
+  }
+
+  // Mirror the middleware's status gate so a suspended consumer can't mint a fresh token.
+  if (consumer.status === 'suspended') {
+    throw new AppError(401, ErrorCode.ConsumerSuspended, 'Account is suspended');
+  }
+  if (consumer.status === 'closed') {
+    throw new AppError(401, ErrorCode.ConsumerClosed, 'Account is closed');
+  }
+
+  const token = signAccessToken(
+    { sub: consumer.id, kind: 'consumer' },
+    { expiresIn: env.JWT_CONSUMER_ACCESS_EXPIRES_IN },
+  );
+  return ok({ token, consumer: shapeConsumer(consumer) });
 }
 
 export async function retailerLogin(input: { body: z.infer<typeof LoginBody> }) {

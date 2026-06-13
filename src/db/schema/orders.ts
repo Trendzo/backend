@@ -174,6 +174,10 @@ export const orders = pgTable(
     // Consumer-facing handover code for pickup orders only. Generated at placement,
     // verified at the store front during the consumer pickup handover.
     pickupCode: text('pickup_code'),
+    // Consumer-facing delivery OTP for door deliveries (express/standard/try-and-buy).
+    // Generated at placement; the consumer reads it to the agent who supplies it on
+    // door close — proof the handover reached the right person.
+    deliveryOtp: text('delivery_otp'),
     // §9 — pickup orders carry a snap of the consumer-selected slot so config edits
     // on `store_pickup_slots` don't drift the order. NULL on non-pickup orders.
     pickupSlotId: text('pickup_slot_id'),
@@ -242,6 +246,11 @@ export const orders = pgTable(
     pickupCodeMethodGuard: check(
       'orders_pickup_code_method_guard',
       sql`${t.pickupCode} IS NULL OR ${t.deliveryMethod} = 'pickup'`,
+    ),
+    // delivery_otp is only meaningful for door deliveries.
+    deliveryOtpMethodGuard: check(
+      'orders_delivery_otp_method_guard',
+      sql`${t.deliveryOtp} IS NULL OR ${t.deliveryMethod} <> 'pickup'`,
     ),
     // pickup_slot_* is only meaningful for pickup orders.
     pickupSlotMethodGuard: check(

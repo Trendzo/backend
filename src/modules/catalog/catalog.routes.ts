@@ -4,6 +4,9 @@ import {
   BrandsQuery,
   CategoriesQuery,
   CollectionsQuery,
+  IdParam,
+  ProductReviewsQuery,
+  ProductsQuery,
   SizeScalesQuery,
   SlugParam,
 } from './catalog.validators.js';
@@ -29,6 +32,24 @@ const catalogRoutes: FastifyPluginAsyncZod = async (app) => {
     '/brands',
     { schema: { querystring: BrandsQuery } },
     async (req) => ctrl.listBrands({ query: req.query }),
+  );
+
+  app.get(
+    '/products',
+    { schema: { querystring: ProductsQuery } },
+    async (req) => ctrl.listProducts({ query: req.query }),
+  );
+
+  app.get(
+    '/products/:id',
+    { schema: { params: IdParam } },
+    async (req) => ctrl.getProduct(req.params.id),
+  );
+
+  app.get(
+    '/products/:id/reviews',
+    { schema: { params: IdParam, querystring: ProductReviewsQuery } },
+    async (req) => ctrl.listProductReviews(req.params.id, req.query),
   );
 
   app.get(

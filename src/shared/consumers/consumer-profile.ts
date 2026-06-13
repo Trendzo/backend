@@ -28,9 +28,9 @@ import {
 export interface ConsumerProfile {
   consumer: {
     id: string;
-    email: string;
+    email: string | null;
     phone: string;
-    name: string;
+    name: string | null;
     status: string;
     signupAt: string;
     genderPreference: string | null;

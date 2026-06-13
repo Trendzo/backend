@@ -13,9 +13,12 @@ import { seedAdmin } from './admin.js';
 import { seedAttributeTemplates } from './attribute-templates.js';
 import { seedCatalogDefaults } from './catalog-defaults.js';
 import { seedClubbingMatrix } from './clubbing-matrix.js';
+import { seedConsumerCatalog } from './consumer-catalog.js';
 import { seedDelegationModes } from './delegation-modes.js';
 import { seedDemoRetailer } from './demo-retailer.js';
+import { fixImages } from './fix-images.js';
 import { seedPlatformConfig } from './platform-config.js';
+import { seedProductReviews } from './product-reviews.js';
 import { seedSizeScales } from './size-scales.js';
 import { seedSubRoles } from './sub-roles.js';
 
@@ -46,6 +49,15 @@ async function main(): Promise<void> {
 
   console.log('Seeding demo retailer (demo@closetx.local)…');
   await seedDemoRetailer(db);
+
+  console.log('Seeding consumer catalog (brands, categories, listings, collections)…');
+  await seedConsumerCatalog(db);
+
+  console.log('Seeding product reviews…');
+  await seedProductReviews(db);
+
+  console.log('Fixing image URLs (pngimg → unsplash)…');
+  await fixImages(db);
 
   console.log('Seed complete.');
 }

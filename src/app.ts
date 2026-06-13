@@ -94,6 +94,9 @@ import consumerReferralRoutes from '@/modules/consumer/referrals/referrals.route
 import consumerWalletRoutes from '@/modules/consumer/wallet/wallet.routes.js';
 import consumerLoyaltyRoutes from '@/modules/consumer/loyalty/loyalty.routes.js';
 import consumerCartRoutes from '@/modules/consumer/cart/cart.routes.js';
+import consumerReturnsRoutes from '@/modules/consumer/returns/returns.routes.js';
+import publicPromotionRoutes from '@/modules/promotions/public.routes.js';
+import consumerProfileRoutes from '@/modules/consumer/profile/profile.routes.js';
 import publicMoodboardRoutes from '@/modules/consumer/moodboards/public.routes.js';
 import adminMoodboardRoutes from '@/modules/admin/moodboards/moodboards.routes.js';
 import retailerPushRoutes from '@/modules/retailer/push/push.routes.js';
@@ -305,8 +308,14 @@ export function buildApp() {
       await api.register(consumerLoyaltyRoutes, { prefix: '/consumer/loyalty' });
       // Consumer cart: cross-device sync for logged-in users
       await api.register(consumerCartRoutes, { prefix: '/consumer/cart' });
+      // Consumer returns: open + track post-delivery returns and their refunds
+      await api.register(consumerReturnsRoutes, { prefix: '/consumer/returns' });
+      // Consumer self-profile (OTP signups fill in name/email here before checkout)
+      await api.register(consumerProfileRoutes, { prefix: '/consumer/profile' });
       // Public share read for moodboards (UNAUTHENTICATED — no auth hook)
       await api.register(publicMoodboardRoutes, { prefix: '/public/moodboards' });
+      // Public live offers + coupons (UNAUTHENTICATED — drives banners + coupon wallet)
+      await api.register(publicPromotionRoutes, { prefix: '/promotions' });
       // Admin moodboard moderation (takedown/restore)
       await api.register(adminMoodboardRoutes, { prefix: '/admin/moodboards' });
       // §22 Push subscriptions
