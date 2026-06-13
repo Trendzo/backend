@@ -380,6 +380,11 @@ export const posSaleStatus = pgEnum('pos_sale_status', [
 ]);
 export const posTenderMethod = pgEnum('pos_tender_method', ['cash', 'card', 'upi']);
 export const posPricingMode = pgEnum('pos_pricing_mode', ['tax_inclusive', 'tax_exclusive']);
+/**
+ * Store's GST registration scheme. `regular` dealers charge GST and issue a Tax Invoice;
+ * `composition` dealers cannot charge GST and must issue a Bill of Supply (no tax lines).
+ */
+export const gstScheme = pgEnum('gst_scheme', ['regular', 'composition']);
 export const invoiceStatus = pgEnum('invoice_status', ['draft', 'issued', 'credited']);
 export const payoutStatus = pgEnum('payout_status', [
   'pending',

@@ -12,6 +12,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import {
+  gstScheme,
   pauseVisibility,
   retailerAccountStatus,
   retailerStoreStatus,
@@ -32,6 +33,9 @@ export const retailerStores = pgTable(
     pan: text('pan'),
     address: text('address').notNull(),
     stateCode: text('state_code').notNull(), // for GST place-of-supply
+    // GST registration scheme. Regular = charges GST + Tax Invoice; composition = Bill of Supply,
+    // no GST charged. Drives POS invoice rendering + tax computation.
+    gstScheme: gstScheme('gst_scheme').notNull().default('regular'),
     lat: doublePrecision('lat').notNull(),
     lng: doublePrecision('lng').notNull(),
     openingHours: jsonb('opening_hours').$type<Record<string, { open: string; close: string }[]>>(),

@@ -37,9 +37,11 @@ export type PosInvoiceData = {
   customerPhone: string | null;
   customerGstin: string | null;
   lines: PosPricedLine[];
+  taxSplitKind: 'intra_state' | 'inter_state';
   taxableValuePaise: number;
   cgstPaise: number;
   sgstPaise: number;
+  igstPaise: number;
 };
 
 /**
@@ -66,7 +68,8 @@ export async function insertPosInvoice(
     sequenceNo,
   });
 
-  const grandTotalPaise = data.taxableValuePaise + data.cgstPaise + data.sgstPaise;
+  const grandTotalPaise =
+    data.taxableValuePaise + data.cgstPaise + data.sgstPaise + data.igstPaise;
   const invoiceId = newId('inv');
   await tx.insert(invoices).values({
     id: invoiceId,
@@ -89,10 +92,10 @@ export async function insertPosInvoice(
     subtotalPaise: data.taxableValuePaise,
     discountPaise: 0,
     taxableValuePaise: data.taxableValuePaise,
-    taxSplitKind: 'intra_state',
+    taxSplitKind: data.taxSplitKind,
     cgstPaise: data.cgstPaise,
     sgstPaise: data.sgstPaise,
-    igstPaise: 0,
+    igstPaise: data.igstPaise,
     tcsPaise: 0,
     tcsRateBpSnap: 0,
     grandTotalPaise,
@@ -126,9 +129,11 @@ async function renderAndUploadPosInvoicePdf(input: {
 }): Promise<void> {
   if (!isCloudinaryConfigured()) return;
   const { data } = input;
+  const inter = data.taxSplitKind === 'inter_state';
   const lines: InvoiceLine[] = data.lines.map((l) => {
-    const cgst = Math.floor(l.gstPaise / 2);
-    const sgst = l.gstPaise - cgst;
+    // Inter-state → the whole line GST is IGST; intra-state → split CGST+SGST half each.
+    const cgst = inter ? 0 : Math.floor(l.gstPaise / 2);
+    const sgst = inter ? 0 : l.gstPaise - cgst;
     return {
       description: `${l.listingNameSnap} (${l.attributesLabelSnap})`,
       hsn: l.hsnSnap,
@@ -138,13 +143,19 @@ async function renderAndUploadPosInvoicePdf(input: {
       taxableValuePaise: l.taxableValuePaise,
       cgstPaise: cgst,
       sgstPaise: sgst,
-      igstPaise: 0,
+      igstPaise: inter ? l.gstPaise : 0,
       totalPaise: l.netLinePaise,
     };
   });
 
+  // Composition dealers issue a Bill of Supply (no GST charged) and must carry the prescribed
+  // declaration; regular dealers issue a Tax Invoice.
+  const isComposition = data.store.gstScheme === 'composition';
   const buffer = await renderInvoicePdf({
-    title: 'TAX INVOICE',
+    title: isComposition ? 'BILL OF SUPPLY' : 'TAX INVOICE',
+    ...(isComposition && {
+      footer: 'Composition taxable person, not eligible to collect tax on supplies.',
+    }),
     number: input.invoiceNumber,
     issuedAt: new Date(),
     store: {
@@ -165,9 +176,10 @@ async function renderAndUploadPosInvoicePdf(input: {
       taxableValuePaise: data.taxableValuePaise,
       cgstPaise: data.cgstPaise,
       sgstPaise: data.sgstPaise,
-      igstPaise: 0,
+      igstPaise: data.igstPaise,
       tcsPaise: 0,
-      grandTotalPaise: data.taxableValuePaise + data.cgstPaise + data.sgstPaise,
+      grandTotalPaise:
+        data.taxableValuePaise + data.cgstPaise + data.sgstPaise + data.igstPaise,
     },
   });
 

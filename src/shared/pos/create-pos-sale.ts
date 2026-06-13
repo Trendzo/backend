@@ -36,6 +36,7 @@ import {
 } from '@/shared/invoicing/numbering.js';
 import {
   gstRateBpForLine,
+  posTaxSplitFor,
   pricePosSale,
   type PosPricing,
   type PosPricingMode,
@@ -122,7 +123,7 @@ async function resolvePricingVariants(
       variantId: v.id,
       listingId: v.listing.id,
       unitMrpPaise: v.pricePaise,
-      gstRateBp: gstRateBpForLine(v.listing.hsn, v.pricePaise),
+      gstRateBp: gstRateBpForLine(v.listing.hsn, v.pricePaise, v.listing.category?.slug ?? null),
       listingNameSnap: v.listing.name,
       brandSnap: v.listing.brand?.name ?? null,
       categorySnap: v.listing.category?.label ?? null,
@@ -143,7 +144,7 @@ type VariantRow = typeof variants.$inferSelect & {
     name: string;
     hsn: string | null;
     brand: { name: string } | null;
-    category: { label: string } | null;
+    category: { label: string; slug: string } | null;
   };
 };
 
@@ -179,12 +180,13 @@ export async function quotePosSale(
   },
 ): Promise<QuoteResult> {
   const lines = mergeLines(input.lines);
-  await loadActiveStore(database, input.storeId);
+  const store = await loadActiveStore(database, input.storeId);
   const { pricing, rows } = await resolvePricingVariants(database, input.storeId, lines);
   const availableById = new Map(rows.map((v) => [v.id, v.stock - v.reserved]));
   const priced = pricePosSale({
     variants: pricing,
     lines,
+    gstScheme: store.gstScheme,
     ...(input.billDiscountPaise !== undefined && { billDiscountPaise: input.billDiscountPaise }),
     ...(input.pricingMode !== undefined && { pricingMode: input.pricingMode }),
   });
@@ -252,6 +254,8 @@ export async function completePosSale(
   const priced = pricePosSale({
     variants: pricing,
     lines,
+    gstScheme: store.gstScheme,
+    taxSplitKind: posTaxSplitFor(store.stateCode, input.customer?.gstin),
     ...(input.billDiscountPaise !== undefined && { billDiscountPaise: input.billDiscountPaise }),
     ...(input.pricingMode !== undefined && { pricingMode: input.pricingMode }),
   });
@@ -306,7 +310,7 @@ export async function completePosSale(
       storeGstinSnap: store.gstin,
       storeStateCodeSnap: store.stateCode,
       storeAddressSnap: store.address,
-      taxSplitKind: 'intra_state' as const,
+      taxSplitKind: priced.taxSplitKind,
       pricingMode: input.pricingMode ?? ('tax_inclusive' as const),
       itemsGrossPaise: priced.itemsGrossPaise,
       lineDiscountPaise: priced.lineDiscountPaise,
@@ -361,9 +365,11 @@ export async function completePosSale(
       customerPhone: input.customer?.phone ?? null,
       customerGstin: input.customer?.gstin ?? null,
       lines: priced.lines,
+      taxSplitKind: priced.taxSplitKind,
       taxableValuePaise: priced.taxableValuePaise,
       cgstPaise: priced.cgstPaise,
       sgstPaise: priced.sgstPaise,
+      igstPaise: priced.igstPaise,
     };
     const { invoiceId, invoiceNumber } = await insertPosInvoice(tx, invoiceData);
     await tx.update(posSales).set({ invoiceId }).where(eq(posSales.id, saleId));
@@ -413,6 +419,8 @@ export async function holdPosSale(
   const priced = pricePosSale({
     variants: pricing,
     lines,
+    gstScheme: store.gstScheme,
+    taxSplitKind: posTaxSplitFor(store.stateCode, input.customer?.gstin),
     ...(input.billDiscountPaise !== undefined && { billDiscountPaise: input.billDiscountPaise }),
     ...(input.pricingMode !== undefined && { pricingMode: input.pricingMode }),
   });
@@ -434,6 +442,7 @@ export async function holdPosSale(
       storeGstinSnap: store.gstin,
       storeStateCodeSnap: store.stateCode,
       storeAddressSnap: store.address,
+      taxSplitKind: priced.taxSplitKind,
       pricingMode: input.pricingMode ?? 'tax_inclusive',
       itemsGrossPaise: priced.itemsGrossPaise,
       lineDiscountPaise: priced.lineDiscountPaise,

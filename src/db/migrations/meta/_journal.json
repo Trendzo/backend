@@ -246,6 +246,13 @@
       "when": 1781311870353,
       "tag": "0034_warm_doctor_spectrum",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1781325926687,
+      "tag": "0035_gst_scheme",
+      "breakpoints": true
     }
   ]
 }

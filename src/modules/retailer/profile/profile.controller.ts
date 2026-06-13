@@ -42,6 +42,7 @@ export async function getMe(input: { auth: Auth }) {
           id: store.id,
           legalName: store.legalName,
           gstin: store.gstin,
+          gstScheme: store.gstScheme,
           address: store.address,
           stateCode: store.stateCode,
           lat: store.lat,
@@ -132,6 +133,7 @@ export async function patchStoreProfile(input: {
   if (input.body.galleryImageUrls !== undefined) {
     patch.galleryImageUrls = input.body.galleryImageUrls ?? null;
   }
+  if (input.body.gstScheme !== undefined) patch.gstScheme = input.body.gstScheme;
   if (Object.keys(patch).length === 0) {
     throw new AppError(400, ErrorCode.ValidationError, 'No fields to update');
   }

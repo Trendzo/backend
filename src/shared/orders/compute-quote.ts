@@ -30,6 +30,7 @@ import {
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { compute } from '@/shared/discounts/compute.js';
+import { resolveGstRateBp } from '@/shared/pos/gst-rates.js';
 import type {
   Cart,
   CartLine,
@@ -192,7 +193,13 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
       variantId: v.id,
       unitPricePaise: v.pricePaise,
       qty: it.qty,
-      gstRatePct: 5, // apparel default; real consumer cart picks per HSN
+      // Same authoritative GST table as the POS counter — rate from HSN/category, GST 2.0 slabs.
+      gstRatePct:
+        resolveGstRateBp({
+          hsn: v.listing.hsn,
+          categorySlug: v.listing.category?.slug ?? null,
+          unitMrpPaise: v.pricePaise,
+        }) / 100,
     };
     if (v.listing.brandId) line.brandId = v.listing.brandId;
     if (v.listing.categoryId) line.categoryId = v.listing.categoryId;

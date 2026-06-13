@@ -26,4 +26,5 @@ export const PatchProfileBody = z.object({
   contactPhone: z.string().trim().max(20).nullish(),
   managerName: z.string().trim().max(120).nullish(),
   galleryImageUrls: z.array(z.string().url()).max(10).nullish(),
+  gstScheme: z.enum(['regular', 'composition']).optional(),
 });

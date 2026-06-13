@@ -4,6 +4,13 @@ import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
 import { requirePermission } from '@/shared/permissions.js';
 import { toCsv } from '@/shared/reports/meta.js';
 import * as ctrl from './reports.controller.js';
+import * as gstCtrl from './gst-reports.controller.js';
+
+const GstPeriodQuery = z.object({
+  since: z.string().datetime().optional(),
+  until: z.string().datetime().optional(),
+  channel: z.enum(['all', 'pos', 'online']).optional(),
+});
 
 const SalesDetailedQuery = z.object({
   granularity: z.enum(['day', 'week', 'month']).default('day'),
@@ -183,6 +190,19 @@ const retailerReportsRoutes: FastifyPluginAsyncZod = async (app) => {
     '/reports/platform-promo-commission',
     { preHandler: requirePermission('reports.view') },
     async (req) => ctrl.getPlatformPromoCommission({ auth: getAuth(req) }),
+  );
+
+  // ── GST filing-support (offline counter / POS sales) ──
+  app.get(
+    '/reports/gst/summary',
+    { preHandler: requirePermission('reports.view'), schema: { querystring: GstPeriodQuery } },
+    async (req) => gstCtrl.getGstSummary({ auth: getAuth(req), query: req.query }),
+  );
+
+  app.get(
+    '/reports/gst/hsn-summary',
+    { preHandler: requirePermission('reports.view'), schema: { querystring: GstPeriodQuery } },
+    async (req) => gstCtrl.getGstHsnSummary({ auth: getAuth(req), query: req.query }),
   );
 };
 

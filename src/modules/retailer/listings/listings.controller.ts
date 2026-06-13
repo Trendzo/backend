@@ -26,6 +26,7 @@ import { compact } from '@/shared/object.js';
 import { LONG_DESC_MAX_BYTES, sanitizeRichText } from '@/shared/sanitize/rich-text.js';
 import { previewListingEffectivePricing } from '@/shared/discounts/preview-effective-price.js';
 import { generateSku } from '@/shared/sku.js';
+import { categoryDefaultHsn } from '@/shared/pos/gst-rates.js';
 import {
   assertGroupDeletable,
   defaultVariantIdentity,
@@ -298,7 +299,9 @@ export async function createListing(input: {
         name: body.name,
         ...(body.description !== undefined && { description: body.description }),
         ...(descriptionLong !== undefined && { descriptionLong }),
-        ...(body.hsn !== undefined && { hsn: body.hsn }),
+        // Auto-fill HSN from the category when the retailer leaves it blank (advisory default,
+        // nullable, overridable). Keeps GST invoices labelled without per-product data entry.
+        hsn: body.hsn?.trim() || categoryDefaultHsn(category.slug),
         ...(body.templateId !== undefined && { templateId: body.templateId }),
         gender: body.gender,
         listingPolicy: body.listingPolicy,

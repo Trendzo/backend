@@ -10,6 +10,8 @@
  * invoice (the invoice check requires grandTotal = taxable + cgst + sgst + tcs exactly).
  */
 
+import { resolveGstRateBp } from './gst-rates.js';
+
 export type PosPricingMode = 'tax_inclusive' | 'tax_exclusive';
 
 /** A variant resolved for pricing, with the snapshot fields the sale will freeze. */
@@ -43,9 +45,11 @@ export type PosPricedLine = PricingVariant & {
   netLinePaise: number;
 };
 
+export type PosTaxSplitKind = 'intra_state' | 'inter_state';
+
 export type PosPricing = {
   lines: PosPricedLine[];
-  taxSplitKind: 'intra_state';
+  taxSplitKind: PosTaxSplitKind;
   itemsGrossPaise: number;
   lineDiscountPaise: number;
   billDiscountPaise: number;
@@ -59,13 +63,31 @@ export type PosPricing = {
 };
 
 /**
- * Resolve the GST rate (basis points) for a line. If the listing carries a known HSN we could
- * map it; absent that we apply the common apparel rule — 5% up to ₹1000/unit, 12% above. This
- * mirrors the marketplace order flow's 5% apparel default while honouring the >₹1000 slab.
+ * Resolve the GST rate (basis points) for a line. Delegates to the authoritative GST table
+ * (gst-rates.ts): an explicit HSN wins; otherwise the category slug drives it. Apparel & footwear
+ * are price-slab on MRP (5% ≤ ₹2,500/piece, 18% above — GST 2.0, eff 22-Sep-2025); accessories are
+ * flat by type.
  */
-export function gstRateBpForLine(hsn: string | null, unitMrpPaise: number): number {
-  void hsn; // reserved for a future HSN→rate table
-  return unitMrpPaise > 100_000 ? 1200 : 500;
+export function gstRateBpForLine(
+  hsn: string | null,
+  unitMrpPaise: number,
+  categorySlug: string | null = null,
+): number {
+  return resolveGstRateBp({ hsn, categorySlug, unitMrpPaise });
+}
+
+/**
+ * Place-of-supply rule for a counter sale: inter-state when the buyer's GSTIN state code (first
+ * two chars) differs from the store's state. Walk-in customers (no GSTIN) are always intra-state —
+ * the place of supply defaults to the store's own state. Drives CGST+SGST vs IGST.
+ */
+export function posTaxSplitFor(
+  storeStateCode: string,
+  buyerGstin: string | null | undefined,
+): PosTaxSplitKind {
+  const buyerState = buyerGstin?.trim().slice(0, 2);
+  if (buyerState && buyerState.length === 2 && buyerState !== storeStateCode) return 'inter_state';
+  return 'intra_state';
 }
 
 export function pricePosSale(input: {
@@ -73,8 +95,14 @@ export function pricePosSale(input: {
   lines: PosLineRequest[];
   billDiscountPaise?: number;
   pricingMode?: PosPricingMode;
+  /** Composition dealers cannot charge GST — every line's effective rate is forced to 0. */
+  gstScheme?: 'regular' | 'composition';
+  /** CGST+SGST (intra, default) vs IGST (inter). Total tax is identical; only the split differs. */
+  taxSplitKind?: PosTaxSplitKind;
 }): PosPricing {
   const mode: PosPricingMode = input.pricingMode ?? 'tax_inclusive';
+  const isComposition = input.gstScheme === 'composition';
+  const taxSplitKind: PosTaxSplitKind = input.taxSplitKind ?? 'intra_state';
   const byId = new Map(input.variants.map((v) => [v.variantId, v]));
 
   // First pass: gross, line discount, net-after-line.
@@ -101,17 +129,20 @@ export function pricePosSale(input: {
     billUsed += billAlloc;
 
     const lineNet = b.netAfterLine - billAlloc; // what this line actually contributes
+    // Composition dealers charge no GST → effective rate 0, the whole line is taxable value.
+    const rateBp = isComposition ? 0 : b.v.gstRateBp;
     let taxable: number;
     let gst: number;
     if (mode === 'tax_inclusive') {
-      taxable = Math.round((lineNet * 10_000) / (10_000 + b.v.gstRateBp));
+      taxable = Math.round((lineNet * 10_000) / (10_000 + rateBp));
       gst = lineNet - taxable;
     } else {
       taxable = lineNet;
-      gst = Math.round((taxable * b.v.gstRateBp) / 10_000);
+      gst = Math.round((taxable * rateBp) / 10_000);
     }
     return {
       ...b.v,
+      gstRateBp: rateBp,
       qty: b.qty,
       lineGrossPaise: b.lineGross,
       lineDiscountPaise: b.lineDiscount,
@@ -126,9 +157,11 @@ export function pricePosSale(input: {
   const lineDiscountPaise = base.reduce((s, b) => s + b.lineDiscount, 0);
   const taxableValuePaise = lines.reduce((s, l) => s + l.taxableValuePaise, 0);
   const taxPaise = lines.reduce((s, l) => s + l.gstPaise, 0);
-  // Split once at the aggregate so cgst + sgst === tax exactly (satisfies the DB guard).
-  const cgstPaise = Math.floor(taxPaise / 2);
-  const sgstPaise = taxPaise - cgstPaise;
+  // Split once at the aggregate so the parts === tax exactly (satisfies the DB guard).
+  // Intra-state → CGST+SGST (half each); inter-state → all IGST.
+  const cgstPaise = taxSplitKind === 'inter_state' ? 0 : Math.floor(taxPaise / 2);
+  const sgstPaise = taxSplitKind === 'inter_state' ? 0 : taxPaise - cgstPaise;
+  const igstPaise = taxSplitKind === 'inter_state' ? taxPaise : 0;
 
   const preRound = taxableValuePaise + taxPaise; // = net of all discounts
   const payablePaise = Math.round(preRound / 100) * 100; // nearest rupee
@@ -136,14 +169,14 @@ export function pricePosSale(input: {
 
   return {
     lines,
-    taxSplitKind: 'intra_state',
+    taxSplitKind,
     itemsGrossPaise,
     lineDiscountPaise,
     billDiscountPaise: billDiscount,
     taxableValuePaise,
     cgstPaise,
     sgstPaise,
-    igstPaise: 0,
+    igstPaise,
     taxPaise,
     roundOffPaise,
     payablePaise,

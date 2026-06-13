@@ -33,6 +33,7 @@ import {
   walletTransactions,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
+import { resolveGstRateBp } from '@/shared/pos/gst-rates.js';
 import type { PricingBreakdown } from '@/shared/discounts/types.js';
 import {
   bumpPromotionCounter,
@@ -441,7 +442,12 @@ export async function placeOrder(
         platformPromoAllocPaise: allocs.platformPromo,
         couponAllocPaise: allocs.coupon,
         pointsAllocPaise: allocs.points,
-        gstRateBp: 500, // 5% — apparel default; real consumer cart pulls from listing.hsn
+        // Authoritative GST table (same as POS) — must match the rate compute-quote priced with.
+        gstRateBp: resolveGstRateBp({
+          hsn: v.listing.hsn,
+          categorySlug: v.listing.category?.slug ?? null,
+          unitMrpPaise: v.pricePaise,
+        }),
         gstAllocPaise: allocs.gst,
         netLinePaise: netLine,
       });
