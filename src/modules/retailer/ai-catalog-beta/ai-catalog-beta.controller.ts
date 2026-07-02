@@ -7,14 +7,17 @@ import { ok } from '@/shared/http/envelope.js';
 import { newId } from '@/shared/ids.js';
 import { uploadToCloudinary } from '@/shared/cloudinary.js';
 import { generateCatalogImage } from '@/shared/ai-image.js';
+import { virtualTryOn } from '@/shared/vertex-tryon.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import { createListing, createVariant } from '@/modules/retailer/listings/listings.controller.js';
 import { MODEL_POSES, PRODUCT_ANGLES } from './ai-catalog-beta.angles.js';
 import type {
   DecisionBody,
   ListQuery,
+  MockupsBody,
   PublishBody,
   SubmissionBody,
+  TryOnBody,
 } from './ai-catalog-beta.validators.js';
 
 type Auth = AccessTokenPayload;
@@ -22,6 +25,7 @@ type Auth = AccessTokenPayload;
 // Cap on open (unpublished) beta drafts per store — bounds generation cost.
 const MAX_OPEN_DRAFTS = 30;
 const BETA_FOLDER = 'closetx/ai-catalog-beta';
+const TRYON_FOLDER = 'closetx/ai-tryon-beta';
 
 async function loadStore(retailerId: string) {
   const retailer = await db.query.retailerAccounts.findFirst({
@@ -49,6 +53,66 @@ async function genAndUpload(input: {
     resourceType: 'image',
   });
   return uploaded.url;
+}
+
+/**
+ * Shared multi-angle generation: optional design-print phase, then one shot per
+ * angle preset (with real-back-photo handling). Stateless — used by both the
+ * persisted submission flow and the stateless quick-mockups endpoint.
+ */
+async function generateMockupViews(body: z.infer<typeof SubmissionBody>): Promise<{
+  printedUrl: string | null;
+  views: { name: string; url: string }[];
+}> {
+  const basePrompt = body.prompt?.trim() ?? '';
+
+  // Optional design-print phase: composite the design onto the plain apparel,
+  // then shoot every angle off that printed product for consistency.
+  let printedUrl: string | null = null;
+  let baseRefs = body.apparelImageUrls;
+  if (body.designImageUrl) {
+    printedUrl = await genAndUpload({
+      prompt: [
+        'Print the graphic in the LAST reference image realistically onto the front of',
+        'the plain garment in the FIRST reference image, following the fabric folds and',
+        'lighting so it looks physically applied. Keep the garment colour, shape and',
+        `fabric unchanged. ${basePrompt}`,
+      ]
+        .join(' ')
+        .trim(),
+      mode: body.mode,
+      referenceImageUrls: [...body.apparelImageUrls, body.designImageUrl],
+    });
+    baseRefs = [printedUrl];
+  }
+
+  const angles = (body.mode === 'without_model' ? PRODUCT_ANGLES : MODEL_POSES).filter(
+    (a) => !body.only || body.only.length === 0 || body.only.includes(a.name),
+  );
+  // Back views render from the real back photo when one was supplied and no
+  // design was printed — otherwise the model just echoes the front image. The
+  // preset back poses assume "the back is blank" (right for the front-only
+  // design case); when a real back photo IS the reference, override that pose.
+  const backPose = (name: string) =>
+    name === 'model-back'
+      ? 'full-body view from BEHIND showing the back of the garment, neutral seamless studio backdrop, professional fashion lighting; reproduce the garment back exactly as in the reference image — colour, fabric, cut, seams, and any back graphic'
+      : 'back view, ghost-mannequin / invisible-mannequin, centered, clean seamless white background, soft even studio lighting; reproduce the garment back exactly as in the reference image — colour, fabric, cut, seams, and any back graphic';
+
+  const views = await Promise.all(
+    angles.map(async (a) => {
+      const isBackView = a.name === 'back' || a.name === 'model-back';
+      const useBack = isBackView && !!body.apparelBackImageUrl && !body.designImageUrl;
+      const url = await genAndUpload({
+        prompt: basePrompt || 'Polished, listing-ready product photograph.',
+        mode: body.mode,
+        referenceImageUrls: useBack ? [body.apparelBackImageUrl as string] : baseRefs,
+        posePreferences: [useBack ? backPose(a.name) : a.pose],
+      });
+      return { name: a.name, url };
+    }),
+  );
+
+  return { printedUrl, views };
 }
 
 /**
@@ -100,54 +164,8 @@ export async function createSubmission(input: {
   });
 
   try {
-    const outputUrls: string[] = [];
-
-    // Optional design-print phase: composite the design onto the plain apparel,
-    // then shoot every angle off that printed product for consistency.
-    let baseRefs = body.apparelImageUrls;
-    if (body.designImageUrl) {
-      const printedUrl = await genAndUpload({
-        prompt: [
-          'Print the graphic in the LAST reference image realistically onto the front of',
-          'the plain garment in the FIRST reference image, following the fabric folds and',
-          'lighting so it looks physically applied. Keep the garment colour, shape and',
-          `fabric unchanged. ${basePrompt}`,
-        ]
-          .join(' ')
-          .trim(),
-        mode: body.mode,
-        referenceImageUrls: [...body.apparelImageUrls, body.designImageUrl],
-      });
-      outputUrls.push(printedUrl);
-      baseRefs = [printedUrl];
-    }
-
-    const angles = (body.mode === 'without_model' ? PRODUCT_ANGLES : MODEL_POSES).filter(
-      (a) => !body.only || body.only.length === 0 || body.only.includes(a.name),
-    );
-    // Back views render from the real back photo when one was supplied and no
-    // design was printed — otherwise the model just echoes the front image.
-    // NOTE: the preset back poses assume "the back is blank" (correct for the
-    // front-only design case). When a real back photo IS the reference we must
-    // override that pose to instruct faithful reproduction of the actual back.
-    const backPose = (name: string) =>
-      name === 'model-back'
-        ? 'full-body view from BEHIND showing the back of the garment, neutral seamless studio backdrop, professional fashion lighting; reproduce the garment back exactly as in the reference image — colour, fabric, cut, seams, and any back graphic'
-        : 'back view, ghost-mannequin / invisible-mannequin, centered, clean seamless white background, soft even studio lighting; reproduce the garment back exactly as in the reference image — colour, fabric, cut, seams, and any back graphic';
-
-    const angleUrls = await Promise.all(
-      angles.map((a) => {
-        const isBackView = a.name === 'back' || a.name === 'model-back';
-        const useBack = isBackView && !!body.apparelBackImageUrl && !body.designImageUrl;
-        return genAndUpload({
-          prompt: basePrompt || 'Polished, listing-ready product photograph.',
-          mode: body.mode,
-          referenceImageUrls: useBack ? [body.apparelBackImageUrl as string] : baseRefs,
-          posePreferences: [useBack ? backPose(a.name) : a.pose],
-        });
-      }),
-    );
-    outputUrls.push(...angleUrls);
+    const { printedUrl, views } = await generateMockupViews(body);
+    const outputUrls = [...(printedUrl ? [printedUrl] : []), ...views.map((v) => v.url)];
 
     const [row] = await db
       .update(aiCatalogSubmissions)
@@ -293,4 +311,38 @@ export async function getSubmission(input: { auth: Auth; id: string }) {
   });
   if (!sub) throw new AppError(404, ErrorCode.NotFound, 'Submission not found');
   return ok(sub);
+}
+
+/**
+ * BETA quick mockups — stateless. Generate the multi-angle set (design-print +
+ * angles, same as a submission) and return the image URLs WITHOUT creating a
+ * submission row or a product.
+ */
+export async function quickMockups(input: { auth: Auth; body: z.infer<typeof MockupsBody> }) {
+  await loadStore(input.auth.sub);
+  const { printedUrl, views } = await generateMockupViews(input.body);
+  return ok({ printed: printedUrl, images: views });
+}
+
+/**
+ * BETA customer virtual try-on — stateless. A person photo + 1-2 garment photos;
+ * garments are layered (each result becomes the next "person", e.g. top then
+ * bottom). Returns the final image plus each layering step. Uses Vertex's
+ * dedicated virtual-try-on-001 model.
+ */
+export async function tryOn(input: { auth: Auth; body: z.infer<typeof TryOnBody> }) {
+  await loadStore(input.auth.sub);
+  const steps: string[] = [];
+  let personUrl = input.body.personImageUrl;
+  for (const garmentUrl of input.body.garmentImageUrls) {
+    const out = await virtualTryOn(personUrl, garmentUrl);
+    const buffer = Buffer.from(out.base64, 'base64');
+    const uploaded = await uploadToCloudinary(buffer, {
+      folder: TRYON_FOLDER,
+      resourceType: 'image',
+    });
+    steps.push(uploaded.url);
+    personUrl = uploaded.url;
+  }
+  return ok({ result: steps[steps.length - 1] ?? null, steps });
 }

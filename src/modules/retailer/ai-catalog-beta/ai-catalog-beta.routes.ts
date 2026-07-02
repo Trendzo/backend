@@ -6,8 +6,10 @@ import {
   DecisionBody,
   IdParam,
   ListQuery,
+  MockupsBody,
   PublishBody,
   SubmissionBody,
+  TryOnBody,
 } from './ai-catalog-beta.validators.js';
 
 /**
@@ -63,6 +65,26 @@ const aiCatalogBetaRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (req) =>
       ctrl.publish({ auth: getAuth(req), id: req.params.id, body: req.body }),
+  );
+
+  // Stateless quick mockups — generate the angle set, return URLs, no product.
+  app.post(
+    '/ai-catalog-beta/mockups',
+    {
+      preHandler: requirePermission('ai_catalog.generate'),
+      schema: { body: MockupsBody },
+    },
+    async (req) => ctrl.quickMockups({ auth: getAuth(req), body: req.body }),
+  );
+
+  // Customer virtual try-on (Vertex virtual-try-on-001).
+  app.post(
+    '/ai-catalog-beta/tryon',
+    {
+      preHandler: requirePermission('ai_catalog.generate'),
+      schema: { body: TryOnBody },
+    },
+    async (req) => ctrl.tryOn({ auth: getAuth(req), body: req.body }),
   );
 };
 

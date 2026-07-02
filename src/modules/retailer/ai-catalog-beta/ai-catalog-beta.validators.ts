@@ -60,6 +60,18 @@ export const PublishBody = z
     path: ['compareAtPrice'],
   });
 
+/**
+ * Quick mockups = the same generation as a submission, but stateless (no DB row,
+ * no product). Reuses SubmissionBody's shape.
+ */
+export const MockupsBody = SubmissionBody;
+
+/** Customer virtual try-on: a person photo + 1-2 garment photos (layered). */
+export const TryOnBody = z.object({
+  personImageUrl: z.string().url(),
+  garmentImageUrls: z.array(z.string().url()).min(1).max(2),
+});
+
 export const ListQuery = z.object({
   status: z
     .enum([

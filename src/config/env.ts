@@ -38,10 +38,18 @@ const EnvSchema = z.object({
   // AI image generation provider switch — selects which backend the AI catalog
   // module calls. Both providers ultimately run Gemini's image model; OpenRouter
   // is the no-billing-card alternative path.
-  AI_IMAGE_PROVIDER: z.enum(['gemini', 'openrouter']).default('gemini'),
+  AI_IMAGE_PROVIDER: z.enum(['gemini', 'openrouter', 'vertex']).default('gemini'),
 
   // Google Gemini API key (AI Studio). Required when AI_IMAGE_PROVIDER=gemini.
   GEMINI_API_KEY: z.string().min(20).optional(),
+
+  // Vertex AI path — same Gemini image model, billed via Google Cloud (used when
+  // the AI Studio / OpenRouter free tiers are exhausted). Required when
+  // AI_IMAGE_PROVIDER=vertex. Auth via Application Default Credentials: set the
+  // standard GOOGLE_APPLICATION_CREDENTIALS to a service-account key JSON with
+  // the "Vertex AI User" role on GOOGLE_CLOUD_PROJECT.
+  GOOGLE_CLOUD_PROJECT: z.string().min(1).optional(),
+  GOOGLE_CLOUD_LOCATION: z.string().default('us-central1'),
 
   // OpenRouter API key + model. Required when AI_IMAGE_PROVIDER=openrouter.
   // Model defaults to the Gemini image preview which is the most reliable image-output

@@ -42,7 +42,7 @@ export type GenerateOutput = {
   costPaise: number | null;
 };
 
-function composePrompt(input: GenerateInput): string {
+export function composePrompt(input: GenerateInput): string {
   const modeLine =
     input.mode === 'with_model'
       ? 'Place the garment on a synthetic human model in a studio setting.'
@@ -69,7 +69,7 @@ function composePrompt(input: GenerateInput): string {
     .join('\n');
 }
 
-async function fetchReferenceImage(url: string): Promise<{ data: string; mimeType: string }> {
+export async function fetchReferenceImage(url: string): Promise<{ data: string; mimeType: string }> {
   const res = await fetch(url);
   if (!res.ok) {
     throw new AppError(

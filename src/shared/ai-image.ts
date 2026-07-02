@@ -5,6 +5,7 @@ import {
   type GenerateOutput,
 } from '@/shared/gemini.js';
 import { generateCatalogImageViaOpenRouter } from '@/shared/openrouter.js';
+import { generateCatalogImageViaVertex } from '@/shared/vertex-image.js';
 
 /**
  * Provider-agnostic entry point for AI catalog image generation. Routes to
@@ -18,6 +19,8 @@ import { generateCatalogImageViaOpenRouter } from '@/shared/openrouter.js';
  */
 export async function generateCatalogImage(input: GenerateInput): Promise<GenerateOutput> {
   switch (env.AI_IMAGE_PROVIDER) {
+    case 'vertex':
+      return generateCatalogImageViaVertex(input);
     case 'openrouter':
       return generateCatalogImageViaOpenRouter(input);
     case 'gemini':
