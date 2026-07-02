@@ -24,6 +24,9 @@ export const consumers = pgTable(
     phone: text('phone').notNull(),
     name: text('name'),
     passwordHash: text('password_hash'), // bcrypt
+    // Optional profile photo, surfaced on community/reels author chips. Nullable —
+    // the consumer app falls back to a generated placeholder when absent.
+    avatarUrl: text('avatar_url'),
 
     // Drives the consumer-app HER/HIM home-feed swap. Nullable until the user picks one;
     // the existing `gender` enum (her|him|unisex) is reused — `unisex` reads as "show all".

@@ -89,4 +89,12 @@ export const IdPrefix = {
   PosPayment: 'posp',
   PosCustomer: 'posc',
   PosReturnLine: 'posrl',
+  // Reels + social interactions (likes / saves / comments on reels and posts)
+  Reel: 'reel',
+  ReelComment: 'rcmt',
+  ReelLike: 'rlk',
+  ReelSave: 'rsv',
+  PostLike: 'plk',
+  PostComment: 'pcmt',
+  PostSave: 'psv',
 } as const;

@@ -97,6 +97,7 @@ async function fetchInventoryRows(
       attributesLabel: variants.attributesLabel,
       attributes: variants.attributes,
       pricePaise: variants.pricePaise,
+      compareAtPrice: variants.compareAtPrice,
       stock: variants.stock,
       reserved: variants.reserved,
       isActive: variants.isActive,

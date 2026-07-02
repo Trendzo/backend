@@ -9,7 +9,7 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { notifyConsumer } from '@/shared/notify-consumer.js';
 
-export type BanSurface = 'posts' | 'reviews' | 'rewards';
+export type BanSurface = 'posts' | 'reviews' | 'rewards' | 'reels';
 
 export interface BanRow {
   id: string;

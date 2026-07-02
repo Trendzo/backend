@@ -24,6 +24,7 @@ import {
   moderationReportSource,
   moderationReportStatus,
   moderationTargetType,
+  postCommentStatus,
   productReviewStatus,
 } from './enums.js';
 import { adminAccounts, consumers } from './identity.js';
@@ -74,6 +75,10 @@ export const communityPosts = pgTable(
     body: text('body').notNull(),
     media: jsonb('media').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     status: communityPostStatus('status').notNull().default('active'),
+    // Denormalised counters — kept in sync in the like/save/comment transactions.
+    likeCount: integer('like_count').notNull().default(0),
+    commentCount: integer('comment_count').notNull().default(0),
+    saveCount: integer('save_count').notNull().default(0),
     takedownReason: text('takedown_reason'),
     takedownByAdminId: text('takedown_by_admin_id').references(() => adminAccounts.id),
     takedownAt: timestamp('takedown_at', { withTimezone: true, mode: 'date' }),
@@ -87,6 +92,10 @@ export const communityPosts = pgTable(
       t.createdAt,
     ),
     statusIdx: index('community_posts_status_idx').on(t.status),
+    countersGuard: check(
+      'community_posts_counters_guard',
+      sql`${t.likeCount} >= 0 AND ${t.commentCount} >= 0 AND ${t.saveCount} >= 0`,
+    ),
     takedownGuard: check(
       'community_posts_takedown_guard',
       sql`(${t.status} <> 'taken_down'
@@ -268,5 +277,103 @@ export const moderationActionsRelations = relations(moderationActions, ({ one })
   report: one(moderationReports, {
     fields: [moderationActions.reportId],
     references: [moderationReports.id],
+  }),
+}));
+
+// ===== Post social layer (likes / saves / comments) =====
+// Per-feature tables (mirrors the reels social layer) — no generic polymorphic table.
+
+export const postLikes = pgTable(
+  'post_likes',
+  {
+    id: text('id').primaryKey(),
+    postId: text('post_id')
+      .notNull()
+      .references(() => communityPosts.id, { onDelete: 'cascade' }),
+    consumerId: text('consumer_id')
+      .notNull()
+      .references(() => consumers.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    postConsumerUniq: uniqueIndex('post_likes_post_consumer_uniq').on(t.postId, t.consumerId),
+    consumerCreatedIdx: index('post_likes_consumer_created_idx').on(t.consumerId, t.createdAt),
+  }),
+);
+
+export const postSaves = pgTable(
+  'post_saves',
+  {
+    id: text('id').primaryKey(),
+    postId: text('post_id')
+      .notNull()
+      .references(() => communityPosts.id, { onDelete: 'cascade' }),
+    consumerId: text('consumer_id')
+      .notNull()
+      .references(() => consumers.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    postConsumerUniq: uniqueIndex('post_saves_post_consumer_uniq').on(t.postId, t.consumerId),
+    consumerCreatedIdx: index('post_saves_consumer_created_idx').on(t.consumerId, t.createdAt),
+  }),
+);
+
+export const postComments = pgTable(
+  'post_comments',
+  {
+    id: text('id').primaryKey(),
+    postId: text('post_id')
+      .notNull()
+      .references(() => communityPosts.id, { onDelete: 'cascade' }),
+    consumerId: text('consumer_id')
+      .notNull()
+      .references(() => consumers.id, { onDelete: 'cascade' }),
+    body: text('body').notNull(),
+    status: postCommentStatus('status').notNull().default('active'),
+    takedownReason: text('takedown_reason'),
+    takedownByAdminId: text('takedown_by_admin_id').references(() => adminAccounts.id),
+    takedownAt: timestamp('takedown_at', { withTimezone: true, mode: 'date' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    postCreatedIdx: index('post_comments_post_created_idx').on(t.postId, t.createdAt),
+    consumerCreatedIdx: index('post_comments_consumer_created_idx').on(t.consumerId, t.createdAt),
+    takedownGuard: check(
+      'post_comments_takedown_guard',
+      sql`(${t.status} <> 'taken_down'
+            AND ${t.takedownReason} IS NULL
+            AND ${t.takedownByAdminId} IS NULL
+            AND ${t.takedownAt} IS NULL)
+        OR (${t.status} = 'taken_down'
+            AND ${t.takedownReason} IS NOT NULL
+            AND ${t.takedownByAdminId} IS NOT NULL
+            AND ${t.takedownAt} IS NOT NULL)`,
+    ),
+  }),
+);
+
+export const postLikesRelations = relations(postLikes, ({ one }) => ({
+  post: one(communityPosts, { fields: [postLikes.postId], references: [communityPosts.id] }),
+  consumer: one(consumers, { fields: [postLikes.consumerId], references: [consumers.id] }),
+}));
+
+export const postSavesRelations = relations(postSaves, ({ one }) => ({
+  post: one(communityPosts, { fields: [postSaves.postId], references: [communityPosts.id] }),
+  consumer: one(consumers, { fields: [postSaves.consumerId], references: [consumers.id] }),
+}));
+
+export const postCommentsRelations = relations(postComments, ({ one }) => ({
+  post: one(communityPosts, { fields: [postComments.postId], references: [communityPosts.id] }),
+  consumer: one(consumers, { fields: [postComments.consumerId], references: [consumers.id] }),
+  takedownByAdmin: one(adminAccounts, {
+    fields: [postComments.takedownByAdminId],
+    references: [adminAccounts.id],
   }),
 }));

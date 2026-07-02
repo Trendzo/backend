@@ -38,6 +38,8 @@ export type UploadResult = {
   format?: string | undefined;
   bytes: number;
   resourceType: string;
+  /** Video duration in seconds (present for video uploads only). */
+  duration?: number | undefined;
 };
 
 /**
@@ -103,6 +105,7 @@ export async function uploadToCloudinary(
             format: result.format,
             bytes: result.bytes,
             resourceType: result.resource_type,
+            duration: result.duration,
           }),
         );
       },
@@ -127,4 +130,42 @@ export async function uploadToCloudinary(
 
     stream.end(buffer);
   });
+}
+
+/**
+ * Build a poster-frame thumbnail URL for an uploaded video. Cloudinary derives the JPG
+ * on the fly (first frame via `so_0`) — no second upload needed.
+ */
+export function buildVideoThumbnailUrl(publicId: string): string {
+  ensureConfigured();
+  return cloudinary.url(publicId, {
+    resource_type: 'video',
+    format: 'jpg',
+    start_offset: '0',
+    secure: true,
+  });
+}
+
+/**
+ * Delete an asset from Cloudinary (used when a reel is hard-deleted). Best-effort:
+ * Cloudinary returns `{ result: 'not found' }` (no throw) for a missing asset, so a
+ * stale publicId resolves silently; genuine transport/API failures surface as AppError.
+ */
+export async function deleteFromCloudinary(
+  publicId: string,
+  resourceType: 'image' | 'video' = 'image',
+): Promise<void> {
+  ensureConfigured();
+  try {
+    await cloudinary.uploader.destroy(publicId, {
+      resource_type: resourceType,
+      invalidate: true,
+    });
+  } catch (err) {
+    throw new AppError(
+      502,
+      'internal_error',
+      `Cloudinary delete failed: ${(err as Error)?.message ?? 'unknown error'}`,
+    );
+  }
 }

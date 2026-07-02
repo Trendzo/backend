@@ -438,6 +438,7 @@ export async function getVariantConversion(input: {
     .select({
       id: variants.id,
       listingId: variants.listingId,
+      listingName: productListings.name,
       label: variants.attributesLabel,
     })
     .from(variants)
@@ -512,6 +513,7 @@ export async function getVariantConversion(input: {
       return {
         variantId: v.id,
         listingId: v.listingId,
+        listingName: v.listingName,
         label: v.label,
         views,
         cartAdds: cart.adds,
@@ -655,39 +657,47 @@ export async function getDeadStock(input: {
   const storeId = await resolveStoreId(input);
   const cutoff = new Date(Date.now() - input.query.daysWithoutSale * 24 * 60 * 60 * 1000);
 
-  // Stock: variants currently with stock>0 belonging to this store.
-  // Dead criterion: no orderItem in window for that listing AND listing not retired.
+  // Per-variant dead stock: each in-stock SKU is judged on its own. A variant is
+  // "dead" when it has stock > 0 and no order was *placed* for that exact variant
+  // within the window (last placed order older than cutoff, or never sold). Listing
+  // not retired. Placed (not delivered) keeps this consistent with the best-sellers
+  // / conversion reports, so a just-placed order immediately revives its variant.
   const rows = await db
     .select({
+      variantId: variants.id,
       listingId: productListings.id,
       listingName: productListings.name,
-      status: productListings.status,
-      totalStock: sql<string>`COALESCE(SUM(${variants.stock}), 0)::bigint`,
+      label: variants.attributesLabel,
+      sku: variants.sku,
+      stock: variants.stock,
       lastSoldAt: sql<Date | null>`MAX(${orders.placedAt})`,
     })
-    .from(productListings)
-    .innerJoin(variants, eq(variants.listingId, productListings.id))
-    .leftJoin(orderItems, eq(orderItems.listingId, productListings.id))
+    .from(variants)
+    .innerJoin(productListings, eq(variants.listingId, productListings.id))
+    .leftJoin(orderItems, eq(orderItems.variantId, variants.id))
     .leftJoin(orders, eq(orders.id, orderItems.orderId))
     .where(
       and(
         eq(productListings.storeId, storeId),
         sql`${productListings.status} <> 'retired'`,
+        sql`${variants.stock} > 0`,
       ),
     )
-    .groupBy(productListings.id, productListings.name, productListings.status)
+    .groupBy(variants.id, productListings.id, productListings.name, variants.attributesLabel, variants.sku, variants.stock)
     .having(
       sql`MAX(${orders.placedAt}) IS NULL OR MAX(${orders.placedAt}) < ${cutoff}`,
     )
-    .orderBy(sql`SUM(${variants.stock}) DESC`)
+    .orderBy(sql`${variants.stock} DESC`)
     .limit(input.query.limit);
 
   return ok(wrapReport(
     rows.map((r) => ({
+      variantId: r.variantId,
       listingId: r.listingId,
       listingName: r.listingName,
-      status: r.status,
-      totalStock: Number(r.totalStock),
+      label: r.label,
+      sku: r.sku,
+      totalStock: Number(r.stock),
       lastSoldAt: r.lastSoldAt ? new Date(r.lastSoldAt).toISOString() : null,
     })),
   ));

@@ -69,6 +69,7 @@ import retailerReportsRoutes from '@/modules/retailer/reports/reports.routes.js'
 import adminReportsRoutes from '@/modules/admin/reports/reports.routes.js';
 import adminStoreReportsRoutes from '@/modules/admin/store-reports/store-reports.routes.js';
 import adminCommunityRoutes from '@/modules/admin/community/community.routes.js';
+import adminReelsRoutes from '@/modules/admin/reels/reels.routes.js';
 import adminPaymentsRoutes from '@/modules/admin/payments/payments.routes.js';
 import adminRetailerMgmtRoutes from '@/modules/admin/retailer-mgmt/retailer-mgmt.routes.js';
 import adminStoreMgmtRoutes from '@/modules/admin/store-mgmt/store-mgmt.routes.js';
@@ -86,6 +87,7 @@ import adminIssuesRoutes from '@/modules/admin/issues/issues.routes.js';
 import retailerIssuesRoutes from '@/modules/retailer/issues/issues.routes.js';
 import consumerIssuesRoutes from '@/modules/consumer/issues/issues.routes.js';
 import consumerCommunityRoutes from '@/modules/consumer/community/community.routes.js';
+import consumerReelsRoutes from '@/modules/consumer/reels/reels.routes.js';
 import consumerEventsRoutes from '@/modules/consumer/events/events.routes.js';
 import consumerCheckoutRoutes from '@/modules/consumer/checkout/checkout.routes.js';
 import consumerGiftCardRoutes from '@/modules/consumer/gift-cards/gift-cards.routes.js';
@@ -293,6 +295,9 @@ export function buildApp() {
       await api.register(consumerIssuesRoutes, { prefix: '/consumer/issues' });
       // §20 Consumer Community (posts, reviews, reports)
       await api.register(consumerCommunityRoutes, { prefix: '/consumer/community' });
+      // Reels — consumer feed + social layer, and admin reel moderation
+      await api.register(consumerReelsRoutes, { prefix: '/consumer/reels' });
+      await api.register(adminReelsRoutes, { prefix: '/admin/reels' });
       // §21 Analytics event ingest
       await api.register(consumerEventsRoutes, { prefix: '/consumer/events' });
       // Consumer checkout: quote, place order, order history

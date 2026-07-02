@@ -8,8 +8,11 @@ import {
   listingModerationFlags,
   moderationActions,
   moderationReports,
+  postComments,
   productListings,
   productReviews,
+  reelComments,
+  reels,
   retailerAccounts,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
@@ -360,44 +363,97 @@ export async function recordListingAudit(input: {
 
 // ===== §20 Community + Review moderation queue =====
 
-async function loadTarget(
-  targetType: 'community_post' | 'product_review',
-  targetId: string,
-) {
-  if (targetType === 'community_post') {
-    const row = await db.query.communityPosts.findFirst({
-      where: eq(communityPosts.id, targetId),
-    });
-    return row
-      ? {
-          kind: 'community_post' as const,
-          id: row.id,
-          consumerId: row.consumerId,
-          body: row.body,
-          media: row.media,
-          status: row.status,
-          createdAt: row.createdAt.toISOString(),
-          takedownReason: row.takedownReason,
-        }
-      : null;
+type ModReportTarget =
+  | 'community_post'
+  | 'product_review'
+  | 'reel'
+  | 'reel_comment'
+  | 'post_comment';
+
+async function loadTarget(targetType: ModReportTarget, targetId: string) {
+  switch (targetType) {
+    case 'community_post': {
+      const row = await db.query.communityPosts.findFirst({
+        where: eq(communityPosts.id, targetId),
+      });
+      return row
+        ? {
+            kind: 'community_post' as const,
+            id: row.id,
+            consumerId: row.consumerId,
+            body: row.body,
+            media: row.media,
+            status: row.status,
+            createdAt: row.createdAt.toISOString(),
+            takedownReason: row.takedownReason,
+          }
+        : null;
+    }
+    case 'product_review': {
+      const row = await db.query.productReviews.findFirst({
+        where: eq(productReviews.id, targetId),
+      });
+      return row
+        ? {
+            kind: 'product_review' as const,
+            id: row.id,
+            consumerId: row.consumerId,
+            listingId: row.listingId,
+            rating: row.rating,
+            body: row.body,
+            media: row.media,
+            status: row.status,
+            createdAt: row.createdAt.toISOString(),
+            takedownReason: row.takedownReason,
+          }
+        : null;
+    }
+    case 'reel': {
+      const row = await db.query.reels.findFirst({ where: eq(reels.id, targetId) });
+      return row
+        ? {
+            kind: 'reel' as const,
+            id: row.id,
+            consumerId: row.consumerId,
+            body: row.caption,
+            media: [row.videoUrl],
+            status: row.status,
+            createdAt: row.createdAt.toISOString(),
+            takedownReason: row.takedownReason,
+          }
+        : null;
+    }
+    case 'reel_comment': {
+      const row = await db.query.reelComments.findFirst({ where: eq(reelComments.id, targetId) });
+      return row
+        ? {
+            kind: 'reel_comment' as const,
+            id: row.id,
+            consumerId: row.consumerId,
+            body: row.body,
+            media: [] as string[],
+            status: row.status,
+            createdAt: row.createdAt.toISOString(),
+            takedownReason: row.takedownReason,
+          }
+        : null;
+    }
+    case 'post_comment': {
+      const row = await db.query.postComments.findFirst({ where: eq(postComments.id, targetId) });
+      return row
+        ? {
+            kind: 'post_comment' as const,
+            id: row.id,
+            consumerId: row.consumerId,
+            body: row.body,
+            media: [] as string[],
+            status: row.status,
+            createdAt: row.createdAt.toISOString(),
+            takedownReason: row.takedownReason,
+          }
+        : null;
+    }
   }
-  const row = await db.query.productReviews.findFirst({
-    where: eq(productReviews.id, targetId),
-  });
-  return row
-    ? {
-        kind: 'product_review' as const,
-        id: row.id,
-        consumerId: row.consumerId,
-        listingId: row.listingId,
-        rating: row.rating,
-        body: row.body,
-        media: row.media,
-        status: row.status,
-        createdAt: row.createdAt.toISOString(),
-        takedownReason: row.takedownReason,
-      }
-    : null;
 }
 
 export async function listQueue(input: { query: z.infer<typeof QueueQuery> }) {
@@ -472,41 +528,66 @@ export async function decideReport(input: {
 
   await db.transaction(async (tx) => {
     if (action === 'takedown') {
-      if (report.targetType === 'community_post') {
-        const r = await tx.query.communityPosts.findFirst({
-          where: eq(communityPosts.id, report.targetId),
-        });
-        if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target post not found');
-        consumerId = r.consumerId;
-        beforeJson = { status: r.status, body: r.body };
-        await tx
-          .update(communityPosts)
-          .set({
-            status: 'taken_down',
-            takedownReason: input.body.reason,
-            takedownByAdminId: input.auth.sub,
-            takedownAt: now,
-          })
-          .where(eq(communityPosts.id, report.targetId));
-        afterJson = { status: 'taken_down' };
-      } else {
-        const r = await tx.query.productReviews.findFirst({
-          where: eq(productReviews.id, report.targetId),
-        });
-        if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target review not found');
-        consumerId = r.consumerId;
-        beforeJson = { status: r.status, body: r.body };
-        await tx
-          .update(productReviews)
-          .set({
-            status: 'taken_down',
-            takedownReason: input.body.reason,
-            takedownByAdminId: input.auth.sub,
-            takedownAt: now,
-          })
-          .where(eq(productReviews.id, report.targetId));
-        afterJson = { status: 'taken_down' };
+      const takedownSet = {
+        status: 'taken_down' as const,
+        takedownReason: input.body.reason,
+        takedownByAdminId: input.auth.sub,
+        takedownAt: now,
+      };
+      switch (report.targetType) {
+        case 'community_post': {
+          const r = await tx.query.communityPosts.findFirst({
+            where: eq(communityPosts.id, report.targetId),
+          });
+          if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target post not found');
+          consumerId = r.consumerId;
+          beforeJson = { status: r.status, body: r.body };
+          await tx.update(communityPosts).set(takedownSet).where(eq(communityPosts.id, report.targetId));
+          break;
+        }
+        case 'product_review': {
+          const r = await tx.query.productReviews.findFirst({
+            where: eq(productReviews.id, report.targetId),
+          });
+          if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target review not found');
+          consumerId = r.consumerId;
+          beforeJson = { status: r.status, body: r.body };
+          await tx.update(productReviews).set(takedownSet).where(eq(productReviews.id, report.targetId));
+          break;
+        }
+        case 'reel': {
+          const r = await tx.query.reels.findFirst({ where: eq(reels.id, report.targetId) });
+          if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target reel not found');
+          consumerId = r.consumerId;
+          beforeJson = { status: r.status };
+          await tx
+            .update(reels)
+            .set({ ...takedownSet, updatedAt: now })
+            .where(eq(reels.id, report.targetId));
+          break;
+        }
+        case 'reel_comment': {
+          const r = await tx.query.reelComments.findFirst({
+            where: eq(reelComments.id, report.targetId),
+          });
+          if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target comment not found');
+          consumerId = r.consumerId;
+          beforeJson = { status: r.status, body: r.body };
+          await tx.update(reelComments).set(takedownSet).where(eq(reelComments.id, report.targetId));
+          break;
+        }
+        case 'post_comment': {
+          const r = await tx.query.postComments.findFirst({
+            where: eq(postComments.id, report.targetId),
+          });
+          if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target comment not found');
+          consumerId = r.consumerId;
+          beforeJson = { status: r.status, body: r.body };
+          await tx.update(postComments).set(takedownSet).where(eq(postComments.id, report.targetId));
+          break;
+        }
       }
+      afterJson = { status: 'taken_down' };
       await tx
         .update(moderationReports)
         .set({
@@ -517,31 +598,72 @@ export async function decideReport(input: {
         })
         .where(eq(moderationReports.id, report.id));
     } else if (action === 'edit') {
-      if (report.targetType === 'community_post') {
-        const r = await tx.query.communityPosts.findFirst({
-          where: eq(communityPosts.id, report.targetId),
-        });
-        if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target post not found');
-        consumerId = r.consumerId;
-        beforeJson = { body: r.body };
-        await tx
-          .update(communityPosts)
-          .set({ body: input.body.editedBody! })
-          .where(eq(communityPosts.id, report.targetId));
-        afterJson = { body: input.body.editedBody };
-      } else {
-        const r = await tx.query.productReviews.findFirst({
-          where: eq(productReviews.id, report.targetId),
-        });
-        if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target review not found');
-        consumerId = r.consumerId;
-        beforeJson = { body: r.body };
-        await tx
-          .update(productReviews)
-          .set({ body: input.body.editedBody! })
-          .where(eq(productReviews.id, report.targetId));
-        afterJson = { body: input.body.editedBody };
+      switch (report.targetType) {
+        case 'community_post': {
+          const r = await tx.query.communityPosts.findFirst({
+            where: eq(communityPosts.id, report.targetId),
+          });
+          if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target post not found');
+          consumerId = r.consumerId;
+          beforeJson = { body: r.body };
+          await tx
+            .update(communityPosts)
+            .set({ body: input.body.editedBody! })
+            .where(eq(communityPosts.id, report.targetId));
+          break;
+        }
+        case 'product_review': {
+          const r = await tx.query.productReviews.findFirst({
+            where: eq(productReviews.id, report.targetId),
+          });
+          if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target review not found');
+          consumerId = r.consumerId;
+          beforeJson = { body: r.body };
+          await tx
+            .update(productReviews)
+            .set({ body: input.body.editedBody! })
+            .where(eq(productReviews.id, report.targetId));
+          break;
+        }
+        case 'reel': {
+          const r = await tx.query.reels.findFirst({ where: eq(reels.id, report.targetId) });
+          if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target reel not found');
+          consumerId = r.consumerId;
+          beforeJson = { caption: r.caption };
+          await tx
+            .update(reels)
+            .set({ caption: input.body.editedBody!, updatedAt: now })
+            .where(eq(reels.id, report.targetId));
+          break;
+        }
+        case 'reel_comment': {
+          const r = await tx.query.reelComments.findFirst({
+            where: eq(reelComments.id, report.targetId),
+          });
+          if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target comment not found');
+          consumerId = r.consumerId;
+          beforeJson = { body: r.body };
+          await tx
+            .update(reelComments)
+            .set({ body: input.body.editedBody! })
+            .where(eq(reelComments.id, report.targetId));
+          break;
+        }
+        case 'post_comment': {
+          const r = await tx.query.postComments.findFirst({
+            where: eq(postComments.id, report.targetId),
+          });
+          if (!r) throw new AppError(404, ErrorCode.NotFound, 'Target comment not found');
+          consumerId = r.consumerId;
+          beforeJson = { body: r.body };
+          await tx
+            .update(postComments)
+            .set({ body: input.body.editedBody! })
+            .where(eq(postComments.id, report.targetId));
+          break;
+        }
       }
+      afterJson = { body: input.body.editedBody };
       await tx
         .update(moderationReports)
         .set({

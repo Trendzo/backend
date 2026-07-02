@@ -512,6 +512,7 @@ export const consumerBanSurface = pgEnum('consumer_ban_surface', [
   'posts',
   'reviews',
   'rewards',
+  'reels',
 ]);
 export const communityPostStatus = pgEnum('community_post_status', [
   'active',
@@ -527,6 +528,9 @@ export const productReviewStatus = pgEnum('product_review_status', [
 export const moderationTargetType = pgEnum('moderation_target_type', [
   'community_post',
   'product_review',
+  'reel',
+  'reel_comment',
+  'post_comment',
 ]);
 export const moderationReportSource = pgEnum('moderation_report_source', [
   'auto',
@@ -541,6 +545,25 @@ export const moderationActionKind = pgEnum('moderation_action_kind', [
   'approve',
   'edit',
   'takedown',
+]);
+
+// Reels + community-post comments share the community moderation status shape
+// (active / taken_down / hidden_pending_review), kept as per-domain enums to match
+// the existing communityPostStatus / productReviewStatus convention.
+export const reelStatus = pgEnum('reel_status', [
+  'active',
+  'taken_down',
+  'hidden_pending_review',
+]);
+export const reelCommentStatus = pgEnum('reel_comment_status', [
+  'active',
+  'taken_down',
+  'hidden_pending_review',
+]);
+export const postCommentStatus = pgEnum('post_comment_status', [
+  'active',
+  'taken_down',
+  'hidden_pending_review',
 ]);
 
 // ===== §22 Notifications =====

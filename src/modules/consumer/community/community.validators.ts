@@ -20,7 +20,31 @@ export const CreateReviewBody = z.object({
 });
 
 export const CreateReportBody = z.object({
-  targetType: z.enum(['community_post', 'product_review']),
+  targetType: z.enum([
+    'community_post',
+    'product_review',
+    'reel',
+    'reel_comment',
+    'post_comment',
+  ]),
   targetId: z.string().min(1),
   reason: z.string().trim().min(3).max(1000),
+});
+
+// ── posts feed + interactions ──
+
+export const FeedQuery = z.object({
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+
+export const CommentsQuery = z.object({
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});
+
+export const CommentIdParam = z.object({ id: z.string(), commentId: z.string() });
+
+export const CreateCommentBody = z.object({
+  body: z.string().trim().min(1).max(1000),
 });
