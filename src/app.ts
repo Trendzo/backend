@@ -51,6 +51,7 @@ import adminStoreOpsRoutes from '@/modules/admin/store-ops/store-ops.routes.js';
 import adminModerationRoutes from '@/modules/admin/moderation/moderation.routes.js';
 import adminInventoryRoutes from '@/modules/admin/inventory/inventory.routes.js';
 import retailerAiCatalogRoutes from '@/modules/retailer/ai-catalog/ai-catalog.routes.js';
+import retailerAiCatalogBetaRoutes from '@/modules/retailer/ai-catalog-beta/ai-catalog-beta.routes.js';
 import retailerCatalogRoutes from '@/modules/retailer/catalog/catalog.routes.js';
 import retailerMediaRoutes from '@/modules/retailer/media/media.routes.js';
 import retailerInvoicingRoutes from '@/modules/retailer/invoicing/invoicing.routes.js';
@@ -266,6 +267,8 @@ export function buildApp() {
       await api.register(adminPayoutAdjustmentsRoutes, { prefix: '/admin' });
       // §7 AI Catalog
       await api.register(retailerAiCatalogRoutes, { prefix: '/retailer' });
+      // §7b AI Catalog BETA (product-last flow; coexists with legacy)
+      await api.register(retailerAiCatalogBetaRoutes, { prefix: '/retailer' });
       // §21 Reports
       await api.register(retailerReportsRoutes, { prefix: '/retailer' });
       await api.register(adminReportsRoutes, { prefix: '/admin' });
