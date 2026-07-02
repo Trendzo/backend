@@ -253,6 +253,13 @@
       "when": 1781325926687,
       "tag": "0035_gst_scheme",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1782971026134,
+      "tag": "0036_hard_captain_flint",
+      "breakpoints": true
     }
   ]
 }

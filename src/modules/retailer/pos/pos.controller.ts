@@ -19,13 +19,26 @@ import {
   quotePosSale,
   voidPosSale,
 } from '@/shared/pos/create-pos-sale.js';
+import { posPrinterConfigs } from '@/db/schema/index.js';
+import { charsForPaper, getPrinterConfig } from '@/shared/pos/printer-config.js';
+import {
+  drawerKickPayload,
+  openDrawerOnNetwork,
+  preparePrintForSale,
+  printSaleToNetwork,
+  type PrintHint,
+} from '@/shared/pos/printer.js';
+import { assembleReceipt, renderReceiptPayloads } from '@/shared/pos/receipt.js';
 import type {
   CreateSaleBody,
   CustomersQuery,
   HoldSaleBody,
   ListSalesQuery,
   LookupQuery,
+  PrinterConfigBody,
+  PrintSaleBody,
   QuoteBody,
+  ReceiptQuery,
   ReturnSaleBody,
   SummaryQuery,
   VoidSaleBody,
@@ -134,7 +147,21 @@ export async function createSale(input: { auth: Auth; body: z.infer<typeof Creat
     lines: input.body.lines,
     tenders: input.body.tenders,
   });
-  return ok(result);
+
+  // Printing/drawer are opt-in per store. Skip on idempotent replay so a retried request never
+  // double-prints or re-kicks the drawer. `preparePrintForSale` never throws — a print failure
+  // must not fail the already-settled sale.
+  let print: PrintHint | null = null;
+  if (!result.alreadyExisted) {
+    const config = await getPrinterConfig(db, storeId);
+    print = await preparePrintForSale(db, {
+      storeId,
+      saleId: result.saleId,
+      config,
+      tenderMethods: input.body.tenders.map((t) => t.method),
+    });
+  }
+  return ok({ ...result, print });
 }
 
 export async function holdSale(input: { auth: Auth; body: z.infer<typeof HoldSaleBody> }) {
@@ -331,6 +358,114 @@ export async function daySummary(input: { auth: Auth; query: z.infer<typeof Summ
     refundsPaise: refundTotal,
     byTender,
   });
+}
+
+// ───────────────────────── printer / cash drawer ─────────────────────────
+
+export async function getPrinter(input: { auth: Auth }) {
+  const storeId = await getStoreId(input.auth.sub);
+  return ok(await getPrinterConfig(db, storeId));
+}
+
+export async function putPrinter(input: { auth: Auth; body: z.infer<typeof PrinterConfigBody> }) {
+  const storeId = await getStoreId(input.auth.sub);
+  const b = input.body;
+  // If the paper width changes without an explicit charsPerLine, derive the sensible default.
+  const charsPerLine =
+    b.charsPerLine ?? (b.paperWidth !== undefined ? charsForPaper(b.paperWidth) : undefined);
+
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  const set = (k: string, v: unknown) => {
+    if (v !== undefined) patch[k] = v;
+  };
+  set('enabled', b.enabled);
+  set('connection', b.connection);
+  set('host', b.host);
+  set('port', b.port);
+  set('paperWidth', b.paperWidth);
+  set('charsPerLine', charsPerLine);
+  set('copies', b.copies);
+  set('headerText', b.headerText);
+  set('footerText', b.footerText);
+  set('showGstBreakup', b.showGstBreakup);
+  set('showQr', b.showQr);
+  set('autoPrintOnSale', b.autoPrintOnSale);
+  set('cashDrawerEnabled', b.cashDrawerEnabled);
+  set('cashDrawerPin', b.cashDrawerPin);
+  set('cashDrawerOnlyOnCash', b.cashDrawerOnlyOnCash);
+  set('cashDrawerOnSale', b.cashDrawerOnSale);
+
+  await db
+    .insert(posPrinterConfigs)
+    .values({ storeId, ...patch })
+    .onConflictDoUpdate({ target: posPrinterConfigs.storeId, set: patch });
+
+  return ok(await getPrinterConfig(db, storeId));
+}
+
+export async function getReceipt(input: {
+  auth: Auth;
+  id: string;
+  query: z.infer<typeof ReceiptQuery>;
+}) {
+  const storeId = await getStoreId(input.auth.sub);
+  // The GST invoice PDF is the existing artifact — just hand back its stored URL.
+  if (input.query.format === 'pdf') {
+    return getSaleInvoice({ auth: input.auth, id: input.id });
+  }
+  const config = await getPrinterConfig(db, storeId);
+  const receipt = await assembleReceipt(db, { storeId, saleId: input.id, config });
+  if (!receipt) throw new AppError(404, ErrorCode.NotFound, 'Sale not found');
+  if (input.query.format === 'json') return ok(receipt);
+
+  const payloads = renderReceiptPayloads(receipt, { copies: config.copies, drawerKickPin: null });
+  if (input.query.format === 'text') return ok({ text: payloads.text });
+  return ok({
+    escposBase64: payloads.escposBase64,
+    paperWidth: config.paperWidth,
+    charsPerLine: config.charsPerLine,
+  });
+}
+
+export async function printSale(input: {
+  auth: Auth;
+  id: string;
+  body: z.infer<typeof PrintSaleBody>;
+}) {
+  const storeId = await getStoreId(input.auth.sub);
+  const config = await getPrinterConfig(db, storeId);
+  if (!config.enabled) {
+    throw new AppError(409, ErrorCode.InvalidState, 'Printing is not enabled for this store');
+  }
+  const openDrawer = input.body.openDrawer ?? false;
+
+  // Client/browser terminals print device-side — return the payload rather than doing I/O.
+  if (config.connection !== 'network') {
+    const receipt = await assembleReceipt(db, { storeId, saleId: input.id, config });
+    if (!receipt) throw new AppError(404, ErrorCode.NotFound, 'Sale not found');
+    const kickPin = openDrawer && config.cashDrawerEnabled ? config.cashDrawerPin : null;
+    const payloads = renderReceiptPayloads(receipt, { copies: config.copies, drawerKickPin: kickPin });
+    return ok({
+      connection: config.connection,
+      escposBase64: payloads.escposBase64,
+      receiptText: payloads.text,
+    });
+  }
+
+  const result = await printSaleToNetwork(db, { storeId, saleId: input.id, config, openDrawer });
+  return ok(result);
+}
+
+export async function openDrawer(input: { auth: Auth }) {
+  const storeId = await getStoreId(input.auth.sub);
+  const config = await getPrinterConfig(db, storeId);
+  if (!config.enabled || !config.cashDrawerEnabled) {
+    throw new AppError(409, ErrorCode.InvalidState, 'Cash drawer is not enabled for this store');
+  }
+  if (config.connection === 'network') {
+    return ok(await openDrawerOnNetwork(config));
+  }
+  return ok({ connection: config.connection, drawerKickBase64: drawerKickPayload(config) });
 }
 
 // ───────────────────────── shapers ─────────────────────────

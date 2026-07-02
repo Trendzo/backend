@@ -18,40 +18,12 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
-import { computeQuote } from '@/shared/orders/compute-quote.js';
 import { placeOrder } from '@/shared/orders/place-order.js';
 import { cancelOrder } from '@/shared/orders/cancel.js';
-import type { CancelOrderBody, PlaceOrderBody, QuoteBody } from './checkout.validators.js';
+import type { CancelOrderBody, PlaceOrderBody } from './checkout.validators.js';
 
 type Auth = AccessTokenPayload;
-type QuoteInput = z.infer<typeof QuoteBody>;
 type PlaceInput = z.infer<typeof PlaceOrderBody>;
-
-/** Compute a dry-run quote: pricing breakdown + per-variant stock. No writes. */
-export async function getQuote(input: { auth: Auth; body: QuoteInput }) {
-  const { auth, body } = input;
-  const quote = await computeQuote(db, {
-    consumerId: auth.sub,
-    storeId: body.storeId,
-    items: body.items,
-    deliveryMethod: body.deliveryMethod,
-    paymentMethod: body.paymentMethod,
-    ...(body.addressId !== undefined && { addressId: body.addressId }),
-    ...(body.couponCode !== undefined && { couponCode: body.couponCode }),
-    ...(body.voucherCode !== undefined && { voucherCode: body.voucherCode }),
-    ...(body.pointsToRedeem !== undefined && { pointsToRedeem: body.pointsToRedeem }),
-    ...(body.applyWallet !== undefined && { applyWallet: body.applyWallet }),
-  });
-  return ok({
-    pricing: quote.breakdown,
-    stock: quote.stock,
-    wallet: {
-      balancePaise: quote.walletBalancePaise,
-      appliedPaise: quote.walletAppliedPaise,
-      amountDuePaise: quote.amountDuePaise,
-    },
-  });
-}
 
 /** Place an order for the authenticated consumer. */
 export async function placeConsumerOrder(input: { auth: Auth; body: PlaceInput }) {

@@ -84,6 +84,38 @@ export const ListSalesQuery = z.object({
 
 export const IdParam = z.object({ id: z.string().min(1) });
 
+// ───────────────────────── printer / cash drawer ─────────────────────────
+
+/** Upsert body for a store's printer + cash-drawer config. All fields optional (partial update). */
+export const PrinterConfigBody = z.object({
+  enabled: z.boolean().optional(),
+  connection: z.enum(['network', 'client', 'browser']).optional(),
+  host: z.string().max(255).nullish(),
+  port: z.number().int().min(1).max(65535).optional(),
+  paperWidth: z.union([z.literal(58), z.literal(80)]).optional(),
+  charsPerLine: z.number().int().min(24).max(64).optional(),
+  copies: z.number().int().min(1).max(5).optional(),
+  headerText: z.string().max(500).nullish(),
+  footerText: z.string().max(500).nullish(),
+  showGstBreakup: z.boolean().optional(),
+  showQr: z.boolean().optional(),
+  autoPrintOnSale: z.boolean().optional(),
+  cashDrawerEnabled: z.boolean().optional(),
+  cashDrawerPin: z.union([z.literal(0), z.literal(1)]).optional(),
+  cashDrawerOnlyOnCash: z.boolean().optional(),
+  cashDrawerOnSale: z.boolean().optional(),
+});
+
+/** ?format= for the reprint endpoint. `pdf` returns the stored GST-invoice URL. */
+export const ReceiptQuery = z.object({
+  format: z.enum(['json', 'text', 'escpos', 'pdf']).default('json'),
+});
+
+/** Trigger a server-side network reprint; optionally pop the drawer with it. */
+export const PrintSaleBody = z.object({
+  openDrawer: z.boolean().optional(),
+});
+
 export const CustomersQuery = z.object({ phone: z.string().min(3).max(20) });
 
 export const SummaryQuery = z.object({ date: z.string().optional() }); // YYYY-MM-DD

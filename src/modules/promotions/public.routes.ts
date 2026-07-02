@@ -1,8 +1,11 @@
 /**
  * Public promotions surface (UNAUTHENTICATED — mounted without an auth hook, like
- * /catalog). Lists live offers + coupons so the consumer app can render offer
- * banners and the coupon wallet. Vouchers are excluded — their codes are private
- * (often consumer-assigned) and only resolve at checkout.
+ * /catalog). Lists live offers + coupons so the consumer app can render offer banners
+ * and the coupon wallet.
+ *
+ * NOTE: coupon/voucher VALIDATION is no longer here — it now flows through the pricing
+ * engine (/pricing/quote + /pricing/cart return `rejectedCodes` / applied discounts),
+ * so there is exactly one source of truth for whether a code applies.
  */
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { and, desc, gte, inArray, lte } from 'drizzle-orm';

@@ -203,6 +203,74 @@ export const posPayments = pgTable(
 );
 
 /**
+ * Per-store hardware/receipt configuration for the counter. Entirely OPTIONAL — a store with
+ * no row (or `enabled = false`) prints nothing automatically; the existing GST PDF invoice is
+ * unaffected. One row per store (storeId is the PK), edited under the `pos.settings` permission.
+ *
+ * `connection` decides WHERE bytes go:
+ *   - 'network'  → the backend opens a TCP socket to host:port and streams ESC/POS (LAN/IP
+ *                  thermal printer reachable from the server).
+ *   - 'client'   → the backend returns the ESC/POS payload (base64) in the sale response / receipt
+ *                  endpoint and a paired terminal app relays it over Bluetooth/USB.
+ *   - 'browser'  → no raw bytes; the client prints the HTML/PDF receipt via the OS print dialog.
+ *
+ * Cash drawer: a drawer wired through the printer's RJ11 kick-out port is opened by an ESC/POS
+ * pulse (`ESC p m t1 t2`). `cashDrawerPin` selects pin 2 (0) or pin 5 (1). It is kept locked and
+ * only pops on a transaction — `cashDrawerOnSale` pops it on each completed sale, gated by
+ * `cashDrawerOnlyOnCash` so card/UPI-only bills leave it shut.
+ */
+export const posPrinterConfigs = pgTable(
+  'pos_printer_configs',
+  {
+    storeId: text('store_id')
+      .primaryKey()
+      .references(() => retailerStores.id, { onDelete: 'cascade' }),
+
+    // Master toggle. Default OFF so the feature is opt-in and non-breaking.
+    enabled: boolean('enabled').notNull().default(false),
+    connection: text('connection').notNull().default('client'), // 'network' | 'client' | 'browser'
+
+    // Network (IP) printer target — only used when connection = 'network'.
+    host: text('host'),
+    port: integer('port').notNull().default(9100),
+
+    // Receipt formatting.
+    paperWidth: integer('paper_width').notNull().default(80), // 58 | 80 (mm)
+    charsPerLine: integer('chars_per_line').notNull().default(48), // 32 for 58mm, 48 for 80mm
+    copies: integer('copies').notNull().default(1),
+    headerText: text('header_text'), // extra lines printed above the store name
+    footerText: text('footer_text').default('Thank you! Please visit again.'),
+    showGstBreakup: boolean('show_gst_breakup').notNull().default(true),
+    showQr: boolean('show_qr').notNull().default(false), // UPI/invoice QR (client renders)
+    autoPrintOnSale: boolean('auto_print_on_sale').notNull().default(true),
+
+    // Cash drawer (kick-out via the printer).
+    cashDrawerEnabled: boolean('cash_drawer_enabled').notNull().default(false),
+    cashDrawerPin: integer('cash_drawer_pin').notNull().default(0), // 0 => pin 2, 1 => pin 5
+    cashDrawerOnlyOnCash: boolean('cash_drawer_only_on_cash').notNull().default(true),
+    cashDrawerOnSale: boolean('cash_drawer_on_sale').notNull().default(true),
+
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => ({
+    connectionGuard: check(
+      'pos_printer_configs_connection_guard',
+      sql`${t.connection} in ('network','client','browser')`,
+    ),
+    paperGuard: check('pos_printer_configs_paper_guard', sql`${t.paperWidth} in (58, 80)`),
+    pinGuard: check('pos_printer_configs_pin_guard', sql`${t.cashDrawerPin} in (0, 1)`),
+    portGuard: check(
+      'pos_printer_configs_port_guard',
+      sql`${t.port} > 0 AND ${t.port} <= 65535`,
+    ),
+    copiesGuard: check(
+      'pos_printer_configs_copies_guard',
+      sql`${t.copies} >= 1 AND ${t.copies} <= 5`,
+    ),
+  }),
+);
+
+/**
  * Per-line link from a return sale back to the original sale's line, with restock intent.
  */
 export const posReturnLines = pgTable(
@@ -259,6 +327,13 @@ export const posSaleItemsRelations = relations(posSaleItems, ({ one }) => ({
 
 export const posPaymentsRelations = relations(posPayments, ({ one }) => ({
   sale: one(posSales, { fields: [posPayments.saleId], references: [posSales.id] }),
+}));
+
+export const posPrinterConfigsRelations = relations(posPrinterConfigs, ({ one }) => ({
+  store: one(retailerStores, {
+    fields: [posPrinterConfigs.storeId],
+    references: [retailerStores.id],
+  }),
 }));
 
 export const posReturnLinesRelations = relations(posReturnLines, ({ one }) => ({

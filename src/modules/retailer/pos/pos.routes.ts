@@ -9,7 +9,10 @@ import {
   IdParam,
   ListSalesQuery,
   LookupQuery,
+  PrinterConfigBody,
+  PrintSaleBody,
   QuoteBody,
+  ReceiptQuery,
   ReturnSaleBody,
   SummaryQuery,
   VoidSaleBody,
@@ -88,6 +91,37 @@ const retailerPosRoutes: FastifyPluginAsyncZod = async (app) => {
     '/sales/:id/invoice',
     { preHandler: requirePermission('pos.view'), schema: { params: IdParam } },
     async (req) => ctrl.getSaleInvoice({ auth: getAuth(req), id: req.params.id }),
+  );
+
+  // ── printer / cash-drawer configuration + actions ──
+  app.get(
+    '/printer-config',
+    { preHandler: requirePermission('pos.settings') },
+    async (req) => ctrl.getPrinter({ auth: getAuth(req) }),
+  );
+
+  app.put(
+    '/printer-config',
+    { preHandler: requirePermission('pos.settings'), schema: { body: PrinterConfigBody } },
+    async (req) => ctrl.putPrinter({ auth: getAuth(req), body: req.body }),
+  );
+
+  app.get(
+    '/sales/:id/receipt',
+    { preHandler: requirePermission('pos.view'), schema: { params: IdParam, querystring: ReceiptQuery } },
+    async (req) => ctrl.getReceipt({ auth: getAuth(req), id: req.params.id, query: req.query }),
+  );
+
+  app.post(
+    '/sales/:id/print',
+    { preHandler: requirePermission('pos.sell'), schema: { params: IdParam, body: PrintSaleBody } },
+    async (req) => ctrl.printSale({ auth: getAuth(req), id: req.params.id, body: req.body }),
+  );
+
+  app.post(
+    '/open-drawer',
+    { preHandler: requirePermission('pos.sell') },
+    async (req) => ctrl.openDrawer({ auth: getAuth(req) }),
   );
 };
 

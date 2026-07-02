@@ -133,6 +133,12 @@ function shapeListings(rows: ListingRow[]) {
   return rows
     .map((l) => {
       const activeGroupIds = new Set(l.variantGroups.map((g) => g.id));
+      // %-off is computed here (backend = single source of truth) so the strikethrough
+      // badge never recomputes on the client.
+      const discountPct = (pricePaise: number, comparePaise: number | null) =>
+        comparePaise && comparePaise > pricePaise
+          ? Math.round((1 - pricePaise / comparePaise) * 100)
+          : 0;
       const variants = l.variants
         // Shoppable = variant active AND its group active.
         .filter((v) => activeGroupIds.has(v.groupId))
@@ -144,6 +150,7 @@ function shapeListings(rows: ListingRow[]) {
           imageUrls: v.imageUrls,
           pricePaise: v.pricePaise,
           compareAtPricePaise: v.compareAtPrice,
+          discountPct: discountPct(v.pricePaise, v.compareAtPrice),
           available: Math.max(0, v.stock - v.reserved),
         }));
       return {

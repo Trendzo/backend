@@ -48,7 +48,8 @@ import type {
 } from '@/shared/promotions/schemas.js';
 
 export type QuoteInput = {
-  consumerId: string;
+  /** Omit for a guest/preview quote (no loyalty redeem, no wallet, no per-consumer gates). */
+  consumerId?: string | undefined;
   storeId: string;
   /** One per variant; qty must be positive. */
   items: Array<{ variantId: string; qty: number }>;
@@ -68,6 +69,47 @@ export type StockLine = {
   required: number;
   ok: boolean;
 };
+
+/** An explicit coupon/voucher code that could not be applied — surfaced, never thrown. */
+export type RejectedCode = { code: string; kind: 'coupon' | 'voucher'; reason: string };
+
+/** Per-line priced output — everything the client needs to render a line with zero math. */
+export type PricedLine = {
+  variantId: string;
+  listingId: string;
+  name: string;
+  attributesLabel: string;
+  imageUrl: string | null;
+  qty: number;
+  unitPricePaise: number;
+  grossPaise: number;
+  discountAllocPaise: number;
+  taxAllocPaise: number;
+  netLinePaise: number;
+};
+
+export type DeliveryMethodKey = 'express' | 'standard' | 'pickup' | 'try_and_buy';
+
+/** Per-method delivery fee (what the engine would charge for each) — drives the picker. */
+export function deliveryOptionsFromConfig(cfg: EngineConfig): Record<DeliveryMethodKey, number> {
+  const feeFor = (m: DeliveryMethodKey) =>
+    cfg.deliveryOverridePaise ?? Math.floor(cfg.baseDeliveryFee[m] * cfg.surgeMultiplier);
+  return {
+    express: feeFor('express'),
+    standard: feeFor('standard'),
+    pickup: feeFor('pickup'),
+    try_and_buy: feeFor('try_and_buy'),
+  };
+}
+
+// Normalise an engine/orchestrator exclusion reason for a rejected explicit code.
+// Consumer-targeted misses become `requires_login` for guests (they may qualify once signed in).
+function normalizeReason(reason: string, isGuest: boolean): string {
+  if (isGuest && (reason === 'consumer_not_targeted' || reason === 'consumer_excluded')) {
+    return 'requires_login';
+  }
+  return reason;
+}
 
 /**
  * How much wallet to apply as tender. Wallet is a PARTIAL tender (not a discount):
@@ -95,11 +137,18 @@ export function resolveWalletApplyPaise(args: {
  * loaded rows (consumer/store/address/variant relations).
  */
 export async function computeQuote(database: typeof Db, input: QuoteInput) {
+  const isGuest = !input.consumerId;
+  const rejectedCodes: RejectedCode[] = [];
+
   // ── Pre-load static data (consumer, store, address, items) ──
-  const consumer = await database.query.consumers.findFirst({
-    where: eq(consumers.id, input.consumerId),
-  });
-  if (!consumer) throw new AppError(404, ErrorCode.NotFound, 'Consumer not found');
+  // Consumer is optional: a guest/preview quote skips loyalty, wallet, and all
+  // per-consumer promo gates. Placement always passes a real consumerId.
+  const consumer = input.consumerId
+    ? await database.query.consumers.findFirst({ where: eq(consumers.id, input.consumerId) })
+    : null;
+  if (input.consumerId && !consumer) {
+    throw new AppError(404, ErrorCode.NotFound, 'Consumer not found');
+  }
 
   const store = await database.query.retailerStores.findFirst({
     where: eq(retailerStores.id, input.storeId),
@@ -119,16 +168,12 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
       where: eq(addresses.id, input.addressId),
     });
     if (!address) throw new AppError(404, ErrorCode.NotFound, 'Address not found');
-  } else if (input.deliveryMethod !== 'pickup') {
+  } else if (input.deliveryMethod !== 'pickup' && consumer) {
     // Fall back to the consumer's default address when caller omits addressId.
+    // Guests have no address → GST falls back to the store state (intra-state) below.
     address = await database.query.addresses.findFirst({
       where: and(eq(addresses.consumerId, consumer.id), eq(addresses.isDefault, true)),
     });
-    if (!address) {
-      throw AppError.validation(
-        'addressId is required for non-pickup orders and no default address is set',
-      );
-    }
   }
 
   if (input.items.length === 0) {
@@ -207,7 +252,7 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
   });
 
   const cart: Cart = {
-    consumerId: consumer.id,
+    consumerId: consumer?.id ?? 'guest',
     consumerStateCode: address?.stateCode ?? store.stateCode,
     storeStateCode: store.stateCode,
     deliveryMethod: input.deliveryMethod,
@@ -215,8 +260,11 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
     lines: cartLines,
   };
 
-  // ── Resolve promotions ──
+  // ── Resolve promotions (explicit coupon/voucher only; auto-offers out of scope) ──
+  // No throws: an unusable explicit code is recorded in `rejectedCodes` and the cart
+  // is priced WITHOUT it, so a bad coupon can never block a quote or a placement.
   const promoIds = new Set<string>();
+  const explicitCodeByPromoId = new Map<string, { code: string; kind: 'coupon' | 'voucher' }>();
   let voucherCodeId: string | undefined;
   let voucherCodePromotionId: string | undefined;
 
@@ -225,9 +273,11 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
       where: and(eq(promotions.name, input.couponCode), eq(promotions.mechanism, 'coupon')),
     });
     if (!promo) {
-      throw new AppError(404, ErrorCode.CouponInvalid, `No coupon "${input.couponCode}" found`);
+      rejectedCodes.push({ code: input.couponCode, kind: 'coupon', reason: 'not_found' });
+    } else {
+      promoIds.add(promo.id);
+      explicitCodeByPromoId.set(promo.id, { code: input.couponCode, kind: 'coupon' });
     }
-    promoIds.add(promo.id);
   }
 
   if (input.voucherCode) {
@@ -235,22 +285,22 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
       where: eq(voucherCodes.code, input.voucherCode.toUpperCase()),
     });
     if (!code) {
-      throw new AppError(404, ErrorCode.CouponInvalid, 'Voucher code not found');
+      rejectedCodes.push({ code: input.voucherCode, kind: 'voucher', reason: 'not_found' });
+    } else if (code.totalUses != null && code.redeemedCount >= code.totalUses) {
+      rejectedCodes.push({ code: input.voucherCode, kind: 'voucher', reason: 'fully_redeemed' });
+    } else if (code.assignedConsumerId && (isGuest || code.assignedConsumerId !== consumer!.id)) {
+      // §13 P6 — targeted vouchers are reserved for a specific consumer.
+      rejectedCodes.push({
+        code: input.voucherCode,
+        kind: 'voucher',
+        reason: isGuest ? 'requires_login' : 'assigned_to_other',
+      });
+    } else {
+      promoIds.add(code.promotionId);
+      explicitCodeByPromoId.set(code.promotionId, { code: input.voucherCode, kind: 'voucher' });
+      voucherCodeId = code.id;
+      voucherCodePromotionId = code.promotionId;
     }
-    if (code.totalUses != null && code.redeemedCount >= code.totalUses) {
-      throw new AppError(409, ErrorCode.VoucherAlreadyRedeemed, 'Voucher already redeemed');
-    }
-    // §13 P6 — targeted vouchers are reserved for a specific consumer.
-    if (code.assignedConsumerId && code.assignedConsumerId !== consumer.id) {
-      throw new AppError(
-        409,
-        ErrorCode.CouponInvalid,
-        'Voucher is reserved for a different consumer',
-      );
-    }
-    promoIds.add(code.promotionId);
-    voucherCodeId = code.id;
-    voucherCodePromotionId = code.promotionId;
   }
 
   const promoRows =
@@ -260,23 +310,17 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
           where: inArray(promotions.id, [...promoIds]),
         });
 
-  // G1: Validate status and validity window before applying any promotion.
+  // G1: Validate status and validity window. Unusable explicit codes → rejectedCodes.
   const now = new Date();
   const validPromoRows = promoRows.filter((p) => {
     const isActive = p.status === 'active';
     const inWindow = p.validFrom <= now && p.validUntil >= now;
     if (!isActive || !inWindow) {
-      const wasExplicit =
-        (input.couponCode && p.mechanism === 'coupon') ||
-        (input.voucherCode && p.mechanism === 'voucher');
-      if (wasExplicit) {
-        throw new AppError(
-          409,
-          ErrorCode.CouponInvalid,
-          `Promotion "${p.name}" is ${!isActive ? p.status : 'outside its validity window'}`,
-        );
+      const explicit = explicitCodeByPromoId.get(p.id);
+      if (explicit) {
+        rejectedCodes.push({ ...explicit, reason: !isActive ? 'inactive' : 'expired' });
       }
-      return false; // silently drop auto-applied offers that are no longer active
+      return false;
     }
     return true;
   });
@@ -298,15 +342,17 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
     return promo;
   });
 
-  // Loyalty balance — always fetched (used for redemption math and loyaltyTierFilter checks).
-  // Read the authoritative consumer_loyalty balance row (the ledger's projection).
-  const loyaltyAcct = await database.query.consumerLoyalty.findFirst({
-    where: eq(consumerLoyalty.consumerId, consumer.id),
-  });
+  // Loyalty balance — consumer only (used for redemption math + tier checks). Guest = 0.
+  const loyaltyAcct = consumer
+    ? await database.query.consumerLoyalty.findFirst({
+        where: eq(consumerLoyalty.consumerId, consumer.id),
+      })
+    : null;
   const consumerLoyaltyBalance = loyaltyAcct?.balancePoints ?? 0;
 
-  // G2: Enforce firstOrderOnly — the engine can't do this DB lookup itself.
-  if (enginePromos.some((p) => p.scope?.firstOrderOnly)) {
+  // G2: firstOrderOnly — only meaningful for a signed-in consumer with prior orders.
+  // Guests are first-time by definition, so these promos stay.
+  if (consumer && enginePromos.some((p) => p.scope?.firstOrderOnly)) {
     const priorOrder = await database.query.orders.findFirst({
       where: and(eq(orders.consumerId, consumer.id), sql`${orders.status} != 'payment_failed'`),
       columns: { id: true },
@@ -314,18 +360,14 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
     if (priorOrder) {
       for (let i = enginePromos.length - 1; i >= 0; i--) {
         if (!enginePromos[i]!.scope?.firstOrderOnly) continue;
-        const isExplicit =
-          (input.couponCode && enginePromos[i]!.mechanism === 'coupon') ||
-          (input.voucherCode && enginePromos[i]!.mechanism === 'voucher');
-        if (isExplicit) {
-          throw new AppError(409, ErrorCode.CouponInvalid, 'This offer is for first-time orders only');
-        }
+        const explicit = explicitCodeByPromoId.get(enginePromos[i]!.id);
+        if (explicit) rejectedCodes.push({ ...explicit, reason: 'first_order_only' });
         enginePromos.splice(i, 1);
       }
     }
   }
 
-  // G4: Enforce loyaltyTierFilter — derive consumer tier from balance vs. platform thresholds.
+  // G4: Enforce loyaltyTierFilter — derive consumer tier (guest = bronze).
   if (enginePromos.some((p) => p.scope?.loyaltyTierFilter?.length)) {
     const tierCfg = await database.query.platformConfig.findMany({
       where: inArray(platformConfig.key, [
@@ -345,28 +387,20 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
     for (let i = enginePromos.length - 1; i >= 0; i--) {
       const filter = enginePromos[i]!.scope?.loyaltyTierFilter;
       if (filter?.length && !filter.includes(consumerTier)) {
+        const explicit = explicitCodeByPromoId.get(enginePromos[i]!.id);
+        if (explicit) rejectedCodes.push({ ...explicit, reason: 'tier_ineligible' });
         enginePromos.splice(i, 1);
       }
     }
   }
 
-  // §13 A5 — scope.storeIds gating. The pricing engine's eligibility filter is
-  // per-line and ignores storeIds (the cart already represents one store), so we
-  // drop here. Explicit coupons/vouchers throw — auto-applied offers silently drop.
+  // §13 A5 — scope.storeIds gating (cart represents one store). Unusable explicit
+  // codes → rejectedCodes; auto-applied offers silently drop.
   for (let i = enginePromos.length - 1; i >= 0; i--) {
     const storeIds = enginePromos[i]!.scope?.storeIds;
     if (storeIds?.length && !storeIds.includes(store.id)) {
-      const promo = enginePromos[i]!;
-      const isExplicit =
-        (input.couponCode && promo.mechanism === 'coupon') ||
-        (input.voucherCode && promo.mechanism === 'voucher');
-      if (isExplicit) {
-        throw new AppError(
-          409,
-          ErrorCode.CouponInvalid,
-          'This promotion is not available for this store',
-        );
-      }
+      const explicit = explicitCodeByPromoId.get(enginePromos[i]!.id);
+      if (explicit) rejectedCodes.push({ ...explicit, reason: 'store_ineligible' });
       enginePromos.splice(i, 1);
     }
   }
@@ -385,12 +419,49 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
     promotions: enginePromos,
     clubbingMatrix,
     config: engineConfig,
-    pointsToRedeem: input.pointsToRedeem ?? 0,
+    // Guests can't redeem loyalty (no balance / no account).
+    pointsToRedeem: isGuest ? 0 : (input.pointsToRedeem ?? 0),
     consumerLoyaltyBalance,
   });
 
+  // Explicit codes that survived gating but the engine still couldn't apply
+  // (clubbing conflict, cart minimum, consumer targeting, no-match) → rejectedCodes.
+  for (const [promoId, explicit] of explicitCodeByPromoId) {
+    if (rejectedCodes.some((r) => r.code === explicit.code && r.kind === explicit.kind)) continue;
+    const applied = breakdown.appliedPromotions.find((p) => p.promotionId === promoId);
+    if (applied && applied.amountPaise > 0) continue; // genuinely applied
+    const excluded = breakdown.excludedPromotions.find((p) => p.promotionId === promoId);
+    rejectedCodes.push({
+      ...explicit,
+      reason: normalizeReason(excluded?.reason ?? 'not_eligible', isGuest),
+    });
+  }
+
   // ── Per-item allocations (proportional to line subtotal) ──
   const lineAllocations = allocateDiscountsToLines(cartLines, breakdown);
+
+  // ── Per-line priced output (zero math on the client) ──
+  const lines: PricedLine[] = cartLines.map((l) => {
+    const v = variantById.get(l.variantId)!;
+    const alloc = lineAllocations.get(l.lineId)!;
+    const grossPaise = l.unitPricePaise * l.qty;
+    const discountAllocPaise = alloc.retailerPromo + alloc.platformPromo + alloc.coupon + alloc.points;
+    return {
+      variantId: l.variantId,
+      listingId: l.listingId,
+      name: v.listing.name,
+      attributesLabel: v.attributesLabel,
+      imageUrl: v.imageUrls?.[0] ?? v.listing.galleryUrls?.[0] ?? null,
+      qty: l.qty,
+      unitPricePaise: l.unitPricePaise,
+      grossPaise,
+      discountAllocPaise,
+      taxAllocPaise: alloc.gst,
+      netLinePaise: grossPaise - discountAllocPaise + alloc.gst,
+    };
+  });
+
+  const deliveryOptions = deliveryOptionsFromConfig(engineConfig);
 
   // ── Read-only stock availability (advisory; the tx reserve is the real guard) ──
   const stock: StockLine[] = input.items.map((it) => {
@@ -405,16 +476,21 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
   });
 
   // ── Wallet tender (advisory; placeOrder re-reads + debits under CAS) ──
-  const walletRow = await database.query.consumerWallets.findFirst({
-    where: eq(consumerWallets.consumerId, consumer.id),
-  });
+  // Guests have no wallet.
+  const walletRow = consumer
+    ? await database.query.consumerWallets.findFirst({
+        where: eq(consumerWallets.consumerId, consumer.id),
+      })
+    : null;
   const walletBalancePaise = walletRow?.balancePaise ?? 0;
-  const walletAppliedPaise = resolveWalletApplyPaise({
-    paymentMethod: input.paymentMethod,
-    applyWallet: input.applyWallet,
-    balancePaise: walletBalancePaise,
-    totalPaise: breakdown.totalPaise,
-  });
+  const walletAppliedPaise = isGuest
+    ? 0
+    : resolveWalletApplyPaise({
+        paymentMethod: input.paymentMethod,
+        applyWallet: input.applyWallet,
+        balancePaise: walletBalancePaise,
+        totalPaise: breakdown.totalPaise,
+      });
   const amountDuePaise = breakdown.totalPaise - walletAppliedPaise;
 
   return {
@@ -428,6 +504,9 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
     engineConfig,
     breakdown,
     lineAllocations,
+    lines,
+    deliveryOptions,
+    rejectedCodes,
     stock,
     walletBalancePaise,
     walletAppliedPaise,

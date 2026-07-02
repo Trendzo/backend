@@ -87,6 +87,33 @@ export function requireAuth(...allowedKinds: TokenKind[]): preHandlerAsyncHookHa
 }
 
 /**
+ * Build a preHandler that decodes the bearer token IF one is present and its `kind`
+ * matches, attaching it to `req.auth`. Never rejects: a missing/invalid token (or a
+ * mismatched kind) simply leaves `req.auth` undefined. For routes that serve both
+ * guests and signed-in users (e.g. pricing previews), where auth only enriches the
+ * result. Account status checks are skipped here (a degraded token → treated as guest).
+ */
+export function optionalAuth(...allowedKinds: TokenKind[]): preHandlerAsyncHookHandler {
+  return async function maybeAuthenticate(req: FastifyRequest, _reply: FastifyReply): Promise<void> {
+    const header = req.headers.authorization;
+    if (!header || !header.toLowerCase().startsWith('bearer ')) return;
+    const token = header.slice(7).trim();
+    if (!token) return;
+    try {
+      const payload = verifyAccessToken(token);
+      if (allowedKinds.includes(payload.kind)) req.auth = payload;
+    } catch {
+      // Invalid/expired token → treat as a guest, don't reject.
+    }
+  };
+}
+
+/** Like {@link getAuth} but returns undefined when unauthenticated (optionalAuth routes). */
+export function getAuthOptional(req: FastifyRequest): AccessTokenPayload | undefined {
+  return req.auth;
+}
+
+/**
  * Convenience accessor — handlers call this after the preHandler so `req.auth` is guaranteed
  * present. Throws if the route was misconfigured (no preHandler attached).
  */

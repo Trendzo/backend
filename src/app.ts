@@ -96,6 +96,7 @@ import consumerLoyaltyRoutes from '@/modules/consumer/loyalty/loyalty.routes.js'
 import consumerCartRoutes from '@/modules/consumer/cart/cart.routes.js';
 import consumerReturnsRoutes from '@/modules/consumer/returns/returns.routes.js';
 import publicPromotionRoutes from '@/modules/promotions/public.routes.js';
+import pricingRoutes from '@/modules/pricing/pricing.routes.js';
 import consumerProfileRoutes from '@/modules/consumer/profile/profile.routes.js';
 import publicMoodboardRoutes from '@/modules/consumer/moodboards/public.routes.js';
 import adminMoodboardRoutes from '@/modules/admin/moodboards/moodboards.routes.js';
@@ -316,6 +317,8 @@ export function buildApp() {
       await api.register(publicMoodboardRoutes, { prefix: '/public/moodboards' });
       // Public live offers + coupons (UNAUTHENTICATED — drives banners + coupon wallet)
       await api.register(publicPromotionRoutes, { prefix: '/promotions' });
+      // Pricing — the single source of truth (optional auth: guest preview or full quote)
+      await api.register(pricingRoutes, { prefix: '/pricing' });
       // Admin moodboard moderation (takedown/restore)
       await api.register(adminMoodboardRoutes, { prefix: '/admin/moodboards' });
       // §22 Push subscriptions

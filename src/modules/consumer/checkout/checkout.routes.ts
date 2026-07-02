@@ -1,16 +1,12 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
 import * as ctrl from './checkout.controller.js';
-import { CancelOrderBody, OrderIdParam, PlaceOrderBody, QuoteBody } from './checkout.validators.js';
+import { CancelOrderBody, OrderIdParam, PlaceOrderBody } from './checkout.validators.js';
 
+// Dry-run pricing moved to the public, optional-auth /pricing surface (single source
+// of truth for guests + signed-in users). This module now only places + manages orders.
 const consumerCheckoutRoutes: FastifyPluginAsyncZod = async (app) => {
   app.addHook('preHandler', requireAuth('consumer'));
-
-  app.post(
-    '/quote',
-    { schema: { body: QuoteBody } },
-    async (req) => ctrl.getQuote({ auth: getAuth(req), body: req.body }),
-  );
 
   app.post(
     '/',

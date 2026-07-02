@@ -134,7 +134,6 @@ export async function placeOrder(
     ...(input.applyWallet !== undefined && { applyWallet: input.applyWallet }),
   });
   const {
-    consumer,
     store,
     address,
     variantById,
@@ -144,6 +143,14 @@ export async function placeOrder(
     breakdown,
     lineAllocations,
   } = quote;
+
+  // Placement always passes a real consumerId, so computeQuote returns a consumer here
+  // (the nullable type only covers the guest/preview quote path). Assert it so the
+  // value reads as non-null inside the transaction closure below.
+  if (!quote.consumer) {
+    throw new AppError(401, ErrorCode.Unauthorized, 'A consumer is required to place an order');
+  }
+  const consumer = quote.consumer;
 
   // Phone-OTP signups start with only a verified phone; order snapshots freeze
   // consumer name + email as NOT NULL columns, so both must exist before placement.
