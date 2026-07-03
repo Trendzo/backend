@@ -159,15 +159,13 @@ export function buildApp() {
     void reply.status(500).send(fail('internal_error', 'Internal server error'));
   });
 
-  // CORS:
-  // - dev: allow any origin (so the local dashboard on :5173, curl, Postman, etc. all work)
-  // - prod: allow only origins explicitly listed in CORS_ORIGIN (comma-separated).
-  //   If CORS_ORIGIN is unset in prod, CORS is OFF — same-origin only.
-  const corsOrigin = (() => {
-    if (env.NODE_ENV !== 'production') return true;
-    if (!env.CORS_ORIGIN) return false;
-    return env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
-  })();
+  // CORS: allow ANY origin. `origin: true` reflects the caller's Origin header
+  // (works alongside `credentials: true`, which a literal `*` would not).
+  // Intentionally permissive — any site may call this API with cookies. If
+  // CORS_ORIGIN is set it restricts to that allow-list; otherwise reflect all.
+  const corsOrigin = env.CORS_ORIGIN
+    ? env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean)
+    : true;
   void app.register(cors, { origin: corsOrigin, credentials: true });
 
   // Multipart parser — only activates on `multipart/form-data` requests, leaves the

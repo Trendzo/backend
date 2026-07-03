@@ -14,6 +14,7 @@ import {
   GroupParam,
   IdParam,
   ListingIdParam,
+  ListingsExportQuery,
   ListQuery,
   PatchGroupBody,
   PatchListingBody,
@@ -41,6 +42,18 @@ const retailerListingsRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: { querystring: ListQuery },
     },
     async (req) => ctrl.listListings({ auth: getAuth(req), query: req.query }),
+  );
+
+  // Full catalog CSV export (one row per variant). Static path — declared
+  // before `/listings/:id` so it never matches the param route.
+  app.get(
+    '/listings/export',
+    {
+      preHandler: requirePermission('listings.view'),
+      schema: { querystring: ListingsExportQuery },
+    },
+    async (req, reply) =>
+      ctrl.exportListings({ auth: getAuth(req), query: req.query, reply }),
   );
 
   app.get(

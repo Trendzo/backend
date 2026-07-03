@@ -36,6 +36,7 @@ import {
   resolveGroupId,
 } from '@/shared/variant-groups.js';
 import { bumpTemplateUsage } from '@/modules/retailer/catalog/catalog.controller.js';
+import type { FastifyReply } from 'fastify';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
   BulkCreateGroupVariantsBody,
@@ -46,6 +47,7 @@ import type {
   CreateListingBody,
   CreateVariantBody,
   DefaultVariantBody,
+  ListingsExportQuery,
   ListQuery,
   PatchGroupBody,
   PatchListingBody,
@@ -54,6 +56,104 @@ import type {
 } from './listings.validators.js';
 
 type Auth = AccessTokenPayload;
+
+// ===== Full product + variant CSV export =====
+
+/** RFC-4180 cell: quote when it contains a comma, quote, or newline. */
+function csvCell(value: string | number | boolean | null | undefined): string {
+  if (value === null || value === undefined) return '';
+  const s = String(value);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// One row per variant. Listing/group columns repeat across a listing's variants.
+const PRODUCT_CSV_HEADER = [
+  'listing_id', 'product_name', 'status', 'variant_mode',
+  'brand_slug', 'brand_name', 'category_slug', 'category_label',
+  'gender', 'listing_policy', 'hsn', 'description',
+  'occasion', 'age_groups', 'gallery_urls', 'rating_avg', 'rating_count',
+  'created_at', 'updated_at',
+  'group_id', 'group_name', 'color_hex', 'group_is_default', 'group_is_active',
+  'variant_id', 'sku', 'barcode', 'attributes', 'attributes_label',
+  'price_paise', 'price_inr', 'compare_at_price_paise', 'stock', 'reserved', 'available',
+  'is_active', 'image_urls', 'attributes_out_of_template',
+] as const;
+
+/**
+ * Export the store's full catalog (every listing, every variant) as CSV.
+ * One row per variant; listings with no variants emit a single row with the
+ * variant columns blank so nothing is silently dropped.
+ */
+export async function exportListings(input: {
+  auth: Auth;
+  query: z.infer<typeof ListingsExportQuery>;
+  reply: FastifyReply;
+}) {
+  const retailer = await loadRetailer(input.auth.sub);
+  const store = await loadOwnedStore(retailer.storeId);
+
+  const conds = [eq(productListings.storeId, store.id)];
+  if (input.query.status) conds.push(eq(productListings.status, input.query.status));
+  if (input.query.categoryId) conds.push(eq(productListings.categoryId, input.query.categoryId));
+
+  const listings = await db.query.productListings.findMany({
+    where: and(...conds),
+    with: { variants: true, variantGroups: true, brand: true, category: true },
+  });
+
+  const iso = (d: Date | string | null): string =>
+    d instanceof Date ? d.toISOString() : (d ?? '');
+
+  const lines: string[] = ['﻿' + PRODUCT_CSV_HEADER.join(',')];
+  for (const l of listings) {
+    const groupById = new Map(l.variantGroups.map((g) => [g.id, g]));
+    const gallery = (l.galleryUrls ?? []).join('|');
+    const occasion = (l.occasion ?? []).join('|');
+    const ageGroups = (l.ageGroups ?? []).join('|');
+
+    const rowFor = (
+      v: (typeof l.variants)[number] | null,
+      g: (typeof l.variantGroups)[number] | null,
+    ): (string | number | boolean | null)[] => [
+      l.id, l.name, l.status, l.variantMode,
+      l.brand?.slug ?? '', l.brand?.name ?? '',
+      l.category?.slug ?? '', l.category?.label ?? '',
+      l.gender, l.listingPolicy, l.hsn ?? '', l.description ?? '',
+      occasion, ageGroups, gallery, l.ratingAvg, l.ratingCount,
+      iso(l.createdAt), iso(l.updatedAt),
+      g?.id ?? '', g?.name ?? '', g?.colorHex ?? '',
+      g ? g.isDefault : '', g ? g.isActive : '',
+      v?.id ?? '', v?.sku ?? '', v?.barcode ?? '',
+      v
+        ? Object.entries(v.attributes as Record<string, string>)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([k, val]) => `${k}=${val}`)
+            .join('|')
+        : '',
+      v?.attributesLabel ?? '',
+      v ? v.pricePaise : '', v ? (v.pricePaise / 100).toFixed(2) : '',
+      v?.compareAtPrice ?? '', v ? v.stock : '', v ? v.reserved : '',
+      v ? v.stock - v.reserved : '',
+      v ? v.isActive : '', v ? (v.imageUrls ?? []).join('|') : '',
+      v ? v.attributesOutOfTemplate : '',
+    ];
+
+    if (l.variants.length === 0) {
+      lines.push(rowFor(null, null).map(csvCell).join(','));
+    } else {
+      for (const v of l.variants) {
+        lines.push(rowFor(v, groupById.get(v.groupId) ?? null).map(csvCell).join(','));
+      }
+    }
+  }
+
+  const filename = `products-${store.id}-${new Date().toISOString().slice(0, 10)}.csv`;
+  void input.reply
+    .header('Content-Type', 'text/csv; charset=utf-8')
+    .header('Content-Disposition', `attachment; filename="${filename}"`)
+    .send(lines.join('\n'));
+  return input.reply;
+}
 
 async function loadRetailer(retailerId: string) {
   const retailer = await db.query.retailerAccounts.findFirst({

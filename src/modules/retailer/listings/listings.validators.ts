@@ -18,6 +18,12 @@ export const ListQuery = z.object({
   sort: z.enum(['updated_desc', 'name_asc']).optional(),
 });
 
+/** Filters for the full product + variant CSV export. */
+export const ListingsExportQuery = z.object({
+  status: z.enum(['draft', 'active', 'retired', 'taken_down']).optional(),
+  categoryId: z.string().optional(),
+});
+
 export const CreateListingBody = z.object({
   name: z.string().trim().min(1).max(200),
   description: z.string().trim().max(2_000).optional(),

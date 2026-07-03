@@ -97,6 +97,8 @@ Newest-first audit entries `{ id, listingId, action, actorKind, actorId, before,
 ### GET /retailer/audit/recent-price-changes  · `listings.view`
 Recent `variant.edit` rows that changed price: `[{ id, listingId, variantId|null, beforePaise, afterPaise, actorKind, actorId, at }]`.
 
+> CSV exports (full product + variant, and inventory-only) are documented separately in `catalog-export-API.md`.
+
 ---
 
 # C. Variants & groups (the 3 modes)
