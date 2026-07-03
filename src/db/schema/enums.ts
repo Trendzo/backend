@@ -97,6 +97,9 @@ export const changeRequestField = pgEnum('change_request_field', [
   'address',
   'bank_account',
   'gstin',
+  // Retailer-raised request to switch on the offline POS / counter-billing surface.
+  // Approving the change request flips retailer_stores.pos_billing_enabled to true.
+  'pos_billing_activation',
 ]);
 export const dataExportStatus = pgEnum('data_export_status', [
   'pending',

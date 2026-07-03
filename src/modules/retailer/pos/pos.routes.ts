@@ -1,6 +1,7 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
 import { requirePermission } from '@/shared/permissions.js';
+import { requirePosBillingEnabled } from '@/shared/pos/require-pos-billing.js';
 import * as ctrl from './pos.controller.js';
 import {
   CreateSaleBody,
@@ -20,6 +21,9 @@ import {
 
 const retailerPosRoutes: FastifyPluginAsyncZod = async (app) => {
   app.addHook('preHandler', requireAuth('retailer'));
+  // Per-retailer POS opt-in — runs after auth (needs req.auth) and before every route's
+  // permission gate. Blocks all POS endpoints with 403 when the store's POS is disabled.
+  app.addHook('preHandler', requirePosBillingEnabled());
 
   app.get(
     '/lookup',

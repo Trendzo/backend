@@ -63,6 +63,10 @@ export const retailerStores = pgTable(
     convenienceFeePaise: integer('convenience_fee_paise').notNull().default(0),
     payoutCadenceDays: integer('payout_cadence_days').notNull().default(7),
     delegationModeEnabled: boolean('delegation_mode_enabled').notNull().default(false),
+    // Per-retailer opt-in for the offline POS / counter-billing surface. Admin-controlled
+    // (Admin Portal toggle or by approving a retailer activation request). Defaults false —
+    // new stores get no POS until enabled. Existing stores backfilled from POS usage.
+    posBillingEnabled: boolean('pos_billing_enabled').notNull().default(false),
     // US-6.1.2: per-store low-stock threshold. A variant is "low" when stock <= this
     // value (and > 0). Default 5 matches the legacy hardcoded constant.
     lowStockThreshold: integer('low_stock_threshold').notNull().default(5),

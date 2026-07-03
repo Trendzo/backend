@@ -5,6 +5,7 @@ import * as ctrl from './retailer-mgmt.controller.js';
 import {
   IdParam,
   OptionalReasonBody,
+  PosBillingBody,
   ReasonBody,
   RetailerCreateBody,
   RetailerEditBody,
@@ -40,6 +41,22 @@ const adminRetailerMgmtRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (req) =>
       ctrl.editRetailer({
+        auth: getAuth(req),
+        id: req.params.id,
+        body: req.body,
+        requestId: req.id,
+      }),
+  );
+
+  // Per-retailer POS-billing opt-in toggle (admin-controlled, with or without a retailer request).
+  app.post(
+    '/:id/pos-billing',
+    {
+      preHandler: requirePermission('store_management.edit'),
+      schema: { params: IdParam, body: PosBillingBody },
+    },
+    async (req) =>
+      ctrl.setPosBilling({
         auth: getAuth(req),
         id: req.params.id,
         body: req.body,

@@ -29,10 +29,12 @@ export default async function setup() {
 
   // Empty DB → push is a pure CREATE run, no interactive prompts. --force skips the
   // data-loss guard. drizzle.config.ts reads DATABASE_URL from env.
+  // shell:true so Windows resolves `npx` → `npx.cmd` (execFile alone can't). No-op on POSIX.
   execFileSync('npx', ['drizzle-kit', 'push', '--force'], {
     cwd: process.cwd(),
     env: { ...process.env, DATABASE_URL: URL },
     stdio: 'inherit',
+    shell: true,
   });
 
   return async () => {

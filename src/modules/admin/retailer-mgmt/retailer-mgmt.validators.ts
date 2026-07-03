@@ -47,3 +47,8 @@ export const OptionalReasonBody = z.preprocess(
   (v) => (v == null ? {} : v),
   z.object({ reason: z.string().trim().max(500).optional() }),
 );
+
+export const PosBillingBody = z.object({
+  enabled: z.boolean(),
+  reason: z.string().trim().max(500).optional(),
+});

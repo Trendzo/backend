@@ -1,10 +1,15 @@
 /**
  * Admin retailer-management: create, edit, ban, unban (admin acting on behalf).
  */
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
-import { bankAccounts, retailerAccounts, retailerStores } from '@/db/schema/index.js';
+import {
+  bankAccounts,
+  changeRequests,
+  retailerAccounts,
+  retailerStores,
+} from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { hashPassword } from '@/shared/auth/password.js';
@@ -12,9 +17,11 @@ import { IdPrefix, newId } from '@/shared/ids.js';
 import { compact } from '@/shared/object.js';
 import { recordAudit } from '@/shared/audit.js';
 import { notify } from '@/shared/notify.js';
+import { notifyStoreAccounts } from '@/shared/notify-store.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
   OptionalReasonBody,
+  PosBillingBody,
   ReasonBody,
   RetailerCreateBody,
   RetailerEditBody,
@@ -117,7 +124,101 @@ export async function createRetailer(input: {
 export async function getRetailer(input: { id: string }) {
   const retailer = await loadRetailerOr404(input.id);
   const { passwordHash: _ph, ...safe } = retailer;
-  return ok(safe);
+
+  // Surface the store's POS-billing state + whether the retailer has an open activation
+  // request, so the admin retailer-detail page can render the toggle without a second call.
+  let posBillingEnabled = false;
+  let posActivationPending = false;
+  if (retailer.storeId) {
+    const store = await db.query.retailerStores.findFirst({
+      where: eq(retailerStores.id, retailer.storeId),
+    });
+    posBillingEnabled = store?.posBillingEnabled ?? false;
+    const pending = await db.query.changeRequests.findFirst({
+      where: and(
+        eq(changeRequests.storeId, retailer.storeId),
+        eq(changeRequests.field, 'pos_billing_activation'),
+        eq(changeRequests.status, 'pending'),
+      ),
+    });
+    posActivationPending = Boolean(pending);
+  }
+
+  return ok({ ...safe, posBillingEnabled, posActivationPending });
+}
+
+/**
+ * Admin flips a store's POS-billing opt-in on/off. Mirrors `setRetailerFeeOverride`
+ * (admin/fees): resolve retailer→store, update the column, audit, best-effort notify the
+ * store's accounts. Enabling also auto-resolves any open `pos_billing_activation` request so
+ * the change-request queue doesn't keep a now-moot pending item (see plan Phase 2 race).
+ */
+export async function setPosBilling(input: {
+  auth: Auth;
+  id: string;
+  body: z.infer<typeof PosBillingBody>;
+  requestId: string;
+}) {
+  const { auth, body, requestId } = input;
+  const retailer = await loadRetailerOr404(input.id);
+  if (!retailer.storeId) {
+    throw new AppError(409, ErrorCode.InvalidState, 'Retailer has no store yet');
+  }
+  const storeId = retailer.storeId;
+
+  const priorStore = await db.query.retailerStores.findFirst({
+    where: eq(retailerStores.id, storeId),
+  });
+  const priorEnabled = priorStore?.posBillingEnabled ?? false;
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(retailerStores)
+      .set({ posBillingEnabled: body.enabled })
+      .where(eq(retailerStores.id, storeId));
+    if (body.enabled) {
+      // Close any open activation request — enabling directly satisfies it.
+      await tx
+        .update(changeRequests)
+        .set({
+          status: 'approved',
+          decidedAt: new Date(),
+          decidedByAccountId: auth.sub,
+          decisionNote: 'Auto-approved: admin enabled POS billing directly.',
+        })
+        .where(
+          and(
+            eq(changeRequests.storeId, storeId),
+            eq(changeRequests.field, 'pos_billing_activation'),
+            eq(changeRequests.status, 'pending'),
+          ),
+        );
+    }
+  });
+
+  await recordAudit({
+    actor: auth,
+    action: 'store.pos_billing_toggle',
+    resourceKind: 'retailer_store',
+    resourceId: storeId,
+    before: { posBillingEnabled: priorEnabled },
+    after: { posBillingEnabled: body.enabled },
+    note: body.reason ?? null,
+    requestId,
+  });
+
+  // Best-effort retailer notification — failure must not block the admin action.
+  await notifyStoreAccounts({
+    storeId,
+    kind: 'system',
+    title: body.enabled ? 'POS billing enabled' : 'POS billing disabled',
+    body: body.enabled
+      ? 'The offline POS / counter-billing surface is now available in your dashboard.'
+      : `POS billing was turned off for your store.${body.reason ? ` Reason: ${body.reason}` : ''}`,
+    deepLink: body.enabled ? '/retailer/pos' : '/retailer/store/status',
+  }).catch(() => undefined);
+
+  return ok({ storeId, posBillingEnabled: body.enabled });
 }
 
 export async function editRetailer(input: {

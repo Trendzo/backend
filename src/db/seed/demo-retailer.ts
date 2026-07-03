@@ -87,6 +87,8 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
     convenienceFeePaise: paise(0),
     payoutCadenceDays: 7,
     delegationModeEnabled: false,
+    // Demo store uses the POS counter (see POS sales seeded below) — keep it enabled.
+    posBillingEnabled: true,
   });
   console.log(`  → seeded store ${storeId}`);
 

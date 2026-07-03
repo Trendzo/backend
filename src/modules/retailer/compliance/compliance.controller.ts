@@ -13,6 +13,7 @@ import {
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
+import { notifyAllAdmins } from '@/shared/notify-admins.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import {
   BankAccountValueSchema,
@@ -168,6 +169,16 @@ export async function submitChangeRequest(input: {
   const { auth, body } = input;
   const store = await loadStore(auth.sub);
 
+  // POS-billing activation is a feature request, not a profile-field edit — it carries no
+  // GSTIN/bank payload. Reject if POS is already enabled so retailers can't queue a no-op.
+  if (body.field === 'pos_billing_activation' && store.posBillingEnabled) {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      'POS billing is already enabled for this store',
+    );
+  }
+
   // Per-field validation on requestedValue.
   if (body.field === 'gstin') {
     if (!/^[0-9A-Z]{15}$/.test(body.requestedValue.trim().toUpperCase())) {
@@ -212,6 +223,18 @@ export async function submitChangeRequest(input: {
     reason: body.reason,
     evidenceUrl: body.evidenceUrl ?? null,
   });
+
+  // Alert the admin team to a POS activation request (same pattern as new applications).
+  // Best-effort — never block the retailer's submit on the notification.
+  if (body.field === 'pos_billing_activation') {
+    await notifyAllAdmins({
+      kind: 'compliance',
+      title: 'POS billing activation requested',
+      body: `${store.legalName} requested POS/counter billing to be enabled.`,
+      deepLink: '/admin/compliance?tab=change-requests',
+    }).catch(() => undefined);
+  }
+
   return ok({ id, status: 'pending' });
 }
 

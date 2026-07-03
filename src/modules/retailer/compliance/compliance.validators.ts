@@ -15,7 +15,7 @@ export const KycUploadBody = z.object({
 });
 
 export const ChangeRequestBody = z.object({
-  field: z.enum(['legal_name', 'address', 'bank_account', 'gstin']),
+  field: z.enum(['legal_name', 'address', 'bank_account', 'gstin', 'pos_billing_activation']),
   currentValue: z.string().trim().min(1),
   requestedValue: z.string().trim().min(1),
   reason: z.string().trim().min(3).max(500),

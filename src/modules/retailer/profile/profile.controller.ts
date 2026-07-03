@@ -50,6 +50,7 @@ export async function getMe(input: { auth: Auth }) {
           status: store.status,
           platformFeeBp: store.platformFeeBp,
           payoutCadenceDays: store.payoutCadenceDays,
+          posBillingEnabled: store.posBillingEnabled,
           permanentSuspend: store.permanentSuspend,
           suspendReason: store.suspendReason,
           pauseReason: store.pauseReason,

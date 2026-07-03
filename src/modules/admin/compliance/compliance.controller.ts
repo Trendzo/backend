@@ -18,6 +18,7 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { recordAudit } from '@/shared/audit.js';
+import { notifyStoreAccounts } from '@/shared/notify-store.js';
 import {
   BankAccountValueSchema,
   type ChangeRequestDecideBody,
@@ -296,6 +297,12 @@ export async function decideChangeRequest(input: {
           isDefault: true,
           verifiedAt: now,
         });
+      } else if (cr.field === 'pos_billing_activation') {
+        // Approving the request flips the store's POS opt-in on.
+        await tx
+          .update(retailerStores)
+          .set({ posBillingEnabled: true })
+          .where(eq(retailerStores.id, cr.storeId));
       }
     }
 
@@ -320,6 +327,21 @@ export async function decideChangeRequest(input: {
     after: { status: body.decision },
     requestId,
   });
+
+  // Tell the store when a POS activation request is decided (best-effort).
+  if (updated?.field === 'pos_billing_activation') {
+    await notifyStoreAccounts({
+      storeId: updated.storeId,
+      kind: 'system',
+      title: body.decision === 'approved' ? 'POS billing enabled' : 'POS billing request declined',
+      body:
+        body.decision === 'approved'
+          ? 'Your POS/counter billing request was approved — the Register is now in your dashboard.'
+          : `Your POS billing request was declined.${body.note ? ` Note: ${body.note}` : ''}`,
+      deepLink: body.decision === 'approved' ? '/retailer/pos' : '/retailer/store/status',
+    }).catch(() => undefined);
+  }
+
   return ok(updated);
 }
 
