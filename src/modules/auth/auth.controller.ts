@@ -265,3 +265,82 @@ export async function retailerLogin(input: { body: z.infer<typeof LoginBody> }) 
     },
   });
 }
+
+/**
+ * Retailer phone-OTP login (MSG91). Alternative to email+password: the client completes the
+ * OTP flow against MSG91's widget and posts the access token here; we re-verify it and match
+ * the verified phone (canonical E.164) to an existing retailer account. Unlike consumer login,
+ * this NEVER creates an account — retailers must onboard/be approved first. Onboarding does no
+ * phone verification; OTP only happens here at login.
+ */
+export async function retailerOtpLogin(input: { body: z.infer<typeof Msg91VerifyBody> }) {
+  // Retailer widget is a different MSG91 account than consumer, so it needs its own
+  // authkey; don't fall back to the consumer key (that would verify against the wrong
+  // account and fail confusingly). Surface a clear 503 when it's not configured.
+  const retailerAuthKey = env.MSG91_RETAILER_AUTH_KEY;
+  if (!retailerAuthKey) {
+    throw new AppError(
+      503,
+      ErrorCode.InternalError,
+      'Retailer OTP verification is not configured (missing MSG91 credentials).',
+    );
+  }
+  const phone = await verifyMsg91AccessToken(input.body.accessToken, {
+    format: 'e164',
+    authKey: retailerAuthKey,
+  });
+
+  const retailer = await db.query.retailerAccounts.findFirst({
+    where: eq(retailerAccounts.phone, phone),
+  });
+  if (!retailer) {
+    // No account on this phone — surface a pending/rejected application if one exists,
+    // mirroring the email-based gating in retailerLogin.
+    const application = await db.query.retailerApplications.findFirst({
+      where: eq(retailerApplications.ownerPhone, phone),
+      columns: { id: true, status: true },
+      orderBy: desc(retailerApplications.submittedAt),
+    });
+    if (application) {
+      if (application.status === 'rejected') {
+        throw new AppError(
+          403,
+          ErrorCode.ApplicationRejected,
+          'Your application was not approved. Contact support for details.',
+          { applicationId: application.id },
+        );
+      }
+      throw new AppError(
+        403,
+        ErrorCode.ApplicationPending,
+        'Your application is under review. You will be able to log in once ClosetX approves it.',
+        { applicationId: application.id },
+      );
+    }
+    throw new AppError(
+      401,
+      ErrorCode.InvalidCredentials,
+      'No retailer account is linked to this phone number',
+    );
+  }
+  // Terminated retailers may still sign in (read-only), same as password login — every
+  // mutating request is rejected centrally in requireAuth.
+  const token = signAccessToken({
+    sub: retailer.id,
+    kind: 'retailer',
+    subRole: retailer.subRole,
+  });
+  return ok({
+    token,
+    retailer: {
+      id: retailer.id,
+      email: retailer.email,
+      legalName: retailer.legalName,
+      phone: retailer.phone,
+      gstin: retailer.gstin,
+      status: retailer.status,
+      storeId: retailer.storeId,
+      subRole: retailer.subRole,
+    },
+  });
+}

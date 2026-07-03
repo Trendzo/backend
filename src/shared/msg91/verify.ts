@@ -1,5 +1,6 @@
 import { env } from '@/config/env.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
+import { normalizeIntlPhone } from '@/shared/validation/common.js';
 
 /**
  * MSG91 OTP-widget server-side verification.
@@ -12,13 +13,25 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 const VERIFY_URL = 'https://control.msg91.com/api/v5/widget/verifyAccessToken';
 
 /**
- * Verify an MSG91 widget access token and return the verified phone number as the
- * 10-digit national number (MSG91 reports it as `91XXXXXXXXXX` for India).
+ * Verify an MSG91 widget access token and return the verified phone number.
  *
- * @throws AppError 503 when MSG91_AUTH_KEY is unset, 401 when the token is invalid.
+ * `format` selects the shape of the returned number:
+ *  - `'national'` (default) — 10-digit national number (India). Used by consumer login,
+ *    whose stored phones are 10-digit. Unchanged behaviour.
+ *  - `'e164'` — canonical E.164 (`+<country><number>`), preserving the country code. Used
+ *    by retailer login, which serves an international audience.
+ *
+ * `authKey` picks which MSG91 account authkey to verify against — consumer and retailer
+ * widgets live under different accounts. Defaults to the consumer key (`MSG91_AUTH_KEY`).
+ *
+ * @throws AppError 503 when the chosen authkey is unset, 401 when the token is invalid.
  */
-export async function verifyMsg91AccessToken(accessToken: string): Promise<string> {
-  if (!env.MSG91_AUTH_KEY) {
+export async function verifyMsg91AccessToken(
+  accessToken: string,
+  opts?: { format?: 'national' | 'e164'; authKey?: string },
+): Promise<string> {
+  const authKey = opts?.authKey ?? env.MSG91_AUTH_KEY;
+  if (!authKey) {
     throw new AppError(
       503,
       ErrorCode.InternalError,
@@ -30,7 +43,7 @@ export async function verifyMsg91AccessToken(accessToken: string): Promise<strin
   try {
     const res = await fetch(VERIFY_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', authkey: env.MSG91_AUTH_KEY },
+      headers: { 'Content-Type': 'application/json', authkey: authKey },
       body: JSON.stringify({ 'access-token': accessToken }),
     });
     data = (await res.json()) as { type?: string; message?: string };
@@ -42,7 +55,15 @@ export async function verifyMsg91AccessToken(accessToken: string): Promise<strin
     throw new AppError(401, ErrorCode.InvalidCredentials, 'OTP verification failed');
   }
 
-  // MSG91 returns the verified identifier (e.g. "919876543210"); keep the national part.
+  // MSG91 returns the verified identifier with country code (e.g. "919876543210").
+  if (opts?.format === 'e164') {
+    const e164 = normalizeIntlPhone(String(data.message));
+    if (!e164) {
+      throw new AppError(401, ErrorCode.InvalidCredentials, 'OTP verification failed');
+    }
+    return e164;
+  }
+  // Default: keep the 10-digit national part (India — consumer login).
   const national = String(data.message).replace(/\D/g, '').slice(-10);
   if (national.length !== 10) {
     throw new AppError(401, ErrorCode.InvalidCredentials, 'OTP verification failed');

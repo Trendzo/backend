@@ -141,6 +141,11 @@ export const retailerAccounts = pgTable(
   },
   (t) => ({
     emailIdx: uniqueIndex('retailer_accounts_email_idx').on(t.email),
+    // 1:1 phone→account so phone-OTP login resolves exactly one account. Partial: staff/access
+    // accounts store phone='' (not OTP-capable) and must not collide with each other.
+    phoneIdx: uniqueIndex('retailer_accounts_phone_idx')
+      .on(t.phone)
+      .where(sql`${t.phone} <> ''`),
   }),
 );
 

@@ -23,9 +23,12 @@ const EnvSchema = z.object({
   JWT_CONSUMER_ACCESS_EXPIRES_IN: z.string().default('30d'),
 
   // MSG91 — server-side verification of OTP-widget access tokens. Optional at boot
-  // so dev environments without SMS work, but the consumer OTP login endpoint will
-  // 503 until set (same pattern as Cloudinary below).
-  MSG91_AUTH_KEY: z.string().min(10).optional(),
+  // so dev environments without SMS work, but the OTP login endpoints will 503 until
+  // set (same pattern as Cloudinary below). Consumer and retailer widgets live under
+  // SEPARATE MSG91 accounts, so each has its own account authkey — a token issued by
+  // one account only verifies against that account's authkey.
+  MSG91_AUTH_KEY: z.string().min(10).optional(), // consumer widget's account
+  MSG91_RETAILER_AUTH_KEY: z.string().min(10).optional(), // retailer widget's account
 
   TCS_RATE_BP: z.coerce.number().int().nonnegative().default(100),
 

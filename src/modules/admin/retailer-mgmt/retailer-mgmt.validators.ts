@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EmailSchema, PasswordSchema } from '@/shared/validation/common.js';
+import { EmailSchema, IntlPhoneSchema, PasswordSchema } from '@/shared/validation/common.js';
 
 const HoursSchema = z
   .record(z.string(), z.array(z.object({ open: z.string(), close: z.string() })))
@@ -10,7 +10,7 @@ export const IdParam = z.object({ id: z.string() });
 export const RetailerCreateBody = z.object({
   legalName: z.string().trim().min(1).max(200),
   ownerEmail: EmailSchema,
-  ownerPhone: z.string().trim().min(6).max(20),
+  ownerPhone: IntlPhoneSchema,
   password: PasswordSchema,
   gstin: z.string().trim().min(1),
   pan: z.string().trim().optional(),

@@ -2,8 +2,8 @@ import { z } from 'zod';
 import {
   EmailSchema,
   GstinSchema,
+  IntlPhoneSchema,
   PasswordSchema,
-  PhoneSchema,
 } from '@/shared/validation/common.js';
 
 export const LoginBody = z.object({
@@ -15,7 +15,7 @@ export const SignupBody = z.object({
   email: EmailSchema,
   password: PasswordSchema,
   legalName: z.string().trim().min(2).max(120),
-  phone: PhoneSchema,
+  phone: IntlPhoneSchema,
   gstin: GstinSchema,
 });
 

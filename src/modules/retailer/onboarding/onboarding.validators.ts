@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { GstinSchema, EmailSchema, PhoneSchema } from '@/shared/validation/common.js';
+import { GstinSchema, EmailSchema, IntlPhoneSchema } from '@/shared/validation/common.js';
 
 export const IdParam = z.object({ id: z.string() });
 
@@ -23,7 +23,7 @@ export const ApplicationContentSchema = z.object({
   pan: z.string().trim().toUpperCase().length(10).optional(),
   ownerName: z.string().trim().min(2).max(120),
   ownerEmail: EmailSchema,
-  ownerPhone: PhoneSchema,
+  ownerPhone: IntlPhoneSchema,
   addressLine: z.string().trim().min(5).max(300),
   pincode: z.string().trim().regex(/^\d{6}$/, 'Pincode must be 6 digits'),
   stateCode: z.string().trim().regex(/^\d{2}$/, 'State code must be 2 digits'),
@@ -56,7 +56,7 @@ export const StatusQuery = z.object({ email: EmailSchema });
 
 export const CheckIdentityQuery = z.object({
   email: EmailSchema.optional(),
-  phone: PhoneSchema.optional(),
+  phone: IntlPhoneSchema.optional(),
 });
 
 export const MessagesQuery = z.object({ email: EmailSchema });
