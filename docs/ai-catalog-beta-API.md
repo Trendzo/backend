@@ -29,7 +29,8 @@ selects it.
 
 - `mode`: `without_model` | `with_model`
 - submission `status`: `submitted` | `processing` | `ready_for_review` | `accepted` | `rejected` | `regenerating` | `failed`
-- `gender`: `her` | `him` | `unisex`
+- `gender` (product): `her` | `him` | `unisex`
+- `modelGender` (on-model generation): `him` | `her`
 - `listingPolicy`: `return` | `replace` | `final_sale`
 - listing `status`: `draft` | `active` | `retired` | `taken_down` (BETA publish creates `draft`)
 - view names — `without_model`: `front`, `back`, `three-quarter`, `flat-lay`, `on-hanger`;
@@ -111,10 +112,18 @@ Generate the mockup set (on Vertex) and persist a submission. `application/json`
 |---|---|---|---|
 | `mode` | enum | yes | `without_model` or `with_model` |
 | `apparelImageUrls` | string[] (1–5) | yes | front photo URL(s) |
-| `apparelBackImageUrl` | string | no | real BACK photo — back views render from it (when no design) |
-| `designImageUrl` | string | no | graphic printed onto the front first |
+| `apparelBackImageUrl` | string (url) | no | real BACK photo — back views render from it (when no design) |
+| `designImageUrl` | string (url) | no | graphic printed onto the front first |
+| `patternCloseupUrl` | string (url) | no | close-up of the fabric pattern / texture (detail reference) |
+| `logoCloseupUrl` | string (url) | no | close-up of the logo / monogram (detail reference) |
+| `tagLabelUrl` | string (url) | no | photo of the brand tag / label (detail reference) |
+| `modelGender` | enum | no | `him` or `her` — model gender, used only when `mode = with_model` |
 | `prompt` | string (≤800) | no | freeform instruction |
 | `only` | string[] | no | limit to these view names (cheaper) |
+
+Notes on the optional inputs:
+- **Detail close-ups** (`patternCloseupUrl`, `logoCloseupUrl`, `tagLabelUrl`) — upload them like any other image via `POST /uploads` and pass the URLs. They are fed to the model as **extra reference images** (to reproduce the fabric pattern, logo, and brand tag faithfully) and recorded on the submission's `referenceImageUrls`/`rawPhotos`. They are NOT emitted as separate images in `outputUrls`.
+- **`modelGender`** — only affects `with_model` generation (adds "the model is a man/woman" to the prompt). Ignored for `without_model`. If omitted, the model is left unspecified.
 
 `200 → data`:
 ```json
@@ -171,7 +180,7 @@ The **"select mockups"** step = `selectedImageUrls`. Product is created `draft` 
 
 ## POST /retailer/ai-catalog-beta/mockups
 
-Stateless mockups — same generation as a submission, but **no DB row, no product**. Same body as `submissions`.
+Stateless mockups — same generation as a submission, but **no DB row, no product**. Same body as `submissions` (including `apparelBackImageUrl`, `designImageUrl`, the detail close-ups `patternCloseupUrl` / `logoCloseupUrl` / `tagLabelUrl`, and `modelGender`).
 
 `200 → data`:
 ```json

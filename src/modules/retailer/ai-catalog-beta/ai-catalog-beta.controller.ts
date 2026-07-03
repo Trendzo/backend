@@ -66,6 +66,32 @@ async function generateMockupViews(body: z.infer<typeof SubmissionBody>): Promis
 }> {
   const basePrompt = body.prompt?.trim() ?? '';
 
+  // Optional close-up references (fabric pattern, logo, brand tag). Appended to
+  // every view's reference set so the model reproduces those exact details.
+  const detailRefs: string[] = [];
+  const detailWhat: string[] = [];
+  if (body.patternCloseupUrl) {
+    detailRefs.push(body.patternCloseupUrl);
+    detailWhat.push('fabric pattern/texture');
+  }
+  if (body.logoCloseupUrl) {
+    detailRefs.push(body.logoCloseupUrl);
+    detailWhat.push('logo/monogram');
+  }
+  if (body.tagLabelUrl) {
+    detailRefs.push(body.tagLabelUrl);
+    detailWhat.push('brand tag/label');
+  }
+  const detailNote = detailWhat.length
+    ? ` The additional close-up reference image(s) show the garment's ${detailWhat.join(', ')} — reproduce those details faithfully; the FIRST reference is the whole garment.`
+    : '';
+
+  // Model gender note — only meaningful for on-model shots.
+  const modelNote =
+    body.mode === 'with_model' && body.modelGender
+      ? ` The model is a ${body.modelGender === 'him' ? 'man' : 'woman'}.`
+      : '';
+
   // Optional design-print phase: composite the design onto the plain apparel,
   // then shoot every angle off that printed product for consistency.
   let printedUrl: string | null = null;
@@ -102,10 +128,11 @@ async function generateMockupViews(body: z.infer<typeof SubmissionBody>): Promis
     angles.map(async (a) => {
       const isBackView = a.name === 'back' || a.name === 'model-back';
       const useBack = isBackView && !!body.apparelBackImageUrl && !body.designImageUrl;
+      const mainRef = useBack ? [body.apparelBackImageUrl as string] : baseRefs;
       const url = await genAndUpload({
-        prompt: basePrompt || 'Polished, listing-ready product photograph.',
+        prompt: `${basePrompt || 'Polished, listing-ready product photograph.'}${detailNote}${modelNote}`.trim(),
         mode: body.mode,
-        referenceImageUrls: useBack ? [body.apparelBackImageUrl as string] : baseRefs,
+        referenceImageUrls: [...mainRef, ...detailRefs],
         posePreferences: [useBack ? backPose(a.name) : a.pose],
       });
       return { name: a.name, url };
@@ -147,6 +174,9 @@ export async function createSubmission(input: {
     ...body.apparelImageUrls,
     ...(body.apparelBackImageUrl ? [body.apparelBackImageUrl] : []),
     ...(body.designImageUrl ? [body.designImageUrl] : []),
+    ...(body.patternCloseupUrl ? [body.patternCloseupUrl] : []),
+    ...(body.logoCloseupUrl ? [body.logoCloseupUrl] : []),
+    ...(body.tagLabelUrl ? [body.tagLabelUrl] : []),
   ];
   const basePrompt = body.prompt?.trim() ?? '';
 

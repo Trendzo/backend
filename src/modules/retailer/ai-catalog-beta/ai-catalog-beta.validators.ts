@@ -23,6 +23,13 @@ export const SubmissionBody = z.object({
   // hallucinating the back from the front image.
   apparelBackImageUrl: z.string().url().optional(),
   designImageUrl: z.string().url().optional(),
+  // Optional close-up references — used to lift fidelity of the generated
+  // mockups (fed to the model as extra reference images), not output as-is.
+  patternCloseupUrl: z.string().url().optional(), // fabric pattern / texture
+  logoCloseupUrl: z.string().url().optional(), // logo / monogram
+  tagLabelUrl: z.string().url().optional(), // brand tag / label
+  // Model gender for on-model shots. Only used when mode = 'with_model'.
+  modelGender: z.enum(['her', 'him']).optional(),
   only: z.array(z.string()).optional(),
 });
 
