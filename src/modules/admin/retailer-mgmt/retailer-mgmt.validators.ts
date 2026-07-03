@@ -33,10 +33,30 @@ export const RetailerCreateBody = z.object({
     .optional(),
 });
 
+/**
+ * Phone edit — normalise to E.164 the same way migration 0038 did (bare 10-digit
+ * Indian → `+91…`, otherwise keep the supplied country code). Keeps admin edits
+ * consistent with the `retailer_accounts_phone_idx` unique index.
+ */
+const EditPhoneSchema = z
+  .string()
+  .trim()
+  .transform((raw, ctx) => {
+    const digits = raw.replace(/\D/g, '');
+    const e164 = digits.length === 10 ? `+91${digits}` : `+${digits}`;
+    if (!/^\+[1-9]\d{7,14}$/.test(e164)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid phone number' });
+      return z.NEVER;
+    }
+    return e164;
+  });
+
 export const RetailerEditBody = z
   .object({
     legalName: z.string().trim().min(1).max(200).optional(),
-    phone: z.string().trim().min(6).max(20).optional(),
+    phone: EditPhoneSchema.optional(),
+    email: EmailSchema.optional(),
+    subRole: z.enum(['owner', 'manager', 'staff']).optional(),
     gstin: z.string().trim().min(1).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });

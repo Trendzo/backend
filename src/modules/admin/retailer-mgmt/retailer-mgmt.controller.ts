@@ -1,7 +1,7 @@
 /**
  * Admin retailer-management: create, edit, ban, unban (admin acting on behalf).
  */
-import { and, eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
@@ -67,6 +67,9 @@ export async function createRetailer(input: {
       lat: body.store.lat,
       lng: body.store.lng,
       openingHours: body.store.openingHours ?? null,
+      // Seed the store's own contact from the single onboarding contact so it's an
+      // independent, separately-editable copy (not left NULL / coupled to the owner).
+      contactPhone: body.ownerPhone,
       status: 'active',
       platformFeeBp: body.store.platformFeeBp,
       payoutCadenceDays: body.store.payoutCadenceDays,
@@ -228,9 +231,28 @@ export async function editRetailer(input: {
   requestId: string;
 }) {
   const retailer = await loadRetailerOr404(input.id);
+
+  // Email + phone are unique per account (phone via the `retailer_accounts_phone_idx`
+  // index added in 0038). Guard here so a collision returns a clean 409 instead of a
+  // raw DB unique-violation 500. `body.phone` is already E.164-normalised by the validator.
+  if (input.body.email && input.body.email !== retailer.email) {
+    const clash = await db.query.retailerAccounts.findFirst({
+      where: and(eq(retailerAccounts.email, input.body.email), ne(retailerAccounts.id, retailer.id)),
+    });
+    if (clash) throw new AppError(409, ErrorCode.InvalidState, 'Another account already uses this email');
+  }
+  if (input.body.phone && input.body.phone !== retailer.phone) {
+    const clash = await db.query.retailerAccounts.findFirst({
+      where: and(eq(retailerAccounts.phone, input.body.phone), ne(retailerAccounts.id, retailer.id)),
+    });
+    if (clash) throw new AppError(409, ErrorCode.InvalidState, 'Another account already uses this phone');
+  }
+
   const before = {
     legalName: retailer.legalName,
     phone: retailer.phone,
+    email: retailer.email,
+    subRole: retailer.subRole,
     gstin: retailer.gstin,
   };
   const [updated] = await db
@@ -282,18 +304,18 @@ export async function banRetailer(input: {
         suspendedByAccountId: input.auth.sub,
       })
       .where(eq(retailerAccounts.id, retailer.id));
-    if (retailer.storeId) {
-      await tx
-        .update(retailerStores)
-        .set({
-          status: 'suspended',
-          permanentSuspend: true,
-          suspendReason: input.body.reason,
-          suspendedAt: now,
-          suspendedByAccountId: input.auth.sub,
-        })
-        .where(eq(retailerStores.id, retailer.storeId));
-    }
+    // Cascade to EVERY store this retailer owns (a retailer can own multiple),
+    // matching them by the legalEntityId back-reference. Permanent kill → 'terminated'.
+    await tx
+      .update(retailerStores)
+      .set({
+        status: 'terminated',
+        permanentSuspend: true,
+        suspendReason: input.body.reason,
+        suspendedAt: now,
+        suspendedByAccountId: input.auth.sub,
+      })
+      .where(eq(retailerStores.legalEntityId, retailer.id));
   });
   await recordAudit({
     actor: input.auth,

@@ -274,6 +274,13 @@
 			"when": 1783094845580,
 			"tag": "0038_retailer_phone_e164",
 			"breakpoints": true
+		},
+		{
+			"idx": 39,
+			"version": "7",
+			"when": 1783200000000,
+			"tag": "0039_backfill_store_contact_phone",
+			"breakpoints": true
 		}
 	]
 }

@@ -24,6 +24,18 @@ export const ChangeRequestDecideBody = z.object({
   note: z.string().trim().max(500).optional(),
 });
 
+/**
+ * Admin files a change request on behalf of a store (the "with change request"
+ * edit path). `currentValue` is computed server-side from the store, so callers
+ * only supply the new value + reason. Only the verified store fields are eligible
+ * (account fields have no change-request enum and are edited directly).
+ */
+export const AdminChangeRequestBody = z.object({
+  field: z.enum(['legal_name', 'address', 'gstin', 'bank_account']),
+  requestedValue: z.string().trim().min(1),
+  reason: z.string().trim().min(3).max(500),
+});
+
 export const PolicyEnforcementQuery = z.object({ storeId: z.string().optional() });
 
 export const PolicyEnforcementBody = z.object({

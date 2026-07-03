@@ -3,6 +3,7 @@ import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
 import { requirePermission } from '@/shared/permissions.js';
 import * as ctrl from './compliance.controller.js';
 import {
+  AdminChangeRequestBody,
   ChangeRequestDecideBody,
   ChangeRequestStatusQuery,
   DataExportProcessBody,
@@ -75,6 +76,23 @@ const adminComplianceRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) =>
       ctrl.decideChangeRequest({
         id: req.params.id,
+        auth: getAuth(req),
+        body: req.body,
+        requestId: req.id,
+      }),
+  );
+
+  // Admin files a change request on behalf of a store (the "with change request"
+  // edit path from store-detail). Store-scoped since change_requests.storeId.
+  app.post(
+    '/compliance/stores/:storeId/change-requests',
+    {
+      preHandler: requirePermission('store_management.edit'),
+      schema: { params: StoreIdParam, body: AdminChangeRequestBody },
+    },
+    async (req) =>
+      ctrl.createChangeRequest({
+        storeId: req.params.storeId,
         auth: getAuth(req),
         body: req.body,
         requestId: req.id,

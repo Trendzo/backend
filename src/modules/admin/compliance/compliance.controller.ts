@@ -20,6 +20,7 @@ import { IdPrefix, newId } from '@/shared/ids.js';
 import { recordAudit } from '@/shared/audit.js';
 import { notifyStoreAccounts } from '@/shared/notify-store.js';
 import {
+  type AdminChangeRequestBody,
   BankAccountValueSchema,
   type ChangeRequestDecideBody,
   type ChangeRequestStatusQuery,
@@ -235,6 +236,92 @@ export async function getChangeRequest(id: string) {
     ...row,
     storeName: row.store?.legalName ?? null,
   });
+}
+
+/**
+ * Admin files a change request on behalf of a store (the "with change request"
+ * edit path). Mirrors the retailer-side submit (per-field validation, one-pending-
+ * per-field guard) but derives `currentValue` from the store row. The resulting
+ * pending row flows through the normal `decideChangeRequest` approve→apply path.
+ */
+export async function createChangeRequest(input: {
+  storeId: string;
+  auth: Auth;
+  body: z.infer<typeof AdminChangeRequestBody>;
+  requestId: string;
+}) {
+  const { storeId, auth, body, requestId } = input;
+
+  const store = await db.query.retailerStores.findFirst({
+    where: eq(retailerStores.id, storeId),
+  });
+  if (!store) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
+
+  // Per-field validation on requestedValue (mirrors retailer submitChangeRequest).
+  if (body.field === 'gstin') {
+    if (!/^[0-9A-Z]{15}$/.test(body.requestedValue.trim().toUpperCase())) {
+      throw AppError.validation('GSTIN must be 15 alphanumeric characters');
+    }
+  } else if (body.field === 'bank_account') {
+    try {
+      BankAccountValueSchema.parse(JSON.parse(body.requestedValue));
+    } catch {
+      throw AppError.validation(
+        'Bank account requestedValue must be JSON with accountNumber, ifsc, legalName',
+      );
+    }
+  }
+
+  // One pending request per field at a time.
+  const existing = await db.query.changeRequests.findFirst({
+    where: and(
+      eq(changeRequests.storeId, storeId),
+      eq(changeRequests.field, body.field),
+      eq(changeRequests.status, 'pending'),
+    ),
+  });
+  if (existing) {
+    throw new AppError(409, ErrorCode.InvalidState, 'A pending request for this field already exists');
+  }
+
+  // Snapshot the current value so the change-request card shows a from→to diff.
+  let currentValue: string;
+  if (body.field === 'legal_name') currentValue = store.legalName;
+  else if (body.field === 'address') currentValue = store.address;
+  else if (body.field === 'gstin') currentValue = store.gstin;
+  else {
+    const bank = await db.query.bankAccounts.findFirst({
+      where: and(eq(bankAccounts.storeId, storeId), eq(bankAccounts.isDefault, true)),
+    });
+    currentValue = bank
+      ? JSON.stringify({ accountNumber: bank.accountNumber, ifsc: bank.ifsc, legalName: bank.legalName })
+      : '—';
+  }
+
+  const normalisedRequested =
+    body.field === 'gstin' ? body.requestedValue.trim().toUpperCase() : body.requestedValue;
+
+  const id = newId('cr');
+  await db.insert(changeRequests).values({
+    id,
+    storeId,
+    field: body.field,
+    currentValue,
+    requestedValue: normalisedRequested,
+    reason: body.reason,
+  });
+
+  await recordAudit({
+    actor: auth,
+    action: 'change_request.admin_created',
+    resourceKind: 'change_request',
+    resourceId: id,
+    after: { field: body.field, requestedValue: normalisedRequested },
+    impersonatedStoreId: storeId,
+    requestId,
+  });
+
+  return ok({ id, status: 'pending' as const });
 }
 
 export async function decideChangeRequest(input: {

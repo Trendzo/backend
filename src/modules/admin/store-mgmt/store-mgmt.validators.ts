@@ -23,6 +23,8 @@ export const StoreCreateBody = z.object({
 export const StoreEditBody = z
   .object({
     storeName: z.string().trim().min(1).max(200).optional(),
+    // Admin override of the KYC-verified GSTIN (the "without change request" path).
+    gstin: z.string().trim().toUpperCase().length(15, 'GSTIN must be exactly 15 characters').optional(),
     address: z.string().trim().min(1).optional(),
     stateCode: z.string().trim().min(2).max(3).optional(),
     lat: z.number().optional(),

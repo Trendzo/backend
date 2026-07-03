@@ -121,6 +121,7 @@ export async function editStore(input: {
   const store = await loadStoreOr404(input.id);
   const body = input.body as {
     storeName?: string;
+    gstin?: string;
     address?: string;
     stateCode?: string;
     lat?: number;
@@ -134,6 +135,7 @@ export async function editStore(input: {
   };
   const patch: Record<string, unknown> = {};
   if (body.storeName !== undefined) patch.legalName = body.storeName;
+  if (body.gstin !== undefined) patch.gstin = body.gstin;
   if (body.address !== undefined) patch.address = body.address;
   if (body.stateCode !== undefined) patch.stateCode = body.stateCode;
   if (body.lat !== undefined) patch.lat = body.lat;
@@ -156,6 +158,7 @@ export async function editStore(input: {
     resourceId: store.id,
     before: {
       legalName: store.legalName,
+      gstin: store.gstin,
       address: store.address,
       platformFeeBp: store.platformFeeBp,
       payoutCadenceDays: store.payoutCadenceDays,
@@ -256,13 +259,15 @@ async function applySuspend(
   permanent: boolean,
 ): Promise<typeof retailerStores.$inferSelect> {
   const store = await loadStoreOr404(storeId);
-  if (store.status === 'suspended' && store.permanentSuspend === permanent) {
+  // Permanent kill → 'terminated' (consistent with terminateRetailer); temporary → 'suspended'.
+  const targetStatus = permanent ? 'terminated' : 'suspended';
+  if (store.status === targetStatus && store.permanentSuspend === permanent) {
     throw new AppError(409, ErrorCode.InvalidState, 'Store already in target state');
   }
   const [updated] = await db
     .update(retailerStores)
     .set({
-      status: 'suspended',
+      status: targetStatus,
       permanentSuspend: permanent,
       suspendReason: reason,
       suspendedAt: new Date(),

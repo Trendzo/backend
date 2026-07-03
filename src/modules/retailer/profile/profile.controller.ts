@@ -89,7 +89,8 @@ export async function createStore(input: { auth: Auth; body: z.infer<typeof Crea
         lat: body.lat,
         lng: body.lng,
         ...(body.openingHours !== undefined && { openingHours: body.openingHours }),
-        ...(body.contactPhone !== undefined && { contactPhone: body.contactPhone }),
+        // Independent store contact — default to the owner's phone when not supplied.
+        contactPhone: body.contactPhone ?? retailer.phone,
         ...(body.managerName !== undefined && { managerName: body.managerName }),
         status: 'onboarding',
         platformFeeBp: 0,

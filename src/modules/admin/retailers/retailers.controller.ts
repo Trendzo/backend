@@ -204,18 +204,18 @@ export async function terminateRetailer(input: {
         suspendedByAccountId: input.auth.sub,
       })
       .where(eq(retailerAccounts.id, retailer.id));
-    if (retailer.storeId) {
-      await tx
-        .update(retailerStores)
-        .set({
-          status: 'terminated',
-          permanentSuspend: true,
-          suspendReason: input.body.reason,
-          suspendedAt: now,
-          suspendedByAccountId: input.auth.sub,
-        })
-        .where(eq(retailerStores.id, retailer.storeId));
-    }
+    // Cascade to EVERY store this retailer owns (matched by legalEntityId), not
+    // just the single linked one — terminating the account kills all its stores.
+    await tx
+      .update(retailerStores)
+      .set({
+        status: 'terminated',
+        permanentSuspend: true,
+        suspendReason: input.body.reason,
+        suspendedAt: now,
+        suspendedByAccountId: input.auth.sub,
+      })
+      .where(eq(retailerStores.legalEntityId, retailer.id));
   });
   await recordAudit({
     actor: input.auth,

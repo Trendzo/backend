@@ -232,7 +232,9 @@ export async function approveApplication(input: {
       (application.hours as Record<string, { open: string; close: string }[]>) ?? null,
     status: 'onboarding',
     platformFeeBp: body.platformFeeBp,
-    ...(application.contactPhone ? { contactPhone: application.contactPhone } : {}),
+    // Store's own contact — use the application's dedicated store contact if given,
+    // else fall back to the owner phone so the store carries an independent copy.
+    contactPhone: application.contactPhone ?? application.ownerPhone,
     ...(application.managerName ? { managerName: application.managerName } : {}),
   });
   log.info('approve: retailerStores inserted');
