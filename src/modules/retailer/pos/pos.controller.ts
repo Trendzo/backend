@@ -102,7 +102,14 @@ export async function lookup(input: { auth: Auth; query: z.infer<typeof LookupQu
 }
 
 type LookupVariant = typeof variants.$inferSelect & {
-  listing: { id: string; name: string; status: string; hsn: string | null; brand: { name: string } | null };
+  listing: {
+    id: string;
+    name: string;
+    status: string;
+    hsn: string | null;
+    galleryUrls: string[] | null;
+    brand: { name: string } | null;
+  };
 };
 
 function shapeLookupRow(v: LookupVariant) {
@@ -118,7 +125,9 @@ function shapeLookupRow(v: LookupVariant) {
     pricePaise: v.pricePaise,
     compareAtPaise: v.compareAtPrice ?? null,
     availableQty: v.stock - v.reserved,
-    imageUrl: v.imageUrls?.[0] ?? null,
+    // Prefer the variant's own image; fall back to the listing gallery so products whose
+    // variants have no dedicated photo still show one.
+    imageUrl: v.imageUrls?.[0] ?? v.listing.galleryUrls?.[0] ?? null,
   };
 }
 
