@@ -41,6 +41,20 @@ export const ProductsQuery = z.object({
   offset: z.coerce.number().int().nonnegative().default(0),
 });
 
+/**
+ * Faceted-count query for browse. Every param is an optional scope; the endpoint
+ * returns product counts per gender and per category. A facet's own dimension is
+ * excluded from its own counts (e.g. passing `categoryId` still returns every
+ * gender's count within that category), which is what lets the UI drive nav in
+ * both directions: gender→category and category→gender.
+ */
+export const FacetsQuery = z.object({
+  gender: GenderEnum.optional(),
+  categoryId: z.string().optional(),
+  storeId: z.string().optional(),
+  search: z.string().trim().min(1).max(120).optional(),
+});
+
 export const CollectionsQuery = z.object({
   kind: CollectionKindEnum.optional(),
   gender: GenderEnum.optional(),

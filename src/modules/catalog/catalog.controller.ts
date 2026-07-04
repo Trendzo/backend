@@ -18,6 +18,7 @@ import type {
   BrandsQuery,
   CategoriesQuery,
   CollectionsQuery,
+  FacetsQuery,
   ProductReviewsQuery,
   ProductsQuery,
   SizeScalesQuery,
@@ -249,6 +250,75 @@ export async function listProductReviews(
       author: r.consumer.name?.trim().split(/\s+/)[0] ?? 'ClosetX Shopper',
     })),
   );
+}
+
+/**
+ * Faceted product counts for browse nav. Returns, over active listings, the count
+ * per gender and per category. Both facets honour the OTHER active filters but
+ * exclude their own dimension — the standard faceted-search rule — so the same
+ * endpoint answers "which genders exist in this category" (pass `categoryId`, read
+ * `genders`) AND "which categories exist for this gender" (pass `gender`, read
+ * `categories`). Unisex listings count toward both her and him, matching
+ * `listProducts`.
+ *
+ * Counts are over active listings only. Unlike the browse grid, they do NOT drop
+ * listings whose variants are all sold-out/inactive (that needs the variant+group
+ * shaping and is too costly for a count) — a facet may read a hair high. This
+ * matches the existing admin category-count convention.
+ */
+export async function listFacets(input: { query: z.infer<typeof FacetsQuery> }) {
+  const { query } = input;
+
+  // Base scope shared by every facet and the total.
+  const base: SQL[] = [eq(productListings.status, 'active' as const)];
+  if (query.storeId) base.push(eq(productListings.storeId, query.storeId));
+  if (query.search) base.push(ilike(productListings.name, `%${query.search}%`));
+
+  const categoryFilter = query.categoryId
+    ? eq(productListings.categoryId, query.categoryId)
+    : undefined;
+  const genderFilter = query.gender
+    ? or(eq(productListings.gender, query.gender), eq(productListings.gender, 'unisex'))!
+    : undefined;
+
+  // Gender facet: base + category scope, but NOT the gender filter (its own axis).
+  const genderRows = await db
+    .select({ gender: productListings.gender, count: sql<number>`count(*)::int` })
+    .from(productListings)
+    .where(and(...base, ...(categoryFilter ? [categoryFilter] : [])))
+    .groupBy(productListings.gender);
+
+  // Category facet: base + gender scope, but NOT the category filter (its own axis).
+  const categoryRows = await db
+    .select({
+      categoryId: productListings.categoryId,
+      label: categories.label,
+      slug: categories.slug,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(productListings)
+    .innerJoin(categories, eq(categories.id, productListings.categoryId))
+    .where(and(...base, ...(genderFilter ? [genderFilter] : [])))
+    .groupBy(productListings.categoryId, categories.label, categories.slug)
+    .orderBy(asc(categories.sortOrder), asc(categories.label));
+
+  // Total: every active filter applied together — the "N results" header count.
+  const totalRow = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(productListings)
+    .where(
+      and(
+        ...base,
+        ...(categoryFilter ? [categoryFilter] : []),
+        ...(genderFilter ? [genderFilter] : []),
+      ),
+    );
+
+  return ok({
+    total: totalRow[0]?.count ?? 0,
+    genders: genderRows,
+    categories: categoryRows,
+  });
 }
 
 export async function listCollections(input: { query: z.infer<typeof CollectionsQuery> }) {

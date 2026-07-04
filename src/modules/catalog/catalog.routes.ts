@@ -4,6 +4,7 @@ import {
   BrandsQuery,
   CategoriesQuery,
   CollectionsQuery,
+  FacetsQuery,
   IdParam,
   ProductReviewsQuery,
   ProductsQuery,
@@ -32,6 +33,12 @@ const catalogRoutes: FastifyPluginAsyncZod = async (app) => {
     '/brands',
     { schema: { querystring: BrandsQuery } },
     async (req) => ctrl.listBrands({ query: req.query }),
+  );
+
+  app.get(
+    '/facets',
+    { schema: { querystring: FacetsQuery } },
+    async (req) => ctrl.listFacets({ query: req.query }),
   );
 
   app.get(
