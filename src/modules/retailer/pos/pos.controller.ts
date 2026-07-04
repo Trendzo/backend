@@ -168,7 +168,11 @@ export async function pushScan(input: { auth: Auth; body: z.infer<typeof ScanBod
   // Re-shape from the variant id so price/stock are authoritative at push time.
   const row = await resolveVariantRow(storeId, `${VARIANT_QR_PREFIX}${input.body.variantId}`);
   if (!row) throw new AppError(404, ErrorCode.NotFound, 'Variant not found');
-  const delivered = scanBus.publish(storeId, row, input.body.target);
+  // One SSE frame per unit — the web cart's addRow increments qty per frame.
+  let delivered = 0;
+  for (let i = 0; i < input.body.qty; i++) {
+    delivered = scanBus.publish(storeId, row, input.body.target);
+  }
   return ok({ delivered });
 }
 

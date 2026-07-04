@@ -47,25 +47,35 @@ export function unregister(storeId: string, sessionId: string): void {
   if (sessions.size === 0) byStore.delete(storeId);
 }
 
-/** List the store's connected Register sessions (for the app's picker). */
+/**
+ * List the store's connected devices for the app's picker. Sessions are keyed per-connection
+ * (one SSE = one session), but many tabs on the same browser share one device `label`, so we
+ * collapse to one entry per label. The picker's target is therefore the device label.
+ */
 export function listByStore(storeId: string): RegisterInfo[] {
   const sessions = byStore.get(storeId);
   if (!sessions) return [];
-  return [...sessions.values()]
-    .map((s) => ({ id: s.id, label: s.label, connectedAt: s.connectedAt }))
-    .sort((a, b) => a.connectedAt - b.connectedAt);
+  const byLabel = new Map<string, RegisterInfo>();
+  for (const s of sessions.values()) {
+    const existing = byLabel.get(s.label);
+    if (!existing || s.connectedAt < existing.connectedAt) {
+      byLabel.set(s.label, { id: s.label, label: s.label, connectedAt: s.connectedAt });
+    }
+  }
+  return [...byLabel.values()].sort((a, b) => a.connectedAt - b.connectedAt);
 }
 
 /**
- * Deliver a scanned row to the target session(s) of a store.
- * `target` is a specific session id or {@link TARGET_ALL}. Returns how many sessions received it.
+ * Deliver a scanned row to a store's target device(s). `target` is a device label or
+ * {@link TARGET_ALL}; every connection (tab) with that label receives it. Returns the number of
+ * connections that received it.
  */
 export function publish(storeId: string, row: unknown, target: string): number {
   const sessions = byStore.get(storeId);
   if (!sessions) return 0;
   let delivered = 0;
   for (const session of sessions.values()) {
-    if (target !== TARGET_ALL && session.id !== target) continue;
+    if (target !== TARGET_ALL && session.label !== target) continue;
     try {
       session.write(row);
       delivered++;

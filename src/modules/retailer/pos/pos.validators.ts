@@ -15,6 +15,7 @@ export const ResolveScanQuery = z.object({
 export const ScanBody = z.object({
   variantId: z.string().min(1),
   target: z.string().min(1).max(120),
+  qty: z.number().int().min(1).max(99).default(1),
 });
 
 const LineSchema = z.object({
