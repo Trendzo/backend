@@ -14,7 +14,9 @@ import {
   PrintSaleBody,
   QuoteBody,
   ReceiptQuery,
+  ResolveScanQuery,
   ReturnSaleBody,
+  ScanBody,
   SummaryQuery,
   VoidSaleBody,
 } from './pos.validators.js';
@@ -35,6 +37,25 @@ const retailerPosRoutes: FastifyPluginAsyncZod = async (app) => {
     '/quote',
     { preHandler: requirePermission('pos.sell'), schema: { body: QuoteBody } },
     async (req) => ctrl.quote({ auth: getAuth(req), body: req.body }),
+  );
+
+  // ── QR scan → register (mobile app scans; web register receives over SSE) ──
+  app.get(
+    '/scan/resolve',
+    { preHandler: requirePermission('pos.sell'), schema: { querystring: ResolveScanQuery } },
+    async (req) => ctrl.resolveScan({ auth: getAuth(req), query: req.query }),
+  );
+
+  app.get(
+    '/registers',
+    { preHandler: requirePermission('pos.sell') },
+    async (req) => ctrl.listRegisters({ auth: getAuth(req) }),
+  );
+
+  app.post(
+    '/scan',
+    { preHandler: requirePermission('pos.sell'), schema: { body: ScanBody } },
+    async (req) => ctrl.pushScan({ auth: getAuth(req), body: req.body }),
   );
 
   app.post(

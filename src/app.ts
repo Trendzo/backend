@@ -37,6 +37,7 @@ import retailerOrderRoutes from '@/modules/retailer/orders/orders.routes.js';
 import retailerDeliveriesRoutes from '@/modules/retailer/deliveries/deliveries.routes.js';
 import retailerInventoryRoutes from '@/modules/retailer/inventory/inventory.routes.js';
 import retailerPosRoutes from '@/modules/retailer/pos/pos.routes.js';
+import retailerPosStreamRoutes from '@/modules/retailer/pos/pos-stream.routes.js';
 import adminReturnsRoutes from '@/modules/admin/returns/returns.routes.js';
 import retailerReturnsRoutes from '@/modules/retailer/returns/returns.routes.js';
 import authPhase1Routes from '@/modules/auth/access/access.routes.js';
@@ -221,6 +222,8 @@ export function buildApp() {
       await api.register(retailerDeliveriesRoutes, { prefix: '/retailer/deliveries' });
       await api.register(retailerInventoryRoutes, { prefix: '/retailer/inventory' });
       await api.register(retailerPosRoutes, { prefix: '/retailer/pos' });
+      // Separate plugin: SSE stream authenticates via ?token= (EventSource can't set headers).
+      await api.register(retailerPosStreamRoutes, { prefix: '/retailer/pos' });
       await api.register(adminReturnsRoutes, { prefix: '/admin' });
       await api.register(retailerReturnsRoutes, { prefix: '/retailer' });
       await api.register(uploadRoutes, { prefix: '/uploads' });

@@ -29,6 +29,7 @@ import {
   type PrintHint,
 } from '@/shared/pos/printer.js';
 import { assembleReceipt, renderReceiptPayloads } from '@/shared/pos/receipt.js';
+import * as scanBus from '@/shared/pos/scan-bus.js';
 import type {
   CreateSaleBody,
   CustomersQuery,
@@ -39,7 +40,9 @@ import type {
   PrintSaleBody,
   QuoteBody,
   ReceiptQuery,
+  ResolveScanQuery,
   ReturnSaleBody,
+  ScanBody,
   SummaryQuery,
   VoidSaleBody,
 } from './pos.validators.js';
@@ -113,9 +116,60 @@ function shapeLookupRow(v: LookupVariant) {
     barcode: v.barcode,
     hsn: v.listing.hsn,
     pricePaise: v.pricePaise,
+    compareAtPaise: v.compareAtPrice ?? null,
     availableQty: v.stock - v.reserved,
     imageUrl: v.imageUrls?.[0] ?? null,
   };
+}
+
+// ───────────────────────── QR scan → register ─────────────────────────
+
+/** QR payload prefix for an app-scannable variant tag (printed by the labels tab). */
+const VARIANT_QR_PREFIX = 'cx:v:';
+
+/**
+ * Resolve a scanned code to a shaped product row within the caller's store.
+ * `cx:v:<variantId>` is the app-specific QR; anything else falls back to the exact
+ * barcode/SKU match so a generic Code128 label still resolves.
+ */
+async function resolveVariantRow(storeId: string, code: string) {
+  const trimmed = code.trim();
+  const byId = trimmed.startsWith(VARIANT_QR_PREFIX);
+  const variantId = byId ? trimmed.slice(VARIANT_QR_PREFIX.length) : null;
+
+  const variant = await db.query.variants.findFirst({
+    where: and(
+      eq(variants.storeId, storeId),
+      eq(variants.isActive, true),
+      byId
+        ? eq(variants.id, variantId!)
+        : or(eq(variants.barcode, trimmed), eq(variants.sku, trimmed)),
+    ),
+    with: { listing: { with: { brand: true } } },
+  });
+  if (!variant || variant.listing.status !== 'active') return null;
+  return shapeLookupRow(variant);
+}
+
+export async function resolveScan(input: { auth: Auth; query: z.infer<typeof ResolveScanQuery> }) {
+  const storeId = await getStoreId(input.auth.sub);
+  const row = await resolveVariantRow(storeId, input.query.code);
+  if (!row) throw new AppError(404, ErrorCode.NotFound, 'No product for that code');
+  return ok({ row });
+}
+
+export async function listRegisters(input: { auth: Auth }) {
+  const storeId = await getStoreId(input.auth.sub);
+  return ok({ registers: scanBus.listByStore(storeId) });
+}
+
+export async function pushScan(input: { auth: Auth; body: z.infer<typeof ScanBody> }) {
+  const storeId = await getStoreId(input.auth.sub);
+  // Re-shape from the variant id so price/stock are authoritative at push time.
+  const row = await resolveVariantRow(storeId, `${VARIANT_QR_PREFIX}${input.body.variantId}`);
+  if (!row) throw new AppError(404, ErrorCode.NotFound, 'Variant not found');
+  const delivered = scanBus.publish(storeId, row, input.body.target);
+  return ok({ delivered });
 }
 
 // ───────────────────────── quote ─────────────────────────

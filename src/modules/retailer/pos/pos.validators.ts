@@ -4,6 +4,19 @@ export const LookupQuery = z.object({
   q: z.string().min(1).max(120),
 });
 
+// ── QR scan → register (mobile app scans, web register receives over SSE) ──
+
+/** Resolve a scanned QR/barcode to a product row (for the app's confirm card). */
+export const ResolveScanQuery = z.object({
+  code: z.string().min(1).max(200),
+});
+
+/** Push a confirmed scan to a chosen open register. `target` is a session id or "all". */
+export const ScanBody = z.object({
+  variantId: z.string().min(1),
+  target: z.string().min(1).max(120),
+});
+
 const LineSchema = z.object({
   variantId: z.string().min(1),
   qty: z.number().int().positive(),
