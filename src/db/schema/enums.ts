@@ -382,6 +382,7 @@ export const posSaleStatus = pgEnum('pos_sale_status', [
   'voided', // completed sale reversed same-day
 ]);
 export const posTenderMethod = pgEnum('pos_tender_method', ['cash', 'card', 'upi']);
+export const posDaySessionStatus = pgEnum('pos_day_session_status', ['open', 'closed']);
 export const posPricingMode = pgEnum('pos_pricing_mode', ['tax_inclusive', 'tax_exclusive']);
 /**
  * Store's GST registration scheme. `regular` dealers charge GST and issue a Tax Invoice;

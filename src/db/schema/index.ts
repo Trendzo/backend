@@ -34,3 +34,4 @@ export * from './referrals.js';
 export * from './analytics-events.js';
 export * from './notifications-extra.js';
 export * from './pos.js';
+export * from './terms.js';

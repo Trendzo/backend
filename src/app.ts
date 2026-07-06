@@ -16,6 +16,7 @@ import retailerListingsRoutes from '@/modules/retailer/listings/listings.routes.
 import retailerBrandsRoutes from '@/modules/retailer/brands/brands.routes.js';
 import adminRetailersRoutes from '@/modules/admin/retailers/retailers.routes.js';
 import adminStoresRoutes from '@/modules/admin/stores/stores.routes.js';
+import adminTermsRoutes from '@/modules/admin/terms/terms.routes.js';
 import adminCollectionsRoutes from '@/modules/admin/collections/collections.routes.js';
 import adminListingsRoutes from '@/modules/admin/listings/listings.routes.js';
 import catalogRoutes from '@/modules/catalog/catalog.routes.js';
@@ -204,6 +205,7 @@ export function buildApp() {
       await api.register(retailerPromotionRoutes, { prefix: '/retailer/promotions' });
       await api.register(adminRetailersRoutes, { prefix: '/admin/retailers' });
       await api.register(adminStoresRoutes, { prefix: '/admin/stores' });
+      await api.register(adminTermsRoutes, { prefix: '/admin/terms' });
       await api.register(adminCollectionsRoutes, { prefix: '/admin/collections' });
       await api.register(adminListingsRoutes, { prefix: '/admin/listings' });
       await api.register(adminPromotionRoutes, { prefix: '/admin/promotions' });

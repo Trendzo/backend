@@ -281,6 +281,27 @@
 			"when": 1783200000000,
 			"tag": "0039_backfill_store_contact_phone",
 			"breakpoints": true
+		},
+		{
+			"idx": 40,
+			"version": "7",
+			"when": 1783300000000,
+			"tag": "0040_retailer_terms_acceptances",
+			"breakpoints": true
+		},
+		{
+			"idx": 41,
+			"version": "7",
+			"when": 1783400000000,
+			"tag": "0041_pos_day_sessions",
+			"breakpoints": true
+		},
+		{
+			"idx": 42,
+			"version": "7",
+			"when": 1783500000000,
+			"tag": "0042_admin_terms_versions",
+			"breakpoints": true
 		}
 	]
 }

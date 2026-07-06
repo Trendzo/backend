@@ -22,6 +22,7 @@ import {
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
+import { assertTermsAcceptedForGoLive } from '@/shared/terms.js';
 import { compact } from '@/shared/object.js';
 import { LONG_DESC_MAX_BYTES, sanitizeRichText } from '@/shared/sanitize/rich-text.js';
 import { previewListingEffectivePricing } from '@/shared/discounts/preview-effective-price.js';
@@ -643,6 +644,8 @@ export async function patchListing(input: {
         actorId: input.auth.sub,
       });
       if (store.status === 'onboarding') {
+        // Legal gate — a store cannot go live until the Retailer Terms are accepted.
+        await assertTermsAcceptedForGoLive(db, store.id);
         await tx
           .update(retailerStores)
           .set({ status: 'active' })
@@ -1222,6 +1225,8 @@ export async function publishVariant(input: { auth: Auth; listingId: string; vid
         note: `via variant=${existing.id}`,
       });
       if (store.status === 'onboarding') {
+        // Legal gate — a store cannot go live until the Retailer Terms are accepted.
+        await assertTermsAcceptedForGoLive(db, store.id);
         await tx
           .update(retailerStores)
           .set({ status: 'active' })
@@ -1365,6 +1370,8 @@ export async function bulkStatus(input: { auth: Auth; body: z.infer<typeof BulkS
       updated++;
     }
     if (input.body.status === 'active' && updated > 0 && store.status === 'onboarding') {
+      // Legal gate — a store cannot go live until the Retailer Terms are accepted.
+      await assertTermsAcceptedForGoLive(db, store.id);
       await tx
         .update(retailerStores)
         .set({ status: 'active' })

@@ -180,12 +180,13 @@ export const RETAILER_ACTIONS = [
   'fees.view',
   // Offline POS (counter sales). `pos.sell` rings + holds; `pos.view` reads history,
   // day summary, reprints; `pos.refund` voids/returns; `pos.labels` prints barcodes;
-  // `pos.settings` edits tax/receipt config.
+  // `pos.settings` edits tax/receipt config; `pos.manage` opens/closes the day + reconciles cash.
   'pos.sell',
   'pos.view',
   'pos.refund',
   'pos.labels',
   'pos.settings',
+  'pos.manage',
   // Reports / AI / notifications / community
   'reports.view',
   'ai_catalog.generate',
