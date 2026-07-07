@@ -111,6 +111,7 @@ import adminBannersRoutes from '@/modules/admin/banners/banners.routes.js';
 import retailerBannersRoutes from '@/modules/retailer/banners/banners.routes.js';
 import adminDigestRoutes from '@/modules/admin/digest/digest.routes.js';
 import pincodeRoutes from '@/modules/_shared/pincode/pincode.routes.js';
+import publicLegalRoutes from '@/modules/public/legal.routes.js';
 
 /**
  * Build a Fastify app with strict TypeScript routing via the Zod type provider.
@@ -165,7 +166,9 @@ export function buildApp() {
   // Intentionally permissive — any site may call this API with cookies. If
   // CORS_ORIGIN is set it restricts to that allow-list; otherwise reflect all.
   const corsOrigin = env.CORS_ORIGIN
-    ? env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean)
+    ? env.CORS_ORIGIN.split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
     : true;
   void app.register(cors, { origin: corsOrigin, credentials: true });
 
@@ -185,6 +188,9 @@ export function buildApp() {
 
   // Health check
   app.get('/health', () => ok({ status: 'ok', uptime: process.uptime() }));
+
+  // Public pages required for App Store privacy, support, and deletion URLs.
+  void app.register(publicLegalRoutes);
 
   // /api/v1 prefix gets registered here as feature modules come online.
   void app.register(

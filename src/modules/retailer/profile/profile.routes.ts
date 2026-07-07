@@ -2,7 +2,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
 import { requirePermission } from '@/shared/permissions.js';
 import * as ctrl from './profile.controller.js';
-import { CreateStoreBody, PatchProfileBody } from './profile.validators.js';
+import { CreateStoreBody, DeleteAccountBody, PatchProfileBody } from './profile.validators.js';
 
 const retailerProfileRoutes: FastifyPluginAsyncZod = async (app) => {
   app.addHook('preHandler', requireAuth('retailer'));
@@ -25,6 +25,10 @@ const retailerProfileRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: { body: PatchProfileBody },
     },
     async (req) => ctrl.patchStoreProfile({ auth: getAuth(req), body: req.body }),
+  );
+
+  app.delete('/account', { schema: { body: DeleteAccountBody } }, async (req) =>
+    ctrl.deleteAccount({ auth: getAuth(req), body: req.body, requestId: req.id }),
   );
 };
 

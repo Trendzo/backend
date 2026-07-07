@@ -1,4 +1,5 @@
 import { desc, eq, or } from 'drizzle-orm';
+import { timingSafeEqual } from 'node:crypto';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
@@ -14,7 +15,7 @@ import { signAccessToken } from '@/shared/auth/jwt.js';
 import { hashPassword, verifyPassword } from '@/shared/auth/password.js';
 import { verifyMsg91AccessToken } from '@/shared/msg91/verify.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
-import type { LoginBody, Msg91VerifyBody, SignupBody } from './auth.validators.js';
+import type { LoginBody, Msg91VerifyBody, ReviewLoginBody, SignupBody } from './auth.validators.js';
 
 /**
  * Auth controller. Three identity domains; each login produces a token tagged with `kind`
@@ -238,6 +239,7 @@ export async function retailerLogin(input: { body: z.infer<typeof LoginBody> }) 
     }
     throw new AppError(401, ErrorCode.InvalidCredentials, 'Email or password is incorrect');
   }
+  assertRetailerNotDeleted(retailer.suspendReason);
   // Terminated retailers may still sign in — they get read-only access so
   // owners/managers can retrieve their records (orders, invoices, statements).
   // Every mutating request is rejected centrally in `requireAuth` (see
@@ -323,8 +325,68 @@ export async function retailerOtpLogin(input: { body: z.infer<typeof Msg91Verify
       'No retailer account is linked to this phone number',
     );
   }
+  assertRetailerNotDeleted(retailer.suspendReason);
   // Terminated retailers may still sign in (read-only), same as password login — every
   // mutating request is rejected centrally in requireAuth.
+  const token = signAccessToken({
+    sub: retailer.id,
+    kind: 'retailer',
+    subRole: retailer.subRole,
+  });
+  return ok({
+    token,
+    retailer: {
+      id: retailer.id,
+      email: retailer.email,
+      legalName: retailer.legalName,
+      phone: retailer.phone,
+      gstin: retailer.gstin,
+      status: retailer.status,
+      storeId: retailer.storeId,
+      subRole: retailer.subRole,
+    },
+  });
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function assertRetailerNotDeleted(suspendReason: string | null): void {
+  if (suspendReason === 'account_deleted_by_user') {
+    throw AppError.unauthorized('This account has been deleted');
+  }
+}
+
+/**
+ * Dedicated App Store reviewer login. It is disabled unless both Render secrets
+ * are configured and accepts only that exact phone/OTP pair. The phone must
+ * already belong to a retailer, so this endpoint cannot create accounts.
+ */
+export async function retailerReviewLogin(input: { body: z.infer<typeof ReviewLoginBody> }) {
+  const configuredPhone = env.APP_REVIEW_PHONE;
+  const configuredOtp = env.APP_REVIEW_OTP;
+  if (!configuredPhone || !configuredOtp) {
+    throw new AppError(404, ErrorCode.NotFound, 'Review login is not configured');
+  }
+
+  const valid =
+    constantTimeEqual(input.body.phone, configuredPhone) &&
+    constantTimeEqual(input.body.otp, configuredOtp);
+  if (!valid) {
+    throw new AppError(401, ErrorCode.InvalidCredentials, 'Phone or OTP is incorrect');
+  }
+
+  const retailer = await db.query.retailerAccounts.findFirst({
+    where: eq(retailerAccounts.phone, configuredPhone),
+  });
+  if (!retailer) {
+    throw new AppError(401, ErrorCode.InvalidCredentials, 'Review account is unavailable');
+  }
+  assertRetailerNotDeleted(retailer.suspendReason);
+
   const token = signAccessToken({
     sub: retailer.id,
     kind: 'retailer',

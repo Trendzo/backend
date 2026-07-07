@@ -68,10 +68,13 @@ export function requireAuth(...allowedKinds: TokenKind[]): preHandlerAsyncHookHa
       // individual controller needs its own terminated-check.
       const row = await db.query.retailerAccounts.findFirst({
         where: eq(retailerAccounts.id, payload.sub),
-        columns: { status: true, permanentSuspend: true },
+        columns: { status: true, permanentSuspend: true, suspendReason: true },
       });
       if (!row) {
         throw AppError.unauthorized('Account not found');
+      }
+      if (row.suspendReason === 'account_deleted_by_user') {
+        throw AppError.unauthorized('This account has been deleted');
       }
       const locked = row.status === 'terminated' || row.permanentSuspend;
       if (locked && !READ_METHODS.has(req.method.toUpperCase())) {
@@ -94,7 +97,10 @@ export function requireAuth(...allowedKinds: TokenKind[]): preHandlerAsyncHookHa
  * result. Account status checks are skipped here (a degraded token → treated as guest).
  */
 export function optionalAuth(...allowedKinds: TokenKind[]): preHandlerAsyncHookHandler {
-  return async function maybeAuthenticate(req: FastifyRequest, _reply: FastifyReply): Promise<void> {
+  return async function maybeAuthenticate(
+    req: FastifyRequest,
+    _reply: FastifyReply,
+  ): Promise<void> {
     const header = req.headers.authorization;
     if (!header || !header.toLowerCase().startsWith('bearer ')) return;
     const token = header.slice(7).trim();

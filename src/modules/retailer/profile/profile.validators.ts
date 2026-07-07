@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { StateCodeSchema } from '@/shared/validation/common.js';
 
+export const DeleteAccountBody = z.object({
+  confirmation: z.literal('DELETE'),
+});
+
 export const CreateStoreBody = z.object({
   legalName: z.string().trim().min(2).max(120),
   address: z.string().trim().min(5).max(500),
