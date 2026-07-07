@@ -47,6 +47,11 @@ export const PLATFORM_CONFIG_DEFAULTS: readonly ConfigRow[] = [
     value: { express: 9900, standard: 4900, pickup: 0, try_and_buy: 9900 },
     description: 'Per delivery method, in paise',
   },
+  {
+    key: 'driver_payout_table',
+    value: { express: 4000, standard: 3000, pickup: 0, try_and_buy: 5000, reverse_pickup: 3000 },
+    description: 'Driver base payout per delivery method, in paise',
+  },
   { key: 'surge_multiplier', value: 1.0, description: 'Hook for future dynamic pricing' },
   {
     key: 'tcs_rate_bp',

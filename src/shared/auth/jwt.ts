@@ -6,7 +6,7 @@ import { env } from '@/config/env.js';
  * middleware that protects a route asserts the expected kind so an admin token can't be used
  * on a retailer route (and vice versa) even though the underlying signing secret is shared.
  */
-export type TokenKind = 'admin' | 'retailer' | 'consumer';
+export type TokenKind = 'admin' | 'retailer' | 'consumer' | 'driver';
 
 export type AccessTokenPayload = {
   sub: string;

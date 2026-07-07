@@ -21,6 +21,8 @@ const EnvSchema = z.object({
   // Consumer sessions are long-lived — phone-OTP re-login is high-friction, and there
   // is no refresh-token flow for MVP (matching the admin/retailer stance).
   JWT_CONSUMER_ACCESS_EXPIRES_IN: z.string().default('30d'),
+  // Drivers are a standalone identity with the same long-lived, no-refresh stance.
+  JWT_DRIVER_ACCESS_EXPIRES_IN: z.string().default('30d'),
 
   // MSG91 — server-side verification of OTP-widget access tokens. Optional at boot
   // so dev environments without SMS work, but the OTP login endpoints will 503 until
@@ -29,6 +31,7 @@ const EnvSchema = z.object({
   // one account only verifies against that account's authkey.
   MSG91_AUTH_KEY: z.string().min(10).optional(), // consumer widget's account
   MSG91_RETAILER_AUTH_KEY: z.string().min(10).optional(), // retailer widget's account
+  MSG91_DRIVER_AUTH_KEY: z.string().min(10).optional(), // driver widget's account
 
   TCS_RATE_BP: z.coerce.number().int().nonnegative().default(100),
 

@@ -20,7 +20,11 @@ export const retailerSubRole = pgEnum('retailer_sub_role', [
 ]);
 export const adminAccountStatus = pgEnum('admin_account_status', ['active', 'revoked']);
 export const adminSubRole = pgEnum('admin_sub_role', ['super_admin', 'ops_admin', 'support']);
-export const deliveryAgentStatus = pgEnum('delivery_agent_status', ['active', 'inactive']);
+export const deliveryAgentStatus = pgEnum('delivery_agent_status', [
+  'active',
+  'inactive',
+  'suspended', // admin-set; only 'active' can authenticate/receive dispatch
+]);
 
 // Used in transitions, audit fields, anywhere actor identity is polymorphic
 export const actorType = pgEnum('actor_type', [

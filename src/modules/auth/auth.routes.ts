@@ -32,6 +32,12 @@ const authRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { body: Msg91VerifyBody } },
     async (req) => ctrl.retailerOtpLogin({ body: req.body }),
   );
+
+  app.post(
+    '/driver/otp/msg91',
+    { schema: { body: Msg91VerifyBody } },
+    async (req) => ctrl.driverOtpLogin({ body: req.body }),
+  );
 };
 
 export default authRoutes;

@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
 import { db } from '@/db/client.js';
-import { consumers, retailerAccounts } from '@/db/schema/index.js';
+import { consumers, deliveryAgents, retailerAccounts } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { verifyAccessToken, type AccessTokenPayload, type TokenKind } from './jwt.js';
 
@@ -59,6 +59,21 @@ export function requireAuth(...allowedKinds: TokenKind[]): preHandlerAsyncHookHa
       }
       if (row.status === 'closed') {
         throw new AppError(401, ErrorCode.ConsumerClosed, 'Account is closed');
+      }
+    }
+    if (payload.kind === 'driver') {
+      const row = await db.query.deliveryAgents.findFirst({
+        where: eq(deliveryAgents.id, payload.sub),
+        columns: { status: true },
+      });
+      if (!row) {
+        throw AppError.unauthorized('Account not found');
+      }
+      if (row.status === 'suspended') {
+        throw new AppError(401, ErrorCode.DriverSuspended, 'Account is suspended');
+      }
+      if (row.status === 'inactive') {
+        throw new AppError(401, ErrorCode.DriverInactive, 'Account is inactive');
       }
     }
     if (payload.kind === 'retailer') {

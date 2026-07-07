@@ -23,6 +23,8 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { logTransitionMarker, transitionOrder } from '@/shared/orders/transition.js';
+import { rerouteOrder } from '@/shared/orders/routing.js';
+import { notifyOffersChanged } from '@/shared/orders/offers-bus.js';
 import { finalizeReturnedOrder } from '@/shared/orders/finalize-return.js';
 import { recordUndelivered } from '@/shared/orders/undelivered.js';
 import { type OrderStatus, transitionsFrom } from '@/shared/orders/state-machine.js';
@@ -239,8 +241,11 @@ export async function getOrder(input: { auth: Auth; id: string }) {
   const open = disputes.find((d) => (OPEN_ISSUE_STATUSES as readonly string[]).includes(d.status));
   const openDispute = open ? { id: open.id, status: open.status } : null;
 
+  // Never expose the store→agent handoff code to the retailer — it must be read off
+  // the assigned agent's app at the physical handover (that is the whole point of it).
+  const { agentHandoffCode: _agentHandoffCode, ...orderSafe } = order;
   return ok({
-    ...order,
+    ...orderSafe,
     returns: returnsRows,
     refunds: refundsRows,
     heldItems: heldRows,
@@ -275,6 +280,26 @@ export async function acceptOrder(input: { auth: Auth; id: string }) {
   return ok(result);
 }
 
+/**
+ * Retailer declines an incoming order within the acceptance window. Same effect as
+ * letting the window lapse (the sweeper's `timeout` path) but driven by the retailer
+ * explicitly: mark this candidate `rejected`, then reroute to the next store — or
+ * cancel the order if routing attempts are exhausted. Only valid while unaccepted.
+ */
+export async function rejectOrder(input: { auth: Auth; id: string }) {
+  const storeId = await getOwnStoreId(input.auth);
+  const order = await loadOwnedOrder(input.id, storeId);
+  if (order.status !== 'routing' && order.status !== 'pending') {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      `Order is ${order.status} — only an unaccepted order can be rejected`,
+    );
+  }
+  const result = await rerouteOrder(input.id, 'rejected', input.auth.sub);
+  return ok(result);
+}
+
 export async function packOrder(input: { auth: Auth; id: string }) {
   const storeId = await getOwnStoreId(input.auth);
   await loadOwnedOrder(input.id, storeId);
@@ -288,6 +313,8 @@ export async function packOrder(input: { auth: Auth; id: string }) {
       ? { metadata: { impersonatingAdminSessionId: input.auth.impersonating.sessionId } }
       : {}),
   });
+  // A packed order is now broadcast to all drivers — wake parked offer long-polls.
+  notifyOffersChanged();
   return ok(result);
 }
 
@@ -327,38 +354,71 @@ export async function pickupHandover(input: {
   return ok(result);
 }
 
+// Driver assignment moved to the admin dispatch desk (`/admin/dispatch/orders/:id/assign`)
+// when drivers were decoupled into a standalone identity. Retailers no longer assign; they
+// only verify the handoff code at `handover()` (Path A) or hand to an external courier (Path B).
+
 export async function handover(input: {
   auth: Auth;
   id: string;
   body: z.infer<typeof HandoverBody>;
 }) {
   const storeId = await getOwnStoreId(input.auth);
-  await loadOwnedOrder(input.id, storeId);
+  const order = await loadOwnedOrder(input.id, storeId);
 
-  // If an agent account is named, it must be a delivery-agent in THIS store.
-  let agentNameSnap: string | undefined;
-  if (input.body.assignedAgentId) {
-    const agent = await db.query.retailerAccounts.findFirst({
-      where: eq(retailerAccounts.id, input.body.assignedAgentId),
-      columns: { id: true, storeId: true, subRole: true, status: true, legalName: true },
-    });
-    if (!agent || agent.storeId !== storeId || agent.subRole !== 'delivery_agent') {
+  // Path A — in-house agent already assigned: verify the code the agent reads off
+  // their app before releasing the parcel. Guards against handing to the wrong agent.
+  // Skipped when the retailer supplies external-courier details (Path B override).
+  if (order.assignedAgentId && order.agentHandoffCode && !input.body.agentName) {
+    const submitted = input.body.handoffCode?.trim().toUpperCase();
+    if (!submitted) {
       throw new AppError(
-        422,
-        ErrorCode.InvalidState,
-        'assignedAgentId must be a delivery-agent account in your store',
+        400,
+        ErrorCode.InvalidPickupCode,
+        'Enter the handoff code shown in the delivery agent’s app to complete the handover',
       );
     }
-    if (agent.status !== 'active') {
-      throw new AppError(409, ErrorCode.InvalidState, `Agent account is ${agent.status}`);
+    if (submitted !== order.agentHandoffCode) {
+      throw new AppError(
+        400,
+        ErrorCode.InvalidPickupCode,
+        'Incorrect handoff code — verify you are handing to the assigned agent',
+      );
     }
-    agentNameSnap = agent.legalName;
-    await db
-      .update(orders)
-      .set({ assignedAgentId: agent.id })
-      .where(eq(orders.id, input.id));
+    await db.update(orders).set({ agentHandoffCode: null }).where(eq(orders.id, input.id));
+    const result = await transitionOrder(db, {
+      orderId: input.id,
+      toStatus: 'picked_up',
+      actorType: 'retailer',
+      actorId: input.auth.sub,
+      reason: 'agent_handover',
+      metadata: {
+        assignedAgentId: order.assignedAgentId,
+        ...(input.auth.impersonating
+          ? { impersonatingAdminSessionId: input.auth.impersonating.sessionId }
+          : {}),
+      },
+    });
+    return ok(result);
   }
 
+  // Path B — external courier with no account/app: direct handover with a free-text
+  // name/phone snapshot and no code.
+  if (!input.body.agentName || !input.body.agentPhone) {
+    throw new AppError(
+      422,
+      ErrorCode.InvalidState,
+      'Assign an in-house delivery agent first, or provide external courier name and phone',
+    );
+  }
+  // Clear any stale in-house assignment/code so the previously-assigned agent no
+  // longer sees this order once it goes to an external courier.
+  if (order.assignedAgentId || order.agentHandoffCode) {
+    await db
+      .update(orders)
+      .set({ assignedAgentId: null, agentHandoffCode: null })
+      .where(eq(orders.id, input.id));
+  }
   const result = await transitionOrder(db, {
     orderId: input.id,
     toStatus: 'picked_up',
@@ -366,8 +426,8 @@ export async function handover(input: {
     actorId: input.auth.sub,
     reason: 'agent_handover',
     metadata: {
-      ...input.body,
-      ...(agentNameSnap ? { assignedAgentName: agentNameSnap } : {}),
+      agentName: input.body.agentName,
+      agentPhone: input.body.agentPhone,
       ...(input.auth.impersonating
         ? { impersonatingAdminSessionId: input.auth.impersonating.sessionId }
         : {}),
