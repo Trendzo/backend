@@ -66,6 +66,8 @@ const RULES: readonly TransitionRule[] = [
   // ── Try-and-Buy door — admin may act on behalf of agent for door close decisions ──
   { from: 'at_door', to: 'delivered', actors: ['retailer', 'delivery_agent', 'system', 'admin'] },
   { from: 'at_door', to: 'returning_to_store', actors: ['retailer', 'delivery_agent', 'system', 'admin'] },
+  // Customer not found at the door → undelivered (then the retry/return budget applies).
+  { from: 'at_door', to: 'undelivered', actors: ['retailer', 'delivery_agent', 'admin'] },
   { from: 'at_door', to: 'cancelled', actors: ['admin'] },
 
   // ── Undelivered ──

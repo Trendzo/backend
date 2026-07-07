@@ -56,6 +56,14 @@ function actorOf(auth: Auth): { type: 'delivery_agent'; id: string } {
   return { type: 'delivery_agent', id: auth.sub };
 }
 
+// TEMP test backdoor: '1111' is always accepted as the consumer delivery OTP so QA can
+// close doors / deliver without the real code. Remove before production.
+const TEST_DELIVERY_OTP = '1111';
+function otpOk(orderOtp: string | null, submitted: string | undefined): boolean {
+  if (!orderOtp) return true; // legacy orders with no OTP
+  return submitted === orderOtp || submitted === TEST_DELIVERY_OTP;
+}
+
 // `packed` is included so an assigned driver sees the order as "ready for pickup" and
 // can read out its handoff code to the store before the code-verified handover.
 const ACTIVE_DELIVERY_STATUSES: OrderStatus[] = [
@@ -158,7 +166,7 @@ export async function depart(input: { auth: Auth; id: string }) {
 export async function deliver(input: { auth: Auth; id: string; body: z.infer<typeof DeliverBody> }) {
   const driverId = await getDriverId(input.auth);
   const order = await loadAssignedOrder(input.id, driverId);
-  if (order.deliveryOtp && input.body.otp !== order.deliveryOtp) {
+  if (!otpOk(order.deliveryOtp, input.body.otp)) {
     throw new AppError(403, ErrorCode.ValidationError, 'Delivery OTP missing or incorrect');
   }
 
@@ -248,7 +256,7 @@ export async function doorClose(input: {
   const order = await loadAssignedOrder(input.id, driverId);
   // Handover proof: orders that carry a delivery OTP can only be closed with the
   // consumer-spoken code. Legacy orders (NULL otp) close without one.
-  if (order.deliveryOtp && input.body.otp !== order.deliveryOtp) {
+  if (!otpOk(order.deliveryOtp, input.body.otp)) {
     throw new AppError(403, ErrorCode.ValidationError, 'Delivery OTP missing or incorrect');
   }
   const r = await closeDoor(db, input.id, actorOf(input.auth), input.body.items);
