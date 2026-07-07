@@ -8,12 +8,14 @@
  * back this with Postgres LISTEN/NOTIFY or Redis pub/sub (same interface).
  */
 import { EventEmitter } from 'node:events';
+import { pushOffersChanged } from '@/shared/fcm/fcm.js';
 
 const bus = new EventEmitter();
 bus.setMaxListeners(0); // one listener per parked driver; no artificial cap
 
 export function notifyOffersChanged(): void {
-  bus.emit('changed');
+  bus.emit('changed'); // wake parked long-poll handlers
+  void pushOffersChanged(); // + FCM push to subscribed driver apps (no-op if unconfigured)
 }
 
 /** Resolve as soon as the pool changes, or after `timeoutMs` — whichever comes first. */

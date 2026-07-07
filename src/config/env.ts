@@ -32,6 +32,11 @@ const EnvSchema = z
     MSG91_RETAILER_AUTH_KEY: z.string().min(10).optional(), // retailer widget's account
     MSG91_DRIVER_AUTH_KEY: z.string().min(10).optional(), // driver widget's account
 
+    // Firebase service-account JSON (as a string) for sending driver push via FCM. Optional —
+    // if unset (and GOOGLE_APPLICATION_CREDENTIALS also unset), push is disabled and drivers
+    // fall back to long-poll. This is the SERVER key, not the client google-services.json.
+    FIREBASE_SERVICE_ACCOUNT: z.string().optional(),
+
     // App Store review account. Both values must be set together in the production
     // environment. This bypass is scoped to one existing retailer account and never
     // sends or logs the OTP.

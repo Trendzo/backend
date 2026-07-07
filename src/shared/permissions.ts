@@ -71,6 +71,9 @@ export const ADMIN_ACTIONS = [
   // Delivery dispatch (assign standalone drivers to packed orders)
   'dispatch.view',
   'dispatch.manage',
+  // Driver account management (directory, suspend/activate)
+  'drivers.view',
+  'drivers.manage',
   'refunds.view',
   'refunds.force',
   'refunds.recovery_decide',
@@ -208,6 +211,7 @@ const ADMIN_READ_ONLY: AdminAction[] = [
   'moderation.view',
   'orders.view',
   'dispatch.view',
+  'drivers.view',
   'refunds.view',
   'disputes.view',
   'held_items.view',

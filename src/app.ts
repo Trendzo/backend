@@ -30,6 +30,7 @@ import retailerPromotionRoutes from '@/modules/retailer/promotions/promotions.ro
 import adminOrderRoutes from '@/modules/admin/orders/orders.routes.js';
 import adminConsumersRoutes from '@/modules/admin/consumers/consumers.routes.js';
 import adminDispatchRoutes from '@/modules/admin/dispatch/dispatch.routes.js';
+import adminDriversRoutes from '@/modules/admin/drivers/drivers.routes.js';
 import adminBrandsRoutes from '@/modules/admin/brands/brands.routes.js';
 import adminCategoriesRoutes from '@/modules/admin/categories/categories.routes.js';
 import adminPlatformRoutes from '@/modules/admin/platform/platform.routes.js';
@@ -227,6 +228,7 @@ export function buildApp() {
       await api.register(adminOrderRoutes, { prefix: '/admin' });
       await api.register(adminConsumersRoutes, { prefix: '/admin/consumers' });
       await api.register(adminDispatchRoutes, { prefix: '/admin/dispatch' });
+      await api.register(adminDriversRoutes, { prefix: '/admin/drivers' });
       await api.register(adminBrandsRoutes, { prefix: '/admin/brands' });
       await api.register(adminCategoriesRoutes, { prefix: '/admin/categories' });
       await api.register(adminPlatformRoutes, { prefix: '/admin/platform' });
