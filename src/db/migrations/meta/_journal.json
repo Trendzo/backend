@@ -302,6 +302,13 @@
 			"when": 1783500000000,
 			"tag": "0042_admin_terms_versions",
 			"breakpoints": true
+		},
+		{
+			"idx": 43,
+			"version": "7",
+			"when": 1783600000000,
+			"tag": "0043_consumer_avatar_url",
+			"breakpoints": true
 		}
 	]
 }
