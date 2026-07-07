@@ -26,8 +26,3 @@ export const SignupBody = z.object({
 export const Msg91VerifyBody = z.object({
   accessToken: z.string().min(20).max(2048),
 });
-
-export const ReviewLoginBody = z.object({
-  phone: IntlPhoneSchema,
-  otp: z.string().regex(/^\d{4,8}$/, 'OTP must contain 4 to 8 digits'),
-});

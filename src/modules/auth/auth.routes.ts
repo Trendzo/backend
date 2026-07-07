@@ -1,6 +1,6 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import * as ctrl from './auth.controller.js';
-import { LoginBody, Msg91VerifyBody, ReviewLoginBody, SignupBody } from './auth.validators.js';
+import { LoginBody, Msg91VerifyBody, SignupBody } from './auth.validators.js';
 
 const authRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post('/admin/login', { schema: { body: LoginBody } }, async (req) =>
@@ -21,10 +21,6 @@ const authRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post('/retailer/otp/msg91', { schema: { body: Msg91VerifyBody } }, async (req) =>
     ctrl.retailerOtpLogin({ body: req.body }),
-  );
-
-  app.post('/retailer/review-login', { schema: { body: ReviewLoginBody } }, async (req) =>
-    ctrl.retailerReviewLogin({ body: req.body }),
   );
 
   app.post(

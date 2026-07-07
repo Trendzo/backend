@@ -37,18 +37,6 @@ const EnvSchema = z
     // fall back to long-poll. This is the SERVER key, not the client google-services.json.
     FIREBASE_SERVICE_ACCOUNT: z.string().optional(),
 
-    // App Store review account. Both values must be set together in the production
-    // environment. This bypass is scoped to one existing retailer account and never
-    // sends or logs the OTP.
-    APP_REVIEW_PHONE: z
-      .string()
-      .regex(/^\+[1-9]\d{7,14}$/)
-      .optional(),
-    APP_REVIEW_OTP: z
-      .string()
-      .regex(/^\d{4,8}$/)
-      .optional(),
-
     // Public legal/support pages used by App Store Connect.
     PUBLIC_APP_NAME: z.string().min(1).default('Trendzo Mockup'),
     PUBLIC_COMPANY_NAME: z.string().min(1).default('Trendzo'),
@@ -96,15 +84,6 @@ const EnvSchema = z
     // Leave unset in dev — when NODE_ENV=development, all origins are allowed.
     // Example for prod: CORS_ORIGIN=https://closetx-frontend.vercel.app,https://admin.closetx.in
     CORS_ORIGIN: z.string().optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (!!value.APP_REVIEW_PHONE !== !!value.APP_REVIEW_OTP) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['APP_REVIEW_PHONE'],
-        message: 'APP_REVIEW_PHONE and APP_REVIEW_OTP must be configured together',
-      });
-    }
   });
 
 const parsed = EnvSchema.safeParse(process.env);
