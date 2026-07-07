@@ -12,6 +12,11 @@ export const IdPrefix = {
   Admin: 'adm',
   Retailer: 'ret',
   Consumer: 'cns',
+  Driver: 'drv',
+  DriverEarning: 'dern',
+  DriverCashLedger: 'dcl',
+  DriverCashDeposit: 'dcd',
+  DriverOfferRejection: 'dor',
   Store: 'str',
   BankAccount: 'bnk',
   Listing: 'lst',
@@ -89,6 +94,10 @@ export const IdPrefix = {
   PosPayment: 'posp',
   PosCustomer: 'posc',
   PosReturnLine: 'posrl',
+  PosDaySession: 'posds',
+  // Retailer T&C acceptance (legal record) + admin-published versions
+  TermsAcceptance: 'term',
+  TermsVersion: 'tver',
   // Reels + social interactions (likes / saves / comments on reels and posts)
   Reel: 'reel',
   ReelComment: 'rcmt',

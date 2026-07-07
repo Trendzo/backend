@@ -32,10 +32,11 @@ export const PickupHandoverBody = z.object({
 
 export const HandoverBody = z
   .object({
-    // Preferred: assign a store delivery-agent account. The order then surfaces in
-    // that agent's delivery list. Free-text name/phone remain as a fallback for an
-    // external courier with no account.
-    assignedAgentId: z.string().trim().min(1).optional(),
+    // In-house handover: the code the agent reads off their app, verified against the
+    // order's minted `agentHandoffCode`. Required once an agent has been assigned.
+    handoffCode: z.string().trim().min(4).max(16).optional(),
+    // External-courier fallback (no account, no app) — hand over directly with a
+    // free-text name/phone snapshot and no code.
     agentName: z.string().trim().min(1).max(120).optional(),
     agentPhone: z.string().trim().min(1).max(20).optional(),
   })

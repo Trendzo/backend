@@ -3,7 +3,8 @@ import { EmailSchema } from '@/shared/validation/common.js';
 
 export const IdParam = z.object({ id: z.string() });
 
-export const SubRoleEnum = z.enum(['owner', 'manager', 'staff', 'delivery_agent']);
+// 'delivery_agent' retired — drivers are a standalone identity now, not retailer staff.
+export const SubRoleEnum = z.enum(['owner', 'manager', 'staff']);
 
 export const PatchStaffBody = z.object({ subRole: SubRoleEnum });
 

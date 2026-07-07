@@ -281,6 +281,83 @@
 			"when": 1783200000000,
 			"tag": "0039_backfill_store_contact_phone",
 			"breakpoints": true
+		},
+		{
+			"idx": 40,
+			"version": "7",
+			"when": 1783300000000,
+			"tag": "0040_retailer_terms_acceptances",
+			"breakpoints": true
+		},
+		{
+			"idx": 41,
+			"version": "7",
+			"when": 1783400000000,
+			"tag": "0041_pos_day_sessions",
+			"breakpoints": true
+		},
+		{
+			"idx": 42,
+			"version": "7",
+			"when": 1783500000000,
+			"tag": "0042_admin_terms_versions",
+			"breakpoints": true
+		},
+		{
+			"idx": 43,
+			"version": "7",
+			"when": 1783600000000,
+			"tag": "0043_consumer_avatar_url",
+			"breakpoints": true
+		},
+		{
+			"idx": 44,
+			"version": "7",
+			"when": 1783650000000,
+			"tag": "0044_order_agent_handoff_code",
+			"breakpoints": true
+		},
+		{
+			"idx": 45,
+			"version": "7",
+			"when": 1783700000000,
+			"tag": "0045_driver_identity",
+			"breakpoints": true
+		},
+		{
+			"idx": 46,
+			"version": "7",
+			"when": 1783800000000,
+			"tag": "0046_order_agent_fk_to_driver",
+			"breakpoints": true
+		},
+		{
+			"idx": 47,
+			"version": "7",
+			"when": 1783900000000,
+			"tag": "0047_drop_stale_agent_fk",
+			"breakpoints": true
+		},
+		{
+			"idx": 48,
+			"version": "7",
+			"when": 1784000000000,
+			"tag": "0048_driver_cod_pod",
+			"breakpoints": true
+		},
+		{
+			"idx": 49,
+			"version": "7",
+			"when": 1784100000000,
+			"tag": "0049_driver_earnings",
+			"breakpoints": true
+		},
+		{
+			"idx": 50,
+			"version": "7",
+			"when": 1784200000000,
+			"tag": "0050_driver_offer_rejections",
+			"breakpoints": true
 		}
 	]
 }

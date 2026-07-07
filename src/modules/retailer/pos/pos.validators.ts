@@ -85,6 +85,29 @@ export const ReturnSaleBody = z.object({
   refundTenders: z.array(TenderSchema).min(1),
 });
 
+/**
+ * Exchange: hand back original line(s) + sell replacement variant(s). Server computes the
+ * net and validates exactly one settlement side — `collectTenders` when the customer owes,
+ * `refundTenders` when the store pays back, neither for an even swap.
+ */
+export const ExchangeSaleBody = z.object({
+  idempotencyKey: z.string().min(8).max(120),
+  reason: z.string().min(1).max(240),
+  returnLines: z
+    .array(
+      z.object({
+        originalSaleItemId: z.string().min(1),
+        qty: z.number().int().positive(),
+        restock: z.boolean().optional(),
+      }),
+    )
+    .min(1),
+  newLines: z.array(LineSchema).min(1),
+  collectTenders: z.array(TenderSchema).optional(),
+  refundTenders: z.array(TenderSchema).optional(),
+  pricingMode: PricingMode.optional(),
+});
+
 export const ListSalesQuery = z.object({
   status: z.enum(['held', 'completed', 'voided']).optional(),
   from: z.string().optional(), // ISO date
@@ -133,3 +156,16 @@ export const PrintSaleBody = z.object({
 export const CustomersQuery = z.object({ phone: z.string().min(3).max(20) });
 
 export const SummaryQuery = z.object({ date: z.string().optional() }); // YYYY-MM-DD
+
+// Day open/close (cash reconciliation)
+const DateOpt = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
+export const DayCurrentQuery = z.object({ date: DateOpt });
+export const DayOpenBody = z.object({
+  openingFloatPaise: z.number().int().min(0),
+  date: DateOpt,
+});
+export const DayCloseBody = z.object({
+  countedCashPaise: z.number().int().min(0),
+  note: z.string().trim().max(240).optional(),
+  date: DateOpt,
+});

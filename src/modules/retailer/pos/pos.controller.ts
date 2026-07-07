@@ -1,9 +1,11 @@
-import { and, desc, eq, gte, ilike, inArray, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
   invoices,
+  posDaySessions,
   posPayments,
+  posSaleItems,
   posSales,
   productListings,
   retailerAccounts,
@@ -11,9 +13,11 @@ import {
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
+import { IdPrefix, newId } from '@/shared/ids.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import {
   completePosSale,
+  createPosExchange,
   createPosReturn,
   holdPosSale,
   quotePosSale,
@@ -33,6 +37,10 @@ import * as scanBus from '@/shared/pos/scan-bus.js';
 import type {
   CreateSaleBody,
   CustomersQuery,
+  DayCloseBody,
+  DayCurrentQuery,
+  DayOpenBody,
+  ExchangeSaleBody,
   HoldSaleBody,
   ListSalesQuery,
   LookupQuery,
@@ -271,6 +279,23 @@ export async function returnSale(input: { auth: Auth; id: string; body: z.infer<
   return ok(result);
 }
 
+export async function exchangeSale(input: { auth: Auth; id: string; body: z.infer<typeof ExchangeSaleBody> }) {
+  const storeId = await getStoreId(input.auth.sub);
+  const result = await createPosExchange(db, {
+    storeId,
+    cashierAccountId: input.auth.sub,
+    idempotencyKey: input.body.idempotencyKey,
+    originalSaleId: input.id,
+    reason: input.body.reason,
+    returnLines: input.body.returnLines,
+    newLines: input.body.newLines,
+    collectTenders: input.body.collectTenders,
+    refundTenders: input.body.refundTenders,
+    pricingMode: input.body.pricingMode,
+  });
+  return ok(result);
+}
+
 // ───────────────────────── reads ─────────────────────────
 
 export async function listSales(input: { auth: Auth; query: z.infer<typeof ListSalesQuery> }) {
@@ -367,24 +392,159 @@ export async function getSaleInvoice(input: { auth: Auth; id: string }) {
   });
 }
 
+/** UTC-day window from a `YYYY-MM-DD` string (matches the rest of the POS reporting). */
+function dayWindow(dateStr: string): { start: Date; end: Date } {
+  const start = new Date(`${dateStr}T00:00:00.000Z`);
+  return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
+}
+
+/** Cash collected vs refunded for a store's completed sales on a business date. */
+async function cashLegsForDate(
+  storeId: string,
+  start: Date,
+  end: Date,
+): Promise<{ collected: number; refunded: number }> {
+  const ids = (
+    await db.query.posSales.findMany({
+      where: and(
+        eq(posSales.storeId, storeId),
+        eq(posSales.status, 'completed'),
+        gte(posSales.completedAt, start),
+        lt(posSales.completedAt, end),
+      ),
+      columns: { id: true },
+    })
+  ).map((r) => r.id);
+  if (ids.length === 0) return { collected: 0, refunded: 0 };
+  const legs = await db
+    .select({
+      direction: posPayments.direction,
+      total: sql<number>`coalesce(sum(${posPayments.amountPaise}),0)::int`,
+    })
+    .from(posPayments)
+    .where(and(inArray(posPayments.saleId, ids), eq(posPayments.method, 'cash')))
+    .groupBy(posPayments.direction);
+  let collected = 0;
+  let refunded = 0;
+  for (const l of legs) {
+    if (l.direction === 'refund') refunded += l.total;
+    else collected += l.total;
+  }
+  return { collected, refunded };
+}
+
+type DaySessionRow = typeof posDaySessions.$inferSelect;
+function shapeSession(s: DaySessionRow) {
+  return {
+    id: s.id,
+    businessDate: s.businessDate,
+    status: s.status,
+    openingFloatPaise: s.openingFloatPaise,
+    openedAt: s.openedAt ? s.openedAt.toISOString() : null,
+    closedAt: s.closedAt ? s.closedAt.toISOString() : null,
+    countedCashPaise: s.countedCashPaise,
+    expectedCashPaise: s.expectedCashPaise,
+    cashVariancePaise: s.cashVariancePaise,
+    note: s.note,
+  };
+}
+
+export async function dayCurrent(input: { auth: Auth; query: z.infer<typeof DayCurrentQuery> }) {
+  const storeId = await getStoreId(input.auth.sub);
+  const dayStr = input.query.date ?? new Date().toISOString().slice(0, 10);
+  const session = await db.query.posDaySessions.findFirst({
+    where: and(eq(posDaySessions.storeId, storeId), eq(posDaySessions.businessDate, dayStr)),
+  });
+  const { start, end } = dayWindow(dayStr);
+  const { collected, refunded } = await cashLegsForDate(storeId, start, end);
+  const openingFloatPaise = session?.openingFloatPaise ?? 0;
+  return ok({
+    date: dayStr,
+    session: session ? shapeSession(session) : null,
+    cashCollectedPaise: collected,
+    cashRefundedPaise: refunded,
+    expectedCashPaise: openingFloatPaise + collected - refunded,
+  });
+}
+
+export async function dayOpen(input: { auth: Auth; body: z.infer<typeof DayOpenBody> }) {
+  const storeId = await getStoreId(input.auth.sub);
+  const dayStr = input.body.date ?? new Date().toISOString().slice(0, 10);
+  const existing = await db.query.posDaySessions.findFirst({
+    where: and(eq(posDaySessions.storeId, storeId), eq(posDaySessions.businessDate, dayStr)),
+  });
+  if (existing) {
+    throw new AppError(409, ErrorCode.InvalidState, `The day ${dayStr} is already opened.`);
+  }
+  const [row] = await db
+    .insert(posDaySessions)
+    .values({
+      id: newId(IdPrefix.PosDaySession),
+      storeId,
+      businessDate: dayStr,
+      status: 'open',
+      openedByAccountId: input.auth.sub,
+      openingFloatPaise: input.body.openingFloatPaise,
+    })
+    .returning();
+  return ok(shapeSession(row!));
+}
+
+export async function dayClose(input: { auth: Auth; body: z.infer<typeof DayCloseBody> }) {
+  const storeId = await getStoreId(input.auth.sub);
+  const dayStr = input.body.date ?? new Date().toISOString().slice(0, 10);
+  const session = await db.query.posDaySessions.findFirst({
+    where: and(eq(posDaySessions.storeId, storeId), eq(posDaySessions.businessDate, dayStr)),
+  });
+  if (!session) throw new AppError(404, ErrorCode.NotFound, `No open day for ${dayStr}.`);
+  if (session.status === 'closed') {
+    throw new AppError(409, ErrorCode.InvalidState, `The day ${dayStr} is already closed.`);
+  }
+  const { start, end } = dayWindow(dayStr);
+  const { collected, refunded } = await cashLegsForDate(storeId, start, end);
+  const expected = session.openingFloatPaise + collected - refunded;
+  const variance = input.body.countedCashPaise - expected;
+  const [row] = await db
+    .update(posDaySessions)
+    .set({
+      status: 'closed',
+      closedByAccountId: input.auth.sub,
+      closedAt: new Date(),
+      countedCashPaise: input.body.countedCashPaise,
+      expectedCashPaise: expected,
+      cashVariancePaise: variance,
+      note: input.body.note ?? null,
+    })
+    .where(eq(posDaySessions.id, session.id))
+    .returning();
+  return ok(shapeSession(row!));
+}
+
 export async function daySummary(input: { auth: Auth; query: z.infer<typeof SummaryQuery> }) {
   const storeId = await getStoreId(input.auth.sub);
   const dayStr = input.query.date ?? new Date().toISOString().slice(0, 10);
-  const start = new Date(`${dayStr}T00:00:00.000Z`);
-  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  const { start, end } = dayWindow(dayStr);
+  const completedWindow = and(
+    eq(posSales.storeId, storeId),
+    eq(posSales.status, 'completed'),
+    gte(posSales.completedAt, start),
+    lt(posSales.completedAt, end),
+  );
 
   const sales = await db.query.posSales.findMany({
-    where: and(
-      eq(posSales.storeId, storeId),
-      eq(posSales.status, 'completed'),
-      gte(posSales.completedAt, start),
-      lt(posSales.completedAt, end),
-    ),
+    where: completedWindow,
     columns: {
       id: true,
       payablePaise: true,
       taxableValuePaise: true,
       taxPaise: true,
+      cgstPaise: true,
+      sgstPaise: true,
+      igstPaise: true,
+      lineDiscountPaise: true,
+      billDiscountPaise: true,
+      roundOffPaise: true,
+      changePaise: true,
       originalSaleId: true,
     },
     with: { items: { columns: { qty: true } } },
@@ -405,25 +565,130 @@ export async function daySummary(input: { auth: Auth; query: z.infer<typeof Summ
           .groupBy(posPayments.method, posPayments.direction);
 
   const byTender: Record<string, number> = { cash: 0, card: 0, upi: 0 };
+  const byTenderNet: Record<string, { collected: number; refunded: number; net: number }> = {
+    cash: { collected: 0, refunded: 0, net: 0 },
+    card: { collected: 0, refunded: 0, net: 0 },
+    upi: { collected: 0, refunded: 0, net: 0 },
+  };
   let refundTotal = 0;
   for (const t of tenders) {
-    if (t.direction === 'refund') refundTotal += t.total;
-    else byTender[t.method] = (byTender[t.method] ?? 0) + t.total;
+    const b = byTenderNet[t.method] ?? { collected: 0, refunded: 0, net: 0 };
+    if (t.direction === 'refund') {
+      refundTotal += t.total;
+      b.refunded += t.total;
+    } else {
+      byTender[t.method] = (byTender[t.method] ?? 0) + t.total;
+      b.collected += t.total;
+    }
+    b.net = b.collected - b.refunded;
+    byTenderNet[t.method] = b;
   }
 
   const saleRows = sales.filter((s) => !s.originalSaleId);
-  const returnRows = sales.filter((s) => s.originalSaleId);
+  const exchangeRows = sales.filter((s) => s.originalSaleId && s.items.length > 0);
+  const returnRows = sales.filter((s) => s.originalSaleId && s.items.length === 0);
+  const itemsSold = [...saleRows, ...exchangeRows].reduce(
+    (s, r) => s + r.items.reduce((a, i) => a + i.qty, 0),
+    0,
+  );
+  const positiveGross = saleRows.reduce((s, r) => s + r.payablePaise, 0);
+  const grossPayablePaise = sales.reduce((s, r) => s + r.payablePaise, 0);
+
+  const voided = await db.query.posSales.findMany({
+    where: and(
+      eq(posSales.storeId, storeId),
+      eq(posSales.status, 'voided'),
+      gte(posSales.voidedAt, start),
+      lt(posSales.voidedAt, end),
+    ),
+    columns: { id: true, payablePaise: true },
+  });
+
+  // Hourly revenue (pure sales only), bucketed by IST hour-of-day.
+  const hourlyRows = await db
+    .select({
+      hour: sql<number>`extract(hour from ${posSales.completedAt} at time zone 'Asia/Kolkata')::int`,
+      salesCount: sql<number>`count(*)::int`,
+      revenuePaise: sql<number>`coalesce(sum(${posSales.payablePaise}),0)::int`,
+    })
+    .from(posSales)
+    .where(and(completedWindow, isNull(posSales.originalSaleId)))
+    .groupBy(sql`extract(hour from ${posSales.completedAt} at time zone 'Asia/Kolkata')`);
+  const hourly = Array.from({ length: 24 }, (_, h) => {
+    const r = hourlyRows.find((x) => x.hour === h);
+    return { hour: h, salesCount: r?.salesCount ?? 0, revenuePaise: r?.revenuePaise ?? 0 };
+  });
+
+  const topProducts =
+    saleIds.length === 0
+      ? []
+      : await db
+          .select({
+            name: sql<string>`max(${posSaleItems.listingNameSnap})`,
+            qty: sql<number>`coalesce(sum(${posSaleItems.qty}),0)::int`,
+            revenuePaise: sql<number>`coalesce(sum(${posSaleItems.netLinePaise}),0)::int`,
+          })
+          .from(posSaleItems)
+          .where(inArray(posSaleItems.saleId, saleIds))
+          .groupBy(posSaleItems.listingId)
+          .orderBy(sql`sum(${posSaleItems.qty}) desc`)
+          .limit(8);
+
+  const byCashier = await db
+    .select({
+      cashierId: posSales.cashierAccountId,
+      name: sql<string>`max(${retailerAccounts.legalName})`,
+      saleCount: sql<number>`count(*)::int`,
+      revenuePaise: sql<number>`coalesce(sum(${posSales.payablePaise}),0)::int`,
+    })
+    .from(posSales)
+    .leftJoin(retailerAccounts, eq(retailerAccounts.id, posSales.cashierAccountId))
+    .where(and(completedWindow, isNull(posSales.originalSaleId)))
+    .groupBy(posSales.cashierAccountId)
+    .orderBy(sql`sum(${posSales.payablePaise}) desc`);
+
+  const session = await db.query.posDaySessions.findFirst({
+    where: and(eq(posDaySessions.storeId, storeId), eq(posDaySessions.businessDate, dayStr)),
+  });
+  const cashCollected = byTenderNet.cash?.collected ?? 0;
+  const cashRefunded = byTenderNet.cash?.refunded ?? 0;
 
   return ok({
     date: dayStr,
     saleCount: saleRows.length,
     returnCount: returnRows.length,
-    itemCount: saleRows.reduce((s, r) => s + r.items.reduce((a, i) => a + i.qty, 0), 0),
-    grossPayablePaise: sales.reduce((s, r) => s + r.payablePaise, 0),
+    exchangeCount: exchangeRows.length,
+    voidCount: voided.length,
+    voidedPaise: voided.reduce((s, r) => s + r.payablePaise, 0),
+    itemCount: itemsSold,
+    // Finance
+    grossPayablePaise,
+    netSalesPaise: grossPayablePaise - refundTotal,
     taxableValuePaise: sales.reduce((s, r) => s + r.taxableValuePaise, 0),
     taxPaise: sales.reduce((s, r) => s + r.taxPaise, 0),
+    cgstPaise: sales.reduce((s, r) => s + r.cgstPaise, 0),
+    sgstPaise: sales.reduce((s, r) => s + r.sgstPaise, 0),
+    igstPaise: sales.reduce((s, r) => s + r.igstPaise, 0),
+    discountsPaise: sales.reduce((s, r) => s + r.lineDiscountPaise + r.billDiscountPaise, 0),
+    roundOffPaise: sales.reduce((s, r) => s + r.roundOffPaise, 0),
+    changeGivenPaise: sales.reduce((s, r) => s + r.changePaise, 0),
     refundsPaise: refundTotal,
+    avgSalePaise: saleRows.length > 0 ? Math.round(positiveGross / saleRows.length) : 0,
+    avgBasketItems:
+      saleRows.length + exchangeRows.length > 0
+        ? Math.round((itemsSold / (saleRows.length + exchangeRows.length)) * 10) / 10
+        : 0,
+    // Breakdowns
     byTender,
+    byTenderNet,
+    hourly,
+    topProducts,
+    byCashier,
+    // Cash session
+    session: session ? shapeSession(session) : null,
+    cashCollectedPaise: cashCollected,
+    cashRefundedPaise: cashRefunded,
+    expectedCashPaise: (session?.openingFloatPaise ?? 0) + cashCollected - cashRefunded,
   });
 }
 

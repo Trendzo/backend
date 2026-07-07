@@ -1,7 +1,7 @@
 /**
  * Retailer profile: /me snapshot + store create + store profile patch.
  */
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
@@ -10,6 +10,7 @@ import {
   productListings,
   retailerAccounts,
   retailerStores,
+  retailerTermsAcceptances,
   storeMedia,
   variants,
 } from '@/db/schema/index.js';
@@ -19,7 +20,12 @@ import { IdPrefix, newId } from '@/shared/ids.js';
 import { hashPassword } from '@/shared/auth/password.js';
 import { recordAudit } from '@/shared/audit.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
-import type { CreateStoreBody, DeleteAccountBody, PatchProfileBody } from './profile.validators.js';
+import { currentTerms, hasAcceptedCurrentTerms } from '@/shared/terms.js';
+import type {
+  CreateStoreBody,
+  DeleteAccountBody,
+  PatchProfileBody,
+} from './profile.validators.js';
 
 type Auth = AccessTokenPayload;
 
@@ -36,7 +42,18 @@ export async function getMe(input: { auth: Auth }) {
   const store = retailer.storeId
     ? await db.query.retailerStores.findFirst({ where: eq(retailerStores.id, retailer.storeId) })
     : null;
+  // Terms acceptance is INDEPENDENT of the store lifecycle: any store that hasn't
+  // accepted the current terms version is `pending`, whatever its status. A version
+  // bump therefore re-flags every store until it re-accepts.
+  const termsAccepted = store ? await hasAcceptedCurrentTerms(db, store.id) : true;
+  const termsAcceptanceRequired = store ? !termsAccepted : false;
+  const ct = await currentTerms(db);
   return ok({
+    termsAcceptanceRequired,
+    termsStatus: (store ? (termsAccepted ? 'accepted' : 'pending') : 'accepted') as
+      | 'accepted'
+      | 'pending',
+    currentTermsVersion: ct.version,
     retailer: {
       id: retailer.id,
       email: retailer.email,
@@ -258,4 +275,85 @@ export async function deleteAccount(input: {
       'fraud-prevention and audit records',
     ],
   });
+}
+
+/** Current Retailer T&C (current admin version + short text) + whether this store accepted it. */
+export async function getTerms(input: { auth: Auth }) {
+  const retailer = await loadRetailer(input.auth.sub);
+  const ct = await currentTerms(db);
+  let acceptedAt: Date | null = null;
+  if (retailer.storeId) {
+    const row = await db.query.retailerTermsAcceptances.findFirst({
+      where: and(
+        eq(retailerTermsAcceptances.storeId, retailer.storeId),
+        eq(retailerTermsAcceptances.termsVersion, ct.version),
+        eq(retailerTermsAcceptances.decision, 'accepted'),
+      ),
+      columns: { acceptedAt: true },
+    });
+    acceptedAt = row?.acceptedAt ?? null;
+  }
+  return ok({
+    version: ct.version,
+    label: ct.label,
+    shortText: ct.shortText,
+    acceptedAt: acceptedAt ? acceptedAt.toISOString() : null,
+  });
+}
+
+/** Record a decision (accept/decline) on the current terms for this store (audited with IP + UA). */
+async function recordTermsDecision(
+  auth: Auth,
+  version: string,
+  decision: 'accepted' | 'declined',
+  ip: string | null,
+  userAgent: string | null,
+) {
+  const retailer = await loadRetailer(auth.sub);
+  if (!retailer.storeId) {
+    throw new AppError(404, ErrorCode.NotFound, 'No store found for this account');
+  }
+  const ct = await currentTerms(db);
+  if (version !== ct.version) {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      'Terms have changed — reload and review the current version.',
+    );
+  }
+  await db
+    .insert(retailerTermsAcceptances)
+    .values({
+      id: newId(IdPrefix.TermsAcceptance),
+      storeId: retailer.storeId,
+      acceptedByAccountId: retailer.id,
+      termsVersion: ct.version,
+      decision,
+      ipAddress: ip,
+      userAgent,
+    })
+    // Only ACCEPTS are constrained one-per-(store,version); declines append freely.
+    .onConflictDoNothing();
+  return ct.version;
+}
+
+export async function acceptTerms(input: {
+  auth: Auth;
+  body: { version: string };
+  ip: string | null;
+  userAgent: string | null;
+}) {
+  const version = await recordTermsDecision(input.auth, input.body.version, 'accepted', input.ip, input.userAgent);
+  return ok({ version, decision: 'accepted' });
+}
+
+/** Retailer declines the terms — recorded for audit. The client then logs the user out. */
+export async function declineTerms(input: {
+  auth: Auth;
+  body: { version: string };
+  ip: string | null;
+  userAgent: string | null;
+}) {
+  const version = await recordTermsDecision(input.auth, input.body.version, 'declined', input.ip, input.userAgent);
+  return ok({ version, decision: 'declined' });
 }

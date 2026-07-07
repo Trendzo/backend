@@ -9,7 +9,13 @@ import {
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { posPricingMode, posSaleStatus, posTenderMethod, taxSplitKind } from './enums.js';
+import {
+  posDaySessionStatus,
+  posPricingMode,
+  posSaleStatus,
+  posTenderMethod,
+  taxSplitKind,
+} from './enums.js';
 import { invoices } from './invoicing.js';
 import { productListings, variants } from './products.js';
 import { retailerAccounts, retailerStores } from './store.js';
@@ -296,7 +302,41 @@ export const posReturnLines = pgTable(
   }),
 );
 
+/**
+ * POS day session — opening cash float + end-of-day cash reconciliation (Z-report).
+ * One row per (store, business date). `expected/counted/variance` are snapshotted at close;
+ * reconciliation is by date (sales are not hard-linked to a session).
+ */
+export const posDaySessions = pgTable(
+  'pos_day_sessions',
+  {
+    id: text('id').primaryKey(),
+    storeId: text('store_id')
+      .notNull()
+      .references(() => retailerStores.id, { onDelete: 'cascade' }),
+    businessDate: text('business_date').notNull(), // YYYY-MM-DD (UTC day)
+    status: posDaySessionStatus('status').notNull().default('open'),
+    openedByAccountId: text('opened_by_account_id').notNull(),
+    openedAt: timestamp('opened_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    openingFloatPaise: integer('opening_float_paise').notNull().default(0),
+    closedByAccountId: text('closed_by_account_id'),
+    closedAt: timestamp('closed_at', { withTimezone: true, mode: 'date' }),
+    countedCashPaise: integer('counted_cash_paise'),
+    expectedCashPaise: integer('expected_cash_paise'),
+    cashVariancePaise: integer('cash_variance_paise'), // counted - expected (signed)
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => ({
+    storeDateIdx: uniqueIndex('pos_day_sessions_store_date_idx').on(t.storeId, t.businessDate),
+  }),
+);
+
 // ===== Relations =====
+
+export const posDaySessionsRelations = relations(posDaySessions, ({ one }) => ({
+  store: one(retailerStores, { fields: [posDaySessions.storeId], references: [retailerStores.id] }),
+}));
 
 export const posCustomersRelations = relations(posCustomers, ({ one, many }) => ({
   store: one(retailerStores, { fields: [posCustomers.storeId], references: [retailerStores.id] }),

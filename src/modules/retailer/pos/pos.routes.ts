@@ -15,8 +15,12 @@ import {
   QuoteBody,
   ReceiptQuery,
   ResolveScanQuery,
+  ExchangeSaleBody,
   ReturnSaleBody,
   ScanBody,
+  DayCloseBody,
+  DayCurrentQuery,
+  DayOpenBody,
   SummaryQuery,
   VoidSaleBody,
 } from './pos.validators.js';
@@ -82,6 +86,12 @@ const retailerPosRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => ctrl.returnSale({ auth: getAuth(req), id: req.params.id, body: req.body }),
   );
 
+  app.post(
+    '/sales/:id/exchange',
+    { preHandler: requirePermission('pos.refund'), schema: { params: IdParam, body: ExchangeSaleBody } },
+    async (req) => ctrl.exchangeSale({ auth: getAuth(req), id: req.params.id, body: req.body }),
+  );
+
   app.get(
     '/sales',
     { preHandler: requirePermission('pos.view'), schema: { querystring: ListSalesQuery } },
@@ -104,6 +114,23 @@ const retailerPosRoutes: FastifyPluginAsyncZod = async (app) => {
     '/summary',
     { preHandler: requirePermission('pos.view'), schema: { querystring: SummaryQuery } },
     async (req) => ctrl.daySummary({ auth: getAuth(req), query: req.query }),
+  );
+
+  // Day open/close + cash reconciliation.
+  app.get(
+    '/day/current',
+    { preHandler: requirePermission('pos.view'), schema: { querystring: DayCurrentQuery } },
+    async (req) => ctrl.dayCurrent({ auth: getAuth(req), query: req.query }),
+  );
+  app.post(
+    '/day/open',
+    { preHandler: requirePermission('pos.manage'), schema: { body: DayOpenBody } },
+    async (req) => ctrl.dayOpen({ auth: getAuth(req), body: req.body }),
+  );
+  app.post(
+    '/day/close',
+    { preHandler: requirePermission('pos.manage'), schema: { body: DayCloseBody } },
+    async (req) => ctrl.dayClose({ auth: getAuth(req), body: req.body }),
   );
 
   app.get(

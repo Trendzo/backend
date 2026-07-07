@@ -279,8 +279,11 @@ export async function getOrderDetail(orderId: string) {
     acceptanceDeadlineAt: r.acceptanceDeadlineAt,
   }));
 
+  // Never expose the store→driver handoff code — it must be read off the driver's
+  // screen at the physical handover (admin mints it via dispatch but must not see it).
+  const { agentHandoffCode: _agentHandoffCode, ...orderSafe } = order;
   return ok({
-    ...order,
+    ...orderSafe,
     group: { ...order.group, siblingOrders },
     returns: returnsRows,
     refunds: refundsRows,

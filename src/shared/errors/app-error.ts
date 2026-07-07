@@ -109,6 +109,8 @@ export const ErrorCode = {
   ConsumerBanned: 'consumer_banned',
   ConsumerSuspended: 'consumer_suspended',
   ConsumerClosed: 'consumer_closed',
+  DriverSuspended: 'driver_suspended',
+  DriverInactive: 'driver_inactive',
 
   // Consumer profile — OTP-only signups have no name/email until they complete
   // their profile; order placement requires both (order snapshots are NOT NULL).

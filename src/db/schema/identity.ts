@@ -1,5 +1,5 @@
 import { relations } from 'drizzle-orm';
-import { pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { doublePrecision, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import {
   adminAccountStatus,
   adminSubRole,
@@ -60,12 +60,37 @@ export const adminAccounts = pgTable(
   }),
 );
 
-export const deliveryAgents = pgTable('delivery_agents', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  phone: text('phone').notNull(),
-  status: deliveryAgentStatus('status').notNull().default('active'),
-});
+/**
+ * Standalone delivery-driver identity. A driver is its OWN account (JWT `kind:'driver'`,
+ * phone-OTP find-or-create, instant-active) — NOT a retailer sub-role. `name` is nullable
+ * because an OTP-only signup starts with just a verified phone (mirrors `consumers.name`);
+ * the profile (name/vehicle/docs) is filled in later. Orders are assigned to a driver via
+ * the admin dispatch desk (`orders.assigned_agent_id` FKs this table).
+ */
+export const deliveryAgents = pgTable(
+  'delivery_agents',
+  {
+    id: text('id').primaryKey(),
+    phone: text('phone').notNull(),
+    name: text('name'),
+    avatarUrl: text('avatar_url'),
+    vehicleType: text('vehicle_type'),
+    vehicleNumber: text('vehicle_number'),
+    city: text('city'),
+    licenceDocUrl: text('licence_doc_url'),
+    rcDocUrl: text('rc_doc_url'),
+    insuranceDocUrl: text('insurance_doc_url'),
+    // Last-known location (single point, refreshed by the driver-app ping; not a track).
+    currentLat: doublePrecision('current_lat'),
+    currentLng: doublePrecision('current_lng'),
+    lastLocationAt: timestamp('last_location_at', { withTimezone: true, mode: 'date' }),
+    status: deliveryAgentStatus('status').notNull().default('active'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => ({
+    phoneIdx: uniqueIndex('delivery_agents_phone_idx').on(t.phone),
+  }),
+);
 
 // retailer_accounts lives in store.ts (alongside retailer_stores) — colocated to give
 // the table a real DB-level FK to retailer_stores without an ESM circular import.

@@ -25,7 +25,7 @@ import {
   taxSplitKind,
 } from './enums.js';
 import { consumers, deliveryAgents } from './identity.js';
-import { retailerAccounts, retailerStores } from './store.js';
+import { retailerStores } from './store.js';
 import { productListings, variants } from './products.js';
 
 /**
@@ -108,10 +108,10 @@ export const orders = pgTable(
       .notNull()
       .references(() => retailerStores.id),
     addressId: text('address_id').references(() => addresses.id), // nullable for pickup
-    // §9 — store staff (retailer sub-role 'delivery_agent') assigned to deliver this
-    // order. Set at handover. Nullable: unassigned, pickup, or an external courier
-    // recorded only by name/phone snapshot in the handover transition marker.
-    assignedAgentId: text('assigned_agent_id').references(() => retailerAccounts.id),
+    // §9 — the standalone delivery driver (`delivery_agents` row) assigned to deliver
+    // this order by the admin dispatch desk. Nullable: unassigned, pickup, or an
+    // external courier recorded only by name/phone snapshot in the handover marker.
+    assignedAgentId: text('assigned_agent_id').references(() => deliveryAgents.id),
     deliveryMethod: deliveryMethod('delivery_method').notNull(),
     paymentMethod: paymentMethod('payment_method').notNull(),
     paymentMethodLabel: text('payment_method_label').notNull(), // human-readable snap, e.g. "UPI · GPay"
@@ -171,6 +171,10 @@ export const orders = pgTable(
     // to claw back the earned portion for the refunded items.
     loyaltyEarnedPoints: integer('loyalty_earned_points').notNull().default(0),
 
+    // Cash physically collected by the driver at a COD delivery (paise). 0 for prepaid
+    // or until collected. Feeds the driver's cash-to-deposit balance.
+    codCollectedPaise: integer('cod_collected_paise').notNull().default(0),
+
     // Consumer-facing handover code for pickup orders only. Generated at placement,
     // verified at the store front during the consumer pickup handover.
     pickupCode: text('pickup_code'),
@@ -178,6 +182,11 @@ export const orders = pgTable(
     // Generated at placement; the consumer reads it to the agent who supplies it on
     // door close — proof the handover reached the right person.
     deliveryOtp: text('delivery_otp'),
+    // Store→agent handoff code. Generated when the retailer assigns an in-house
+    // delivery agent to a packed order; shown ONLY in the assigned agent's app. The
+    // retailer verifies it (reading it off the agent's screen) at the physical
+    // handover to prove the right agent collected the parcel. Cleared on pickup.
+    agentHandoffCode: text('agent_handoff_code'),
     // §9 — pickup orders carry a snap of the consumer-selected slot so config edits
     // on `store_pickup_slots` don't drift the order. NULL on non-pickup orders.
     pickupSlotId: text('pickup_slot_id'),
@@ -406,6 +415,8 @@ export const deliveryAttempts = pgTable(
     outcome: deliveryAttemptOutcome('outcome').notNull(),
     notes: text('notes'),
     proofPhotos: jsonb('proof_photos').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    // Optional captured signature (Cloudinary URL) for a proof-of-delivery.
+    signatureUrl: text('signature_url'),
     attemptedAt: timestamp('attempted_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),

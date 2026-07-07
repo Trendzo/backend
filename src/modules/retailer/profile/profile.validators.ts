@@ -5,6 +5,8 @@ export const DeleteAccountBody = z.object({
   confirmation: z.literal('DELETE'),
 });
 
+export const AcceptTermsBody = z.object({ version: z.string().trim().min(1).max(64) });
+
 export const CreateStoreBody = z.object({
   legalName: z.string().trim().min(2).max(120),
   address: z.string().trim().min(5).max(500),

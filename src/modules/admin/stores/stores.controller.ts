@@ -7,6 +7,7 @@ import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import { retailerAccounts, retailerStores } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
+import { assertTermsAcceptedForGoLive } from '@/shared/terms.js';
 import { ok } from '@/shared/http/envelope.js';
 import type { ApproveBody, ListQuery, RejectBody } from './stores.validators.js';
 
@@ -96,6 +97,9 @@ export async function approveStore(input: { id: string; body: z.infer<typeof App
       `Approve the retailer (${owner.email}) before approving its storefront — currently '${owner.status}'.`,
     );
   }
+
+  // Legal gate — the retailer must have accepted the current Terms before the store goes live.
+  await assertTermsAcceptedForGoLive(db, store.id);
 
   const [updated] = await db
     .update(retailerStores)

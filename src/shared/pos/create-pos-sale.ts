@@ -671,6 +671,300 @@ export async function createPosReturn(
   });
 }
 
+export type PosExchangeInput = {
+  storeId: string;
+  cashierAccountId: string;
+  idempotencyKey: string;
+  originalSaleId: string;
+  reason: string;
+  /** Lines from the original sale being handed back. */
+  returnLines: { originalSaleItemId: string; qty: number; restock?: boolean | undefined }[];
+  /** Replacement variants being sold. */
+  newLines: PosLineInput[];
+  /** Used when the new items cost MORE than the returned ones (net > 0). */
+  collectTenders?: PosTenderInput[] | undefined;
+  /** Used when the returned items are worth MORE (net < 0) — refund the difference. */
+  refundTenders?: PosTenderInput[] | undefined;
+  pricingMode?: PosPricingMode | undefined;
+};
+
+/**
+ * In-store EXCHANGE (size swap etc.): hand back some original line(s) AND sell replacement
+ * variant(s), settling only the NET difference. Modelled as ONE net `posSales` row
+ * (`originalSaleId` set) with the new items as `posSaleItems`, the returned items as
+ * `posReturnLines`, one net payment leg, a NEW tax invoice for the new items, and a credit
+ * note against the original invoice for the returned items. New + returned sides share the
+ * original's `taxSplitKind` (same customer) so the net GST split guard always holds.
+ */
+export async function createPosExchange(
+  database: typeof Db,
+  input: PosExchangeInput,
+): Promise<{
+  exchangeSaleId: string;
+  newInvoiceId: string;
+  newInvoiceNumber: string;
+  returnRefundPaise: number;
+  newPayablePaise: number;
+  netPaise: number;
+  creditNoteId: string | null;
+}> {
+  const existing = await database.query.posSales.findFirst({
+    where: eq(posSales.idempotencyKey, input.idempotencyKey),
+  });
+  if (existing) {
+    return {
+      exchangeSaleId: existing.id,
+      newInvoiceId: existing.invoiceId ?? '',
+      newInvoiceNumber: '',
+      returnRefundPaise: 0,
+      newPayablePaise: 0,
+      netPaise: existing.payablePaise,
+      creditNoteId: null,
+    };
+  }
+
+  const store = await loadActiveStore(database, input.storeId);
+  const newLines = mergeLines(input.newLines);
+
+  const original = await database.query.posSales.findFirst({
+    where: eq(posSales.id, input.originalSaleId),
+    with: { items: true },
+  });
+  if (!original || original.storeId !== store.id) {
+    throw new AppError(404, ErrorCode.NotFound, 'Original sale not found');
+  }
+  if (original.status !== 'completed') {
+    throw new AppError(409, ErrorCode.InvalidState, 'Can only exchange against a completed sale');
+  }
+
+  // New side inherits the original's tax treatment (same customer) so the net split stays valid.
+  const taxSplitKind = posTaxSplitFor(store.stateCode, original.customerGstinSnap ?? undefined);
+  const { pricing } = await resolvePricingVariants(database, store.id, newLines);
+  const newPriced = pricePosSale({
+    variants: pricing,
+    lines: newLines,
+    gstScheme: store.gstScheme,
+    taxSplitKind,
+    ...(input.pricingMode !== undefined && { pricingMode: input.pricingMode }),
+  });
+
+  const exchangeSaleId = newId(IdPrefix.PosSale);
+
+  const result = await database.transaction(async (tx) => {
+    const itemById = new Map(original.items.map((i) => [i.id, i]));
+
+    // ── Return side: restock + accumulate reversed value ──
+    let refundValue = 0;
+    let taxableReversed = 0;
+    let taxReversed = 0;
+    for (const rl of input.returnLines) {
+      const orig = itemById.get(rl.originalSaleItemId);
+      if (!orig) throw new AppError(404, ErrorCode.NotFound, 'Return line not on original sale');
+      if (rl.qty <= 0 || rl.qty > orig.qty) {
+        throw AppError.validation('Return qty exceeds purchased qty');
+      }
+      const lineRefund = Math.round((orig.netLinePaise * rl.qty) / orig.qty);
+      const lineTaxable = Math.round((orig.taxableValuePaise * rl.qty) / orig.qty);
+      refundValue += lineRefund;
+      taxableReversed += lineTaxable;
+      taxReversed += lineRefund - lineTaxable;
+      if (rl.restock !== false) {
+        const [updated] = await tx
+          .update(variants)
+          .set({ stock: sql`${variants.stock} + ${rl.qty}` })
+          .where(eq(variants.id, orig.variantId))
+          .returning({ stock: variants.stock });
+        await tx.insert(inventoryAdjustments).values({
+          id: newId(IdPrefix.InventoryAdjustment),
+          variantId: orig.variantId,
+          delta: rl.qty,
+          newStock: updated?.stock ?? 0,
+          reason: 'pos_return_restock',
+          actorKind: 'retailer',
+          actorId: input.cashierAccountId,
+          refKind: 'pos_sale',
+          refId: exchangeSaleId,
+        });
+      }
+    }
+
+    // ── New side: decrement stock atomically (never oversell) ──
+    for (const l of newLines) {
+      const [updated] = await tx
+        .update(variants)
+        .set({ stock: sql`${variants.stock} - ${l.qty}` })
+        .where(
+          and(eq(variants.id, l.variantId), sql`${variants.stock} - ${variants.reserved} >= ${l.qty}`),
+        )
+        .returning({ stock: variants.stock });
+      if (!updated) {
+        throw new AppError(409, ErrorCode.OrderStockUnavailable, `Insufficient stock for one or more items`);
+      }
+      await tx.insert(inventoryAdjustments).values({
+        id: newId(IdPrefix.InventoryAdjustment),
+        variantId: l.variantId,
+        delta: -l.qty,
+        newStock: updated.stock,
+        reason: 'pos_sale',
+        actorKind: 'retailer',
+        actorId: input.cashierAccountId,
+        refKind: 'pos_sale',
+        refId: exchangeSaleId,
+      });
+    }
+
+    // ── Net settlement ──
+    const N = newPriced.payablePaise;
+    const R = refundValue;
+    const net = N - R;
+    const collect = input.collectTenders ?? [];
+    const refund = input.refundTenders ?? [];
+    let tenderedPaise = 0;
+    let changePaise = 0;
+    if (net > 0) {
+      if (refund.length > 0) throw AppError.validation('No refund tenders when the customer owes a difference');
+      const applied = collect.reduce((s, t) => s + t.amountPaise, 0);
+      if (applied !== net) {
+        throw new AppError(400, ErrorCode.ValidationError, `Payments (${applied}) must equal the amount due (${net})`);
+      }
+      tenderedPaise = collect.reduce((s, t) => s + (t.tenderedPaise ?? t.amountPaise), 0);
+      changePaise = Math.max(0, tenderedPaise - net);
+    } else if (net < 0) {
+      if (collect.length > 0) throw AppError.validation('No collect tenders when refunding a difference');
+      const applied = refund.reduce((s, t) => s + t.amountPaise, 0);
+      if (applied !== -net) {
+        throw new AppError(400, ErrorCode.ValidationError, `Refund (${applied}) must equal the refund due (${-net})`);
+      }
+    } else if (collect.length > 0 || refund.length > 0) {
+      throw AppError.validation('An even exchange takes no tenders');
+    }
+
+    // Split the reversed tax by the same kind the net row uses, so the GST guard holds.
+    const retCgst = taxSplitKind === 'inter_state' ? 0 : Math.floor(taxReversed / 2);
+    const retSgst = taxSplitKind === 'inter_state' ? 0 : taxReversed - retCgst;
+    const retIgst = taxSplitKind === 'inter_state' ? taxReversed : 0;
+
+    await tx.insert(posSales).values({
+      id: exchangeSaleId,
+      storeId: store.id,
+      cashierAccountId: input.cashierAccountId,
+      status: 'completed',
+      note: `Exchange: ${input.reason}`,
+      customerNameSnap: original.customerNameSnap,
+      customerPhoneSnap: original.customerPhoneSnap,
+      customerGstinSnap: original.customerGstinSnap,
+      storeLegalNameSnap: store.legalName,
+      storeGstinSnap: store.gstin,
+      storeStateCodeSnap: store.stateCode,
+      storeAddressSnap: store.address,
+      taxSplitKind,
+      pricingMode: input.pricingMode ?? 'tax_inclusive',
+      // Net ledger — returned value nets down the new sale so the day reconciles on one row.
+      itemsGrossPaise: newPriced.itemsGrossPaise - R,
+      lineDiscountPaise: newPriced.lineDiscountPaise,
+      billDiscountPaise: 0,
+      taxableValuePaise: newPriced.taxableValuePaise - taxableReversed,
+      cgstPaise: newPriced.cgstPaise - retCgst,
+      sgstPaise: newPriced.sgstPaise - retSgst,
+      igstPaise: newPriced.igstPaise - retIgst,
+      taxPaise: newPriced.taxPaise - taxReversed,
+      roundOffPaise: newPriced.roundOffPaise,
+      payablePaise: net,
+      tenderedPaise,
+      changePaise,
+      originalSaleId: original.id,
+      idempotencyKey: input.idempotencyKey,
+      completedAt: new Date(),
+    });
+
+    await insertSaleItems(tx, exchangeSaleId, newPriced);
+
+    for (const rl of input.returnLines) {
+      const orig = itemById.get(rl.originalSaleItemId)!;
+      const lineRefund = Math.round((orig.netLinePaise * rl.qty) / orig.qty);
+      await tx.insert(posReturnLines).values({
+        id: newId(IdPrefix.PosReturnLine),
+        returnSaleId: exchangeSaleId,
+        originalSaleItemId: rl.originalSaleItemId,
+        variantId: orig.variantId,
+        qty: rl.qty,
+        refundPaise: lineRefund,
+        restock: rl.restock !== false,
+      });
+    }
+
+    for (const t of collect) {
+      await tx.insert(posPayments).values({
+        id: newId(IdPrefix.PosPayment),
+        saleId: exchangeSaleId,
+        method: t.method,
+        direction: 'collect',
+        amountPaise: t.amountPaise,
+        tenderedPaise: t.tenderedPaise ?? null,
+        changePaise: t.method === 'cash' ? Math.max(0, (t.tenderedPaise ?? t.amountPaise) - t.amountPaise) : 0,
+        reference: t.reference ?? null,
+      });
+    }
+    for (const t of refund) {
+      await tx.insert(posPayments).values({
+        id: newId(IdPrefix.PosPayment),
+        saleId: exchangeSaleId,
+        method: t.method,
+        direction: 'refund',
+        amountPaise: t.amountPaise,
+        reference: t.reference ?? null,
+      });
+    }
+
+    // New tax invoice for the new items.
+    const invoiceData: PosInvoiceData = {
+      saleId: exchangeSaleId,
+      store,
+      customerName: original.customerNameSnap,
+      customerPhone: original.customerPhoneSnap,
+      customerGstin: original.customerGstinSnap,
+      lines: newPriced.lines,
+      taxSplitKind,
+      taxableValuePaise: newPriced.taxableValuePaise,
+      cgstPaise: newPriced.cgstPaise,
+      sgstPaise: newPriced.sgstPaise,
+      igstPaise: newPriced.igstPaise,
+    };
+    const { invoiceId, invoiceNumber } = await insertPosInvoice(tx, invoiceData);
+    await tx.update(posSales).set({ invoiceId }).where(eq(posSales.id, exchangeSaleId));
+
+    // Credit note against the original invoice for the returned items.
+    let creditNoteId: string | null = null;
+    if (original.invoiceId && refundValue > 0) {
+      creditNoteId = await insertPosCreditNote(tx, {
+        invoiceId: original.invoiceId,
+        reason: `Exchange return: ${input.reason}`,
+        subtotalReversedPaise: taxableReversed,
+        taxReversedPaise: taxReversed,
+        grandTotalReversedPaise: refundValue,
+      });
+    }
+
+    return { invoiceId, invoiceNumber, invoiceData, refundValue, newPayable: N, net, creditNoteId };
+  });
+
+  schedulePosInvoicePdf({
+    invoiceId: result.invoiceId,
+    invoiceNumber: result.invoiceNumber,
+    data: result.invoiceData,
+  });
+
+  return {
+    exchangeSaleId,
+    newInvoiceId: result.invoiceId,
+    newInvoiceNumber: result.invoiceNumber,
+    returnRefundPaise: result.refundValue,
+    newPayablePaise: result.newPayable,
+    netPaise: result.net,
+    creditNoteId: result.creditNoteId,
+  };
+}
+
 // ───────────────────────── internal writers ─────────────────────────
 
 async function insertSaleItems(tx: Tx, saleId: string, priced: PosPricing): Promise<void> {

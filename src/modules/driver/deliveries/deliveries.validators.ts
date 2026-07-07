@@ -3,11 +3,30 @@ import { z } from 'zod';
 export const IdParam = z.object({ id: z.string() });
 
 export const ListDeliveriesQuery = z.object({
-  // Defaults to the agent's active legs (picked_up / out_for_delivery / at_door).
+  // Defaults to the driver's active legs (packed … returning_to_store).
   status: z
-    .enum(['picked_up', 'out_for_delivery', 'at_door', 'delivered', 'undelivered'])
+    .enum([
+      'packed',
+      'picked_up',
+      'out_for_delivery',
+      'at_door',
+      'delivered',
+      'undelivered',
+      'returning_to_store',
+      'returned_to_store',
+    ])
     .optional(),
   limit: z.coerce.number().int().positive().max(200).default(100),
+});
+
+export const DeliverBody = z.object({
+  // Consumer-spoken delivery OTP — required (and verified) when the order carries one.
+  otp: z.string().trim().min(4).max(8).optional(),
+  note: z.string().trim().max(500).optional(),
+  proofPhotos: z.array(z.string().url()).optional(),
+  signatureUrl: z.string().url().optional(),
+  // Cash collected at a COD delivery (paise). Ignored for prepaid orders.
+  codCollectedPaise: z.number().int().nonnegative().optional(),
 });
 
 export const DoorExtendBody = z.object({
@@ -25,8 +44,6 @@ export const DoorCloseBody = z.object({
       }),
     )
     .min(1),
-  // Consumer-spoken delivery OTP. Required (and verified) when the order carries one;
-  // legacy orders placed before the OTP column may close without it.
   otp: z.string().trim().min(4).max(8).optional(),
 });
 
