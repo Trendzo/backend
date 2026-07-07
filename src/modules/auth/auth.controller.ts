@@ -250,7 +250,11 @@ export async function driverOtpLogin(input: { body: z.infer<typeof Msg91VerifyBo
     where: eq(deliveryAgents.phone, phone),
   });
 
+  // `isNew` = this verified phone had no account, so the app routes to the signup
+  // (profile-completion) flow instead of straight into the app.
+  let isNew = false;
   if (!driver) {
+    isNew = true;
     const id = newId(IdPrefix.Driver);
     try {
       const inserted = await db
@@ -262,6 +266,7 @@ export async function driverOtpLogin(input: { body: z.infer<typeof Msg91VerifyBo
       // Two first-logins racing on the same phone — the loser re-reads the winner's row.
       const code = (err as { code?: string }).code;
       if (code !== '23505') throw err;
+      isNew = false;
       driver = await db.query.deliveryAgents.findFirst({ where: eq(deliveryAgents.phone, phone) });
       if (!driver) {
         throw new AppError(500, ErrorCode.InternalError, 'Could not create account');
@@ -281,7 +286,7 @@ export async function driverOtpLogin(input: { body: z.infer<typeof Msg91VerifyBo
     { sub: driver.id, kind: 'driver' },
     { expiresIn: env.JWT_DRIVER_ACCESS_EXPIRES_IN },
   );
-  return ok({ token, driver: shapeDriver(driver) });
+  return ok({ token, driver: shapeDriver(driver), isNew });
 }
 
 export async function retailerLogin(input: { body: z.infer<typeof LoginBody> }) {
