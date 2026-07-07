@@ -17,7 +17,7 @@ const adminDispatchRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     '/orders',
     { preHandler: requirePermission('dispatch.view') },
-    async () => ctrl.listUnassignedOrders(),
+    async () => ctrl.listPackedOrders(),
   );
 
   app.post(

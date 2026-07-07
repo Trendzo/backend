@@ -7,7 +7,7 @@
  * The handoff code is NEVER returned to the admin — it must be read off the driver's
  * screen at the physical handover (that is the whole point of the proof).
  */
-import { and, asc, count, eq, inArray, isNull } from 'drizzle-orm';
+import { asc, count, eq, inArray } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import { deliveryAgents, orders } from '@/db/schema/index.js';
@@ -58,10 +58,14 @@ export async function listDrivers() {
   );
 }
 
-/** Packed orders awaiting a driver (nothing assigned yet). */
-export async function listUnassignedOrders() {
+/**
+ * Packed orders for the dispatch board — both unassigned (awaiting a driver) and already
+ * assigned (with their current driver, so admin can reassign/unassign). This is the manual
+ * override surface for when broadcast auto-dispatch fails.
+ */
+export async function listPackedOrders() {
   const rows = await db.query.orders.findMany({
-    where: and(eq(orders.status, 'packed'), isNull(orders.assignedAgentId)),
+    where: eq(orders.status, 'packed'),
     orderBy: asc(orders.placedAt),
     limit: 200,
     columns: {
@@ -74,9 +78,26 @@ export async function listUnassignedOrders() {
       addressPincodeSnap: true,
       grandTotalPaise: true,
       placedAt: true,
+      assignedAgentId: true,
     },
   });
-  return ok(rows);
+  const driverIds = [...new Set(rows.map((r) => r.assignedAgentId).filter((x): x is string => !!x))];
+  const drivers = driverIds.length
+    ? await db.query.deliveryAgents.findMany({
+        where: inArray(deliveryAgents.id, driverIds),
+        columns: { id: true, name: true, phone: true },
+      })
+    : [];
+  const byId = new Map(drivers.map((d) => [d.id, d]));
+  return ok(
+    rows.map((r) => {
+      const d = r.assignedAgentId ? byId.get(r.assignedAgentId) : null;
+      return {
+        ...r,
+        assignedDriver: d ? { id: d.id, name: d.name, phone: d.phone } : null,
+      };
+    }),
+  );
 }
 
 async function loadActiveDriver(driverId: string) {
