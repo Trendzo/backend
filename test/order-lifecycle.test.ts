@@ -841,6 +841,188 @@ describe('WS3 — reverse pickup', () => {
   });
 });
 
+/* ═══ Multi-retailer cart split ═══════════════════════════════════════════ */
+
+describe('group checkout — one cart, N stores, one group', () => {
+  let store2Id: string;
+  let variant2Id: string;
+  let zeroStockVariantId: string;
+  let groupKey: string;
+  let firstGroupId: string;
+
+  const groupPlace = (payload: Record<string, unknown>) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/checkout/group',
+      headers: auth(consumerToken),
+      payload,
+    });
+
+  it('setup: a second store with its own catalog', async () => {
+    store2Id = newId(IdPrefix.Store);
+    await db.insert(retailerStores).values({
+      id: store2Id,
+      legalEntityId: `LE_${store2Id}`,
+      legalName: 'Second Test Store',
+      gstin: '27AAFCK9999M1Z5',
+      address: '9 Other Rd, Mumbai, MH',
+      stateCode: 'MH',
+      lat: 19.07,
+      lng: 72.84,
+      status: 'active',
+      platformFeeBp: 200,
+    });
+    const catId = newId(IdPrefix.Category);
+    await db.insert(categories).values({
+      id: catId,
+      slug: `cat2-${catId.slice(-6)}`,
+      label: 'Cat 2',
+      gender: 'unisex',
+    });
+    const listing2 = newId(IdPrefix.Listing);
+    await db.insert(productListings).values({
+      id: listing2,
+      storeId: store2Id,
+      categoryId: catId,
+      name: 'Second Store Kurta',
+      gender: 'unisex',
+      listingPolicy: 'return',
+      status: 'active',
+      variantMode: 'single',
+    });
+    const group2 = newId(IdPrefix.VariantGroup);
+    await db.insert(variantGroups).values({
+      id: group2,
+      listingId: listing2,
+      storeId: store2Id,
+      name: 'Default',
+      isDefault: true,
+    });
+    variant2Id = newId(IdPrefix.Variant);
+    await db.insert(variants).values({
+      id: variant2Id,
+      listingId: listing2,
+      storeId: store2Id,
+      groupId: group2,
+      attributes: {},
+      attributesLabel: 'One size',
+      stock: 1000,
+      pricePaise: 30_000,
+    });
+    zeroStockVariantId = newId(IdPrefix.Variant);
+    await db.insert(variants).values({
+      id: zeroStockVariantId,
+      listingId: listing2,
+      storeId: store2Id,
+      groupId: group2,
+      attributes: { sku: 'zero' },
+      attributesLabel: 'Sold out',
+      stock: 0,
+      pricePaise: 30_000,
+    });
+  });
+
+  it('splits a 2-store cart into one group with a child order per store', async () => {
+    groupKey = `gik_test_${Date.now()}`;
+    const res = await groupPlace({
+      items: [
+        { variantId, qty: 1 },
+        { variantId: variant2Id, qty: 2 },
+      ],
+      deliveryMethod: 'standard',
+      paymentMethod: 'upi',
+      addressId,
+      idempotencyKey: groupKey,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = data(res) as {
+      groupId: string;
+      combinedTotalPaise: number;
+      orders: Array<{ orderId: string; storeId: string; status: string; pricing: { totalPaise: number } }>;
+      alreadyExisted: boolean;
+    };
+    firstGroupId = body.groupId;
+    expect(body.orders).toHaveLength(2);
+    expect(new Set(body.orders.map((o) => o.storeId))).toEqual(new Set([storeId, store2Id]));
+    expect(body.orders.every((o) => o.status === 'routing')).toBe(true);
+    expect(body.alreadyExisted).toBe(false);
+    expect(body.combinedTotalPaise).toBe(
+      body.orders.reduce((s, o) => s + o.pricing.totalPaise, 0),
+    );
+    // Both children share the ONE group row.
+    for (const o of body.orders) {
+      expect((await orderRow(o.orderId)).groupId).toBe(body.groupId);
+    }
+  });
+
+  it('replays idempotently — same key returns the same group, no duplicates', async () => {
+    const res = await groupPlace({
+      items: [
+        { variantId, qty: 1 },
+        { variantId: variant2Id, qty: 2 },
+      ],
+      deliveryMethod: 'standard',
+      paymentMethod: 'upi',
+      addressId,
+      idempotencyKey: groupKey,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = data(res) as { groupId: string; alreadyExisted: boolean; combinedTotalPaise: number };
+    expect(body.groupId).toBe(firstGroupId);
+    expect(body.alreadyExisted).toBe(true);
+    const children = await db.query.orders.findMany({
+      where: eq(orders.groupId, firstGroupId),
+      columns: { id: true },
+    });
+    expect(children).toHaveLength(2); // no third/fourth child from the replay
+  });
+
+  it('all-or-nothing: a failing store unwinds the placed sibling (reservations + refund)', async () => {
+    const before = await variantRow(); // fixture variant baseline
+    const failKey = `gik_fail_${Date.now()}`;
+    const res = await groupPlace({
+      items: [
+        { variantId, qty: 1 },
+        { variantId: zeroStockVariantId, qty: 1 }, // store 2 will fail on stock
+      ],
+      deliveryMethod: 'standard',
+      paymentMethod: 'upi',
+      addressId,
+      idempotencyKey: failKey,
+    });
+    expect(res.statusCode).toBe(409); // OrderStockUnavailable bubbles
+
+    // Reservation restored regardless of which bucket placed first.
+    expect((await variantRow()).reserved).toBe(before.reserved);
+    // Every child that DID place under this key was compensated to 'cancelled'
+    // (and its cancellation refund exists for the prepaid tender).
+    for (const sid of [storeId, store2Id]) {
+      const child = await db.query.orders.findFirst({
+        where: eq(orders.idempotencyKey, `${failKey}#${sid}`),
+      });
+      if (!child) continue; // this bucket never placed — fine
+      expect(child.status).toBe('cancelled');
+      const refund = await db.query.refunds.findFirst({ where: eq(refunds.orderId, child.id) });
+      expect(refund).toBeTruthy();
+    }
+  });
+
+  it('rejects a multi-store pickup cart', async () => {
+    const res = await groupPlace({
+      items: [
+        { variantId, qty: 1 },
+        { variantId: variant2Id, qty: 1 },
+      ],
+      deliveryMethod: 'pickup',
+      paymentMethod: 'upi',
+      pickupSlotId: 'slot_x',
+      pickupSlotStart: new Date(Date.now() + 3_600_000).toISOString(),
+      pickupSlotEnd: new Date(Date.now() + 7_200_000).toISOString(),
+    });
+    expect(res.statusCode).toBe(422);
+  });
+});
+
 /* ═══ Cash ledger ═════════════════════════════════════════════════════════ */
 
 describe('cash ledger — collect, deposit, confirm/reject', () => {

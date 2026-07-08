@@ -75,6 +75,12 @@ export type PlaceOrderInput = {
   /** Who initiated this placement (admin user id for the test surface). */
   placedByActorType: 'admin' | 'consumer' | 'system';
   placedByActorId: string;
+  /**
+   * Multi-store cart split: place this order INTO an existing order_group
+   * (created by placeGroupOrder) instead of minting a fresh one. The child adds
+   * its total to the group's combinedTotalPaise.
+   */
+  existingGroupId?: string | undefined;
   /** §9 — pickup slot snap. Required when deliveryMethod==='pickup' and the caller
    *  is a consumer (real checkout). Admin test placement may omit (auto-default).
    *  All three are stored on the order so slot config edits don't drift. */
@@ -325,16 +331,25 @@ export async function placeOrder(
       }
     }
 
-    // Order group + order.
-    const groupId = newId(IdPrefix.OrderGroup);
-    await tx.insert(orderGroups).values({
-      id: groupId,
-      consumerId: consumer.id,
-      status: 'in_flight',
-      // Today this is single-store (one order per group). When multi-store split lands,
-      // swap this for the sum of per-store breakdown totals.
-      combinedTotalPaise: breakdown.totalPaise,
-    });
+    // Order group + order. A multi-store cart split passes existingGroupId (the
+    // group row was created by placeGroupOrder); each child adds its total to the
+    // group's combined figure. Solo placements mint their own group of one.
+    let groupId: string;
+    if (input.existingGroupId) {
+      groupId = input.existingGroupId;
+      await tx
+        .update(orderGroups)
+        .set({ combinedTotalPaise: sql`${orderGroups.combinedTotalPaise} + ${breakdown.totalPaise}` })
+        .where(eq(orderGroups.id, groupId));
+    } else {
+      groupId = newId(IdPrefix.OrderGroup);
+      await tx.insert(orderGroups).values({
+        id: groupId,
+        consumerId: consumer.id,
+        status: 'in_flight',
+        combinedTotalPaise: breakdown.totalPaise,
+      });
+    }
 
     const orderId = newId(IdPrefix.Order);
     const snap = buildOrderSnapshot({

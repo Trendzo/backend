@@ -52,3 +52,22 @@ export const PlaceOrderBody = QuoteBody.extend({
   pickupSlotStart: z.coerce.date().optional(),
   pickupSlotEnd: z.coerce.date().optional(),
 });
+
+/**
+ * Multi-retailer cart checkout: the WHOLE cart (no storeId — the server buckets
+ * lines by each variant's store), one group, one child order per store,
+ * all-or-nothing. Cart-level coupons/vouchers/points are deliberately absent —
+ * children price independently; wallet applies greedily across children.
+ */
+export const PlaceGroupOrderBody = z.object({
+  items: ItemsSchema,
+  deliveryMethod: DeliveryMethodEnum,
+  paymentMethod: PaymentMethodEnum,
+  paymentOutcome: PaymentOutcomeEnum.default('succeeded'),
+  addressId: z.string().min(1).optional(),
+  applyWallet: z.boolean().optional(),
+  idempotencyKey: z.string().min(1).optional(),
+  pickupSlotId: z.string().min(1).optional(),
+  pickupSlotStart: z.coerce.date().optional(),
+  pickupSlotEnd: z.coerce.date().optional(),
+});

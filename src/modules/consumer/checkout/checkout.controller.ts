@@ -19,8 +19,9 @@ import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import { placeOrder } from '@/shared/orders/place-order.js';
+import { placeGroupOrder } from '@/shared/orders/place-group-order.js';
 import { cancelOrder } from '@/shared/orders/cancel.js';
-import type { CancelOrderBody, PlaceOrderBody } from './checkout.validators.js';
+import type { CancelOrderBody, PlaceGroupOrderBody, PlaceOrderBody } from './checkout.validators.js';
 
 type Auth = AccessTokenPayload;
 type PlaceInput = z.infer<typeof PlaceOrderBody>;
@@ -41,6 +42,36 @@ export async function placeConsumerOrder(input: { auth: Auth; body: PlaceInput }
     ...(body.couponCode !== undefined && { couponCode: body.couponCode }),
     ...(body.voucherCode !== undefined && { voucherCode: body.voucherCode }),
     ...(body.pointsToRedeem !== undefined && { pointsToRedeem: body.pointsToRedeem }),
+    ...(body.applyWallet !== undefined && { applyWallet: body.applyWallet }),
+    ...(body.pickupSlotId !== undefined && { pickupSlotId: body.pickupSlotId }),
+    ...(body.pickupSlotStart !== undefined && { pickupSlotStart: body.pickupSlotStart }),
+    ...(body.pickupSlotEnd !== undefined && { pickupSlotEnd: body.pickupSlotEnd }),
+    idempotencyKey,
+    placedByActorType: 'consumer',
+    placedByActorId: auth.sub,
+  });
+  return ok(result);
+}
+
+/**
+ * Multi-retailer cart checkout: the server buckets the cart by store and places
+ * one child order per store under ONE group — all-or-nothing (any failure
+ * unwinds the placed siblings and 409s back to the client for a re-quote).
+ */
+export async function placeConsumerGroupOrder(input: {
+  auth: Auth;
+  body: z.infer<typeof PlaceGroupOrderBody>;
+}) {
+  const { auth, body } = input;
+  const idempotencyKey =
+    body.idempotencyKey ?? newId(IdPrefix.OrderGroup).replace(/^og_/, 'gik_');
+  const result = await placeGroupOrder(db, {
+    consumerId: auth.sub,
+    items: body.items,
+    deliveryMethod: body.deliveryMethod,
+    paymentMethod: body.paymentMethod,
+    paymentOutcome: body.paymentOutcome,
+    ...(body.addressId !== undefined && { addressId: body.addressId }),
     ...(body.applyWallet !== undefined && { applyWallet: body.applyWallet }),
     ...(body.pickupSlotId !== undefined && { pickupSlotId: body.pickupSlotId }),
     ...(body.pickupSlotStart !== undefined && { pickupSlotStart: body.pickupSlotStart }),
