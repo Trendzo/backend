@@ -201,9 +201,19 @@ export const orders = pgTable(
       .notNull()
       .defaultNow(),
     acceptedAt: timestamp('accepted_at', { withTimezone: true, mode: 'date' }),
+    // Stamped by transitionOrder on →packed; drives the dispatch-rot + pickup-no-show sweeps.
+    packedAt: timestamp('packed_at', { withTimezone: true, mode: 'date' }),
     deliveredAt: timestamp('delivered_at', { withTimezone: true, mode: 'date' }),
     closedAt: timestamp('closed_at', { withTimezone: true, mode: 'date' }),
     piiScrubbedAt: timestamp('pii_scrubbed_at', { withTimezone: true, mode: 'date' }),
+    // When the current driver claimed/was assigned this order (cleared on unassign).
+    // Drives the stale-claim auto-unassign sweep.
+    agentAssignedAt: timestamp('agent_assigned_at', { withTimezone: true, mode: 'date' }),
+    // One-shot dedupe for the "packed order unassigned too long" admin alert.
+    dispatchAlertNotifiedAt: timestamp('dispatch_alert_notified_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
 
     // Routing dispatcher fields (§8). Set when dispatchOrder() runs at placement;
     // rerouteOrder() updates routingAttempts + appends to routingHistory.
@@ -271,6 +281,13 @@ export const orders = pgTable(
     pickupCodeActiveIdx: uniqueIndex('orders_pickup_code_active_idx')
       .on(t.storeId, t.pickupCode)
       .where(sql`${t.pickupCode} IS NOT NULL AND ${t.status} NOT IN ('cancelled','delivered','closed')`),
+    // Lifecycle-sweep scans: packed orders by age, and stale unpaid orders.
+    packedSweepIdx: index('orders_packed_sweep_idx')
+      .on(t.packedAt)
+      .where(sql`${t.status} = 'packed'`),
+    paymentSweepIdx: index('orders_payment_sweep_idx')
+      .on(t.placedAt)
+      .where(sql`${t.status} IN ('pending','payment_failed')`),
   }),
 );
 

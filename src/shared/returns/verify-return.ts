@@ -11,13 +11,14 @@
  * Same function services Drop-A door-returns AND Drop-B post-delivery returns. Caller scopes
  * by storeId for the retailer route; admin route accepts any return.
  */
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
 import { heldItems, orderItems, platformConfig, returns } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { ActorType } from '@/shared/orders/state-machine.js';
 import { createRefundForReturns } from '@/shared/refunds/create-refund.js';
+import { applyAcceptedReturnStockEffect } from '@/shared/returns/restock.js';
 import { recomputeAfterPartialReturn } from '@/shared/orders/recompute-on-return.js';
 import { finalizeReturnedOrder } from '@/shared/orders/finalize-return.js';
 
@@ -56,14 +57,28 @@ export async function verifyReturn(
 
   if (input.decision === 'accepted') {
     await database.transaction(async (tx) => {
-      await tx
+      // Conditional flip = the double-application guard for the stock effect
+      // (a concurrent decline/accept loses here and the 409 surfaces).
+      const [flipped] = await tx
         .update(returns)
         .set({ storeDecision: 'accepted', storeDecidedAt: now })
-        .where(eq(returns.id, input.returnId));
+        .where(and(eq(returns.id, input.returnId), eq(returns.storeDecision, 'pending')))
+        .returning({ id: returns.id });
+      if (!flipped) {
+        throw new AppError(409, ErrorCode.ReturnAlreadyDecided, 'Return is already decided');
+      }
       await tx
         .update(orderItems)
         .set({ outcome: 'store_accepted_return' })
         .where(eq(orderItems.id, ret.orderItemId));
+      // Goods are back with the store: standard returns restock (they were
+      // stock-finalized at delivery); door returns release the reservation
+      // (never finalized — shelf count already includes them).
+      await applyAcceptedReturnStockEffect(tx, {
+        returnKind: ret.kind,
+        variantId: ret.orderItem.variantId,
+        qty: ret.orderItem.qty,
+      });
     });
     const refund = await createRefundForReturns(database, {
       orderId: order.id,
@@ -84,10 +99,14 @@ export async function verifyReturn(
   const expiresAt = new Date(now.getTime() + holdingDays * 24 * 60 * 60 * 1000);
   const heldId = newId(IdPrefix.HeldItem);
   await database.transaction(async (tx) => {
-    await tx
+    const [flipped] = await tx
       .update(returns)
       .set({ storeDecision: 'rejected', storeDecidedAt: now, storeRejectPhotos: input.rejectPhotos ?? [] })
-      .where(eq(returns.id, input.returnId));
+      .where(and(eq(returns.id, input.returnId), eq(returns.storeDecision, 'pending')))
+      .returning({ id: returns.id });
+    if (!flipped) {
+      throw new AppError(409, ErrorCode.ReturnAlreadyDecided, 'Return is already decided');
+    }
     await tx
       .update(orderItems)
       .set({ outcome: 'store_rejected_held' })

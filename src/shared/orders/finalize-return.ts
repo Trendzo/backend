@@ -12,10 +12,13 @@
 import { eq, inArray } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
 import { customerIssues, orderItems, orders, returns } from '@/db/schema/index.js';
+import { createRefundForCancellation } from '@/shared/refunds/create-cancellation-refund.js';
+import { failPendingPaymentsOnCancel } from '@/shared/payments/settle-cod.js';
 import type { ActorType, OrderStatus } from '@/shared/orders/state-machine.js';
-import { transitionOrder } from '@/shared/orders/transition.js';
+import { releaseUnfinalizedReservations } from './release-reservations.js';
+import { transitionOrder } from './transition.js';
 
-const OPEN_ISSUE_STATUSES = ['open', 'requested_evidence', 'escalated'] as const;
+export const OPEN_ISSUE_STATUSES = ['open', 'requested_evidence', 'escalated'] as const;
 
 export async function finalizeReturnedOrder(
   database: typeof Db,
@@ -74,6 +77,24 @@ export async function finalizeReturnedOrder(
         actorType: actor.type,
         actorId: actor.id,
         reason: 'fully_returned',
+      });
+      // Items that never finalized (e.g. a fully-undelivered order has no return
+      // rows at all) still hold their placement reservation — release it.
+      await releaseUnfinalizedReservations(database, orderId).catch((err) => {
+        console.error(`[finalize-return] release ${orderId}: ${(err as Error).message}`);
+      });
+      // Kill any never-collected COD payment, then refund the never-refunded
+      // remainder (per-return refunds already covered accepted lines; the
+      // paid−refunded base makes this a top-up, never a double refund).
+      await failPendingPaymentsOnCancel(database, orderId).catch((err) => {
+        console.error(`[finalize-return] fail-pending ${orderId}: ${(err as Error).message}`);
+      });
+      await createRefundForCancellation(database, {
+        orderId,
+        reason: 'order_cancelled:fully_returned',
+        actor: { type: 'system', id: 'system' },
+      }).catch((err) => {
+        console.error(`[finalize-return] refund ${orderId}: ${(err as Error).message}`);
       });
     }
   }

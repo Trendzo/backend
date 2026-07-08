@@ -8,18 +8,18 @@
  *                                       refuses if extendedByAdminId already set
  *   mark_expired (admin)           → status='expired' (no disposition required)
  */
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
 import {
   deliveryAttempts,
   heldItems,
   orderItems,
   returns,
-  variants,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { ActorType } from '@/shared/orders/state-machine.js';
+import { applyAcceptedReturnStockEffect } from '@/shared/returns/restock.js';
 
 async function loadHolding(database: typeof Db, heldId: string) {
   const h = await database.query.heldItems.findFirst({
@@ -143,11 +143,14 @@ export async function forceDispose(
 
   await database.transaction(async (tx) => {
     if (input.disposition === 'restocked') {
-      // Bump stock back up by qty (no reservation change — order was already finalised).
-      await tx
-        .update(variants)
-        .set({ stock: sql`${variants.stock} + ${orderItem.qty}` })
-        .where(eq(variants.id, orderItem.variantId));
+      // Standard return → stock+qty (finalized at delivery); door return → release
+      // the still-held reservation (stock was never decremented, so a raw stock
+      // bump would phantom-inflate the shelf count).
+      await applyAcceptedReturnStockEffect(tx, {
+        returnKind: h.return.kind,
+        variantId: orderItem.variantId,
+        qty: orderItem.qty,
+      });
     }
     await tx
       .update(heldItems)

@@ -8,7 +8,14 @@
 import { desc, eq, inArray } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
-import { orderItems, orders, refundLines, refunds, returns } from '@/db/schema/index.js';
+import {
+  orderItems,
+  orders,
+  refundLines,
+  refunds,
+  returns,
+  reversePickups,
+} from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
@@ -86,9 +93,30 @@ export async function listReturns(input: { auth: Auth }) {
     : [];
   const refundByItem = new Map(refundRows.map((r) => [r.orderItemId, r]));
 
+  // Reverse-pickup task per return (driver collects from home). The collect OTP
+  // is exposed only while the pickup is still ahead — the consumer reads it to
+  // the driver at the door.
+  const tasks = await db.query.reversePickups.findMany({
+    where: eq(reversePickups.consumerId, input.auth.sub),
+    columns: {
+      id: true,
+      returnIds: true,
+      status: true,
+      collectOtp: true,
+      assignedAt: true,
+      collectedAt: true,
+      deliveredAt: true,
+    },
+  });
+  const taskByReturnId = new Map<string, (typeof tasks)[number]>();
+  for (const t of tasks) {
+    for (const rid of t.returnIds) taskByReturnId.set(rid, t);
+  }
+
   return ok(
     rows.map((r) => {
       const refund = refundByItem.get(r.orderItemId);
+      const task = taskByReturnId.get(r.id);
       return {
         ...r,
         refund: refund
@@ -96,6 +124,17 @@ export async function listReturns(input: { auth: Auth }) {
               id: refund.refundId,
               status: refund.status,
               amountPaise: refund.refundedAmountPaise,
+            }
+          : null,
+        reversePickup: task
+          ? {
+              id: task.id,
+              status: task.status,
+              collectOtp:
+                task.status === 'pending' || task.status === 'assigned' ? task.collectOtp : null,
+              assignedAt: task.assignedAt,
+              collectedAt: task.collectedAt,
+              deliveredAt: task.deliveredAt,
             }
           : null,
       };

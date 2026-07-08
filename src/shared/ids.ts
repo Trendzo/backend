@@ -17,6 +17,8 @@ export const IdPrefix = {
   DriverCashLedger: 'dcl',
   DriverCashDeposit: 'dcd',
   DriverOfferRejection: 'dor',
+  ReversePickup: 'rpk',
+  ReversePickupRejection: 'rpr',
   Store: 'str',
   BankAccount: 'bnk',
   Listing: 'lst',

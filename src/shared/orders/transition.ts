@@ -58,6 +58,7 @@ export async function transitionOrder(
   const now = new Date();
   const update: Partial<typeof orders.$inferInsert> = { status: input.toStatus };
   if (input.toStatus === 'accepted') update.acceptedAt = now;
+  if (input.toStatus === 'packed') update.packedAt = now;
   if (input.toStatus === 'delivered') update.deliveredAt = now;
   if (input.toStatus === 'closed') update.closedAt = now;
 

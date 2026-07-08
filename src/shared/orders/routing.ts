@@ -16,7 +16,6 @@
 import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import { db as Db } from '@/db/client.js';
 import { orders, platformConfig } from '@/db/schema/index.js';
-import { transitionOrder } from './transition.js';
 
 const DEFAULT_ACCEPTANCE_WINDOW_SECONDS = 180;
 const DEFAULT_ROUTING_MAX_ATTEMPTS = 3;
@@ -96,13 +95,14 @@ export async function rerouteOrder(
   const nextAttempts = order.routingAttempts + 1;
 
   if (nextAttempts >= maxAttempts) {
-    // Out of retries — cancel the order via state machine.
+    // Out of retries — cancel via the orchestrator (releases reservations, fails
+    // pending payments, creates the cancellation refund), not a raw transition.
     await Db.update(orders)
       .set({ routingAttempts: nextAttempts, routingHistory: history })
       .where(eq(orders.id, orderId));
-    await transitionOrder(Db, {
+    const { cancelOrder } = await import('./cancel.js');
+    await cancelOrder(Db, {
       orderId,
-      toStatus: 'cancelled',
       actorType: actorSub ? 'admin' : 'system',
       actorId: actorSub ?? 'system',
       reason: 'routing_exhausted',

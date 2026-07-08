@@ -1,13 +1,14 @@
 /**
  * Retailer-side returns + held-items. Scoped to the authenticated retailer's store.
  */
-import { and, desc, eq, inArray, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, type SQL } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
   heldItems,
   orderItems,
   orders,
+  platformConfig,
   retailerAccounts,
   returns,
 } from '@/db/schema/index.js';
@@ -117,6 +118,50 @@ export async function verifyReturnHandler(input: {
     expectedStoreId: storeId,
   });
   return ok(r);
+}
+
+/**
+ * Goods for a consumer-initiated standard return physically reached the store
+ * (self-drop-off, or any path outside the reverse-pickup flow). Starts the
+ * verification window — from here the store must verify within
+ * `verification_window_hours` or the sweep auto-accepts + refunds.
+ */
+export async function markReceived(input: { auth: Auth; id: string }) {
+  const storeId = await getOwnStoreId(input.auth);
+  const ret = await db.query.returns.findFirst({
+    where: eq(returns.id, input.id),
+    with: { orderItem: { with: { order: { columns: { storeId: true } } } } },
+  });
+  if (!ret) throw new AppError(404, ErrorCode.ReturnNotFound, 'Return not found');
+  if (ret.orderItem.order.storeId !== storeId) {
+    throw new AppError(403, ErrorCode.Forbidden, 'Return does not belong to your store');
+  }
+  if (ret.kind !== 'standard_return') {
+    throw new AppError(409, ErrorCode.InvalidState, 'Only standard returns are marked received');
+  }
+  if (ret.storeDecision !== 'pending') {
+    throw new AppError(409, ErrorCode.ReturnAlreadyDecided, `Return is '${ret.storeDecision}'`);
+  }
+  const cfg = await db.query.platformConfig.findFirst({
+    where: eq(platformConfig.key, 'verification_window_hours'),
+  });
+  const verHours = cfg && typeof cfg.value === 'number' ? cfg.value : 24;
+  const expiresAt = new Date(Date.now() + verHours * 3_600_000);
+  const [stamped] = await db
+    .update(returns)
+    .set({ verificationWindowExpiresAt: expiresAt })
+    .where(
+      and(
+        eq(returns.id, input.id),
+        eq(returns.storeDecision, 'pending'),
+        isNull(returns.verificationWindowExpiresAt),
+      ),
+    )
+    .returning({ id: returns.id });
+  if (!stamped) {
+    throw new AppError(409, ErrorCode.InvalidState, 'Verification window already running');
+  }
+  return ok({ returnId: input.id, verificationWindowExpiresAt: expiresAt });
 }
 
 /** Decline a return — opens a dispute and holds funds until an admin decides. */

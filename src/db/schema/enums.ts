@@ -20,6 +20,16 @@ export const retailerSubRole = pgEnum('retailer_sub_role', [
 ]);
 export const adminAccountStatus = pgEnum('admin_account_status', ['active', 'revoked']);
 export const adminSubRole = pgEnum('admin_sub_role', ['super_admin', 'ops_admin', 'support']);
+// Reverse pickup task lifecycle: pending (broadcast pool) → assigned → collected
+// → delivered_to_store; cancelled by admin. 'pending' + unassigned = claimable.
+export const reversePickupStatus = pgEnum('reverse_pickup_status', [
+  'pending',
+  'assigned',
+  'collected',
+  'delivered_to_store',
+  'cancelled',
+]);
+
 export const deliveryAgentStatus = pgEnum('delivery_agent_status', [
   'active',
   'inactive',
@@ -228,6 +238,9 @@ export const deliveryMethod = pgEnum('delivery_method', [
   'standard',
   'pickup',
   'try_and_buy',
+  // Driver leg type for driver_earnings only — orders never carry this value
+  // (reverse pickups are a task table, not an order delivery method).
+  'reverse_pickup',
 ]);
 export const paymentMethod = pgEnum('payment_method', [
   'upi',

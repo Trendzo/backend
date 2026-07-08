@@ -42,7 +42,7 @@ export async function openReturn(
     counterReturn: boolean;
     actor: { type: ActorType; id: string };
   },
-): Promise<{ orderId: string; returnIds: string[] }> {
+): Promise<{ orderId: string; returnIds: string[]; reversePickupId?: string }> {
   if (input.items.length === 0) {
     throw AppError.validation('At least one item is required to open a return');
   }
@@ -148,5 +148,39 @@ export async function openReturn(
     }
   });
 
-  return { orderId: input.orderId, returnIds };
+  // Consumer-initiated returns get a reverse-pickup task (driver collects from
+  // home, broadcast to the pool). Best-effort — a failure never breaks the return;
+  // admin can recreate from the dispatch board. Skipped for address-less (pickup)
+  // orders; those start their verify window via retailer mark-received.
+  let reversePickupId: string | undefined;
+  if (!input.counterReturn) {
+    const { createReversePickupForReturns } = await import(
+      '@/shared/reverse-pickups/create-task.js'
+    );
+    const task = await createReversePickupForReturns(database, {
+      orderId: input.orderId,
+      returnIds,
+    }).catch((err) => {
+      console.error(
+        `[open-return] reverse-pickup create ${input.orderId}: ${(err as Error).message}`,
+      );
+      return null;
+    });
+    if (task) {
+      reversePickupId = task.reversePickupId;
+      const { notifyOffersChanged } = await import('@/shared/orders/offers-bus.js');
+      notifyOffersChanged();
+      const { notifyStoreAccounts } = await import('@/shared/notify-store.js');
+      await notifyStoreAccounts({
+        storeId: order.storeId,
+        kind: 'order',
+        title: 'Return pickup scheduled — items incoming',
+        body: 'A driver will collect the return from the customer and bring it to you.',
+        deepLink: '/retailer/returns',
+        payload: { orderId: input.orderId, reversePickupId },
+      }).catch(() => undefined);
+    }
+  }
+
+  return { orderId: input.orderId, returnIds, ...(reversePickupId ? { reversePickupId } : {}) };
 }

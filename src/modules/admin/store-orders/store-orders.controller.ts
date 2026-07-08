@@ -18,6 +18,7 @@ import { IdPrefix, newId } from '@/shared/ids.js';
 import { recordAudit } from '@/shared/audit.js';
 import { notify, notifySummaryToStoreOwners } from '@/shared/notify.js';
 import { logTransitionMarker, transitionOrder } from '@/shared/orders/transition.js';
+import { settleCodPaymentOnDelivery } from '@/shared/payments/settle-cod.js';
 import type { OrderStatus } from '@/shared/orders/state-machine.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
@@ -126,6 +127,30 @@ export async function handoverOrder(input: {
   requestId: string;
 }) {
   await ownedOrderOr404(input.orderId, input.storeId);
+  // Mirror the retailer handover: if a driver is dispatched (assigned + code) and no external
+  // courier is named, the admin must supply the driver's handoff code — same wrong-driver guard.
+  const order = await db.query.orders.findFirst({
+    where: eq(orders.id, input.orderId),
+    columns: { assignedAgentId: true, agentHandoffCode: true },
+  });
+  if (order?.assignedAgentId && order.agentHandoffCode && !input.body.agentName) {
+    const submitted = input.body.handoffCode?.trim().toUpperCase();
+    if (!submitted) {
+      throw new AppError(
+        400,
+        ErrorCode.ValidationError,
+        'Enter the handoff code shown in the driver’s app to complete the handover',
+      );
+    }
+    if (submitted !== order.agentHandoffCode) {
+      throw new AppError(
+        400,
+        ErrorCode.ValidationError,
+        'Incorrect handoff code — verify you are handing to the dispatched driver',
+      );
+    }
+    await db.update(orders).set({ agentHandoffCode: null }).where(eq(orders.id, input.orderId));
+  }
   const result = await transitionOrder(db, {
     orderId: input.orderId,
     toStatus: 'picked_up',
@@ -217,6 +242,10 @@ export async function markDelivered(input: {
     actorId: input.auth.sub,
     reason: 'admin_delivery_confirmed',
     metadata: { attemptNumber: result.nextAttempt },
+  });
+  // Cash collected: flip pending COD payment + record codCollectedPaise.
+  await settleCodPaymentOnDelivery(db, { orderId: input.orderId }).catch((err) => {
+    console.error(`[admin-deliver] settle COD ${input.orderId}: ${(err as Error).message}`);
   });
   await recordAudit({
     actor: input.auth,

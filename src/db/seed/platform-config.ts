@@ -156,6 +156,47 @@ export const PLATFORM_CONFIG_DEFAULTS: readonly ConfigRow[] = [
     value: 7,
     description: 'Tax-record retention after anonymisation',
   },
+
+  // Routing (seed-gap fix: read by routing.ts + the acceptance-timeout dashboard
+  // since launch, but never seeded — fallbacks carried it).
+  {
+    key: 'routing_max_attempts',
+    value: 3,
+    description: 'Acceptance-window attempts before the order auto-cancels',
+  },
+
+  // Lifecycle sweeps (shared/orders/lifecycle-sweeps.ts)
+  {
+    key: 'order_close_after_days',
+    value: 7,
+    description:
+      'Auto-close delivered orders after this many days; keep >= the return window (open-return.ts RETURN_WINDOW_DAYS)',
+  },
+  {
+    key: 'payment_abandon_minutes',
+    value: 30,
+    description: 'Cancel non-COD orders still pending payment after this long',
+  },
+  {
+    key: 'payment_failed_abandon_hours',
+    value: 24,
+    description: 'Cancel payment_failed orders not retried within this window',
+  },
+  {
+    key: 'dispatch_unassigned_alert_minutes',
+    value: 15,
+    description: 'Alert admins when a packed order has no driver for this long',
+  },
+  {
+    key: 'dispatch_pickup_stale_minutes',
+    value: 45,
+    description: 'Auto-unassign a driver who claimed a packed order but never picked up',
+  },
+  {
+    key: 'pickup_noshow_cancel_days',
+    value: 3,
+    description: 'Cancel pickup orders not collected this long after the slot/packing',
+  },
 ];
 
 /**

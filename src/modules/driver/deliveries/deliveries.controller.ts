@@ -12,6 +12,8 @@ import { deliveryAgents, deliveryAttempts, orderItems, orders, variants } from '
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { transitionOrder } from '@/shared/orders/transition.js';
+import { arriveOrderAtStore } from '@/shared/orders/arrive-at-store.js';
+import { settleCodPaymentOnDelivery } from '@/shared/payments/settle-cod.js';
 import { recordDriverEarnings } from '@/shared/orders/driver-earnings.js';
 import { openDoor, extendDoor, closeDoor } from '@/shared/orders/door-visit.js';
 import { recordUndelivered } from '@/shared/orders/undelivered.js';
@@ -170,9 +172,6 @@ export async function deliver(input: { auth: Auth; id: string; body: z.infer<typ
     throw new AppError(403, ErrorCode.ValidationError, 'Delivery OTP missing or incorrect');
   }
 
-  const isCod = order.paymentMethod === 'cod';
-  const codCollectedPaise = isCod ? (input.body.codCollectedPaise ?? order.grandTotalPaise) : 0;
-
   const result = await db.transaction(async (tx) => {
     const items = await tx
       .select({ variantId: orderItems.variantId, qty: orderItems.qty })
@@ -186,13 +185,6 @@ export async function deliver(input: { auth: Auth; id: string; body: z.infer<typ
           reserved: sql`GREATEST(${variants.reserved} - ${it.qty}, 0)`,
         })
         .where(eq(variants.id, it.variantId));
-    }
-
-    if (isCod) {
-      await tx
-        .update(orders)
-        .set({ codCollectedPaise })
-        .where(eq(orders.id, input.id));
     }
 
     const existingAttempts = await tx
@@ -220,6 +212,13 @@ export async function deliver(input: { auth: Auth; id: string; body: z.infer<typ
     actorId: input.auth.sub,
     reason: 'delivery_confirmed',
     metadata: { attemptNumber: result.nextAttempt },
+  });
+  // Cash collected: flip the pending COD payment to succeeded + record codCollectedPaise.
+  await settleCodPaymentOnDelivery(db, {
+    orderId: input.id,
+    collectedPaise: input.body.codCollectedPaise,
+  }).catch((err) => {
+    console.error(`[driver-deliver] settle COD ${input.id}: ${(err as Error).message}`);
   });
   await recordDriverEarnings(db, {
     orderId: input.id,
@@ -261,6 +260,7 @@ export async function doorClose(input: {
   }
   const r = await closeDoor(db, input.id, actorOf(input.auth), input.body.items);
   // Try-and-buy that ends with the customer keeping ≥1 item counts as a delivery — pay out.
+  // (closeDoor itself settles any pending COD payment on the delivered branch.)
   if (r.toStatus === 'delivered') {
     await recordDriverEarnings(db, {
       orderId: input.id,
@@ -302,16 +302,14 @@ export async function returnToStore(input: { auth: Auth; id: string }) {
   return ok(result);
 }
 
-/** Driver has physically dropped the goods back at the store. */
+/** Driver has physically dropped the goods back at the store. Arrival auto-accepts
+ *  pending door returns (refund-on-arrival) and finalizes the order. */
 export async function markReturned(input: { auth: Auth; id: string }) {
   const driverId = await getDriverId(input.auth);
   await loadAssignedOrder(input.id, driverId);
-  const result = await transitionOrder(db, {
-    orderId: input.id,
-    toStatus: 'returned_to_store',
-    actorType: 'delivery_agent',
-    actorId: input.auth.sub,
-    reason: 'agent_returned_to_store',
+  const result = await arriveOrderAtStore(db, input.id, {
+    type: 'delivery_agent',
+    id: input.auth.sub,
   });
   return ok(result);
 }

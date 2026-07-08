@@ -42,6 +42,7 @@ import driverProfileRoutes from '@/modules/driver/profile/profile.routes.js';
 import driverLocationRoutes from '@/modules/driver/location/location.routes.js';
 import driverEarningsRoutes from '@/modules/driver/earnings/earnings.routes.js';
 import driverOffersRoutes from '@/modules/driver/offers/offers.routes.js';
+import driverReversePickupsRoutes from '@/modules/driver/reverse-pickups/reverse-pickups.routes.js';
 import retailerInventoryRoutes from '@/modules/retailer/inventory/inventory.routes.js';
 import retailerPosRoutes from '@/modules/retailer/pos/pos.routes.js';
 import retailerPosStreamRoutes from '@/modules/retailer/pos/pos-stream.routes.js';
@@ -240,6 +241,7 @@ export function buildApp() {
       await api.register(driverLocationRoutes, { prefix: '/driver/location' });
       await api.register(driverEarningsRoutes, { prefix: '/driver/earnings' });
       await api.register(driverOffersRoutes, { prefix: '/driver/offers' });
+      await api.register(driverReversePickupsRoutes, { prefix: '/driver/reverse-pickups' });
       await api.register(retailerInventoryRoutes, { prefix: '/retailer/inventory' });
       await api.register(retailerPosRoutes, { prefix: '/retailer/pos' });
       // Separate plugin: SSE stream authenticates via ?token= (EventSource can't set headers).

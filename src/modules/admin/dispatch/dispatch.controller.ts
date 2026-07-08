@@ -7,16 +7,20 @@
  * The handoff code is NEVER returned to the admin — it must be read off the driver's
  * screen at the physical handover (that is the whole point of the proof).
  */
-import { asc, count, eq, inArray } from 'drizzle-orm';
+import { and, asc, count, eq, inArray } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
-import { deliveryAgents, orders } from '@/db/schema/index.js';
+import { deliveryAgents, orders, reversePickups } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { generatePickupCode } from '@/shared/orders/pickup-code.js';
 import { notifyOffersChanged } from '@/shared/orders/offers-bus.js';
 import type { OrderStatus } from '@/shared/orders/state-machine.js';
-import type { AssignDriverBody } from './dispatch.validators.js';
+import type {
+  AssignDriverBody,
+  CreateReversePickupBody,
+  ListReversePickupsQuery,
+} from './dispatch.validators.js';
 
 const ACTIVE_DELIVERY_STATUSES: OrderStatus[] = [
   'packed',
@@ -138,7 +142,7 @@ export async function assignDriver(input: { id: string; body: z.infer<typeof Ass
       : generatePickupCode();
   await db
     .update(orders)
-    .set({ assignedAgentId: driver.id, agentHandoffCode: code })
+    .set({ assignedAgentId: driver.id, agentHandoffCode: code, agentAssignedAt: new Date() })
     .where(eq(orders.id, input.id));
   notifyOffersChanged(); // order left the broadcast pool
   // Never echo the code.
@@ -161,8 +165,136 @@ export async function unassignDriver(input: { id: string }) {
   }
   await db
     .update(orders)
-    .set({ assignedAgentId: null, agentHandoffCode: null })
+    .set({ assignedAgentId: null, agentHandoffCode: null, agentAssignedAt: null })
     .where(eq(orders.id, input.id));
   notifyOffersChanged(); // order returned to the broadcast pool
   return ok({ orderId: input.id });
+}
+
+/* ── Reverse pickups (driver collects a consumer return from home) ────────── */
+
+/** Reverse-pickup board: tasks by status with driver + store labels. */
+export async function listReversePickups(input: {
+  query: z.infer<typeof ListReversePickupsQuery>;
+}) {
+  const rows = await db.query.reversePickups.findMany({
+    where: input.query.status ? eq(reversePickups.status, input.query.status) : undefined,
+    orderBy: asc(reversePickups.createdAt),
+    limit: 200,
+    with: {
+      assignedDriver: { columns: { id: true, name: true, phone: true } },
+      store: { columns: { id: true, legalName: true } },
+      order: { columns: { consumerNameSnap: true, consumerPhoneSnap: true } },
+    },
+  });
+  return ok(
+    rows.map((r) => ({
+      id: r.id,
+      orderId: r.orderId,
+      returnIds: r.returnIds,
+      status: r.status,
+      itemsLabel: r.itemsLabel,
+      addressLine1: r.addressLine1,
+      addressCity: r.addressCity,
+      addressPincode: r.addressPincode,
+      consumerName: r.order.consumerNameSnap,
+      consumerPhone: r.order.consumerPhoneSnap,
+      store: r.store,
+      assignedDriver: r.assignedDriver,
+      createdAt: r.createdAt,
+      assignedAt: r.assignedAt,
+      collectedAt: r.collectedAt,
+      deliveredAt: r.deliveredAt,
+    })),
+  );
+}
+
+/** Recreate a task (e.g. after an admin cancel) for still-pending returns. */
+export async function createReversePickupAdmin(input: {
+  body: z.infer<typeof CreateReversePickupBody>;
+}) {
+  const { createReversePickupForReturns } = await import(
+    '@/shared/reverse-pickups/create-task.js'
+  );
+  const task = await createReversePickupForReturns(db, {
+    orderId: input.body.orderId,
+    returnIds: input.body.returnIds,
+  });
+  if (!task) {
+    throw new AppError(
+      422,
+      ErrorCode.InvalidState,
+      'Nothing to collect — order has no home address or no returns given',
+    );
+  }
+  notifyOffersChanged();
+  return ok({ reversePickupId: task.reversePickupId });
+}
+
+/** Manually assign (or reassign) a driver — overrides the broadcast pool. */
+export async function assignReversePickup(input: {
+  id: string;
+  body: z.infer<typeof AssignDriverBody>;
+}) {
+  const driver = await loadActiveDriver(input.body.driverId);
+  const [updated] = await db
+    .update(reversePickups)
+    .set({ assignedDriverId: driver.id, status: 'assigned', assignedAt: new Date() })
+    .where(
+      and(
+        eq(reversePickups.id, input.id),
+        inArray(reversePickups.status, ['pending', 'assigned']),
+      ),
+    )
+    .returning({ id: reversePickups.id });
+  if (!updated) {
+    throw new AppError(409, ErrorCode.InvalidState, 'Task cannot be assigned in its current state');
+  }
+  notifyOffersChanged();
+  return ok({ reversePickupId: input.id, driverId: driver.id, driverName: driver.name });
+}
+
+/** Clear the driver — task returns to the broadcast pool. */
+export async function unassignReversePickup(input: { id: string }) {
+  const [updated] = await db
+    .update(reversePickups)
+    .set({ assignedDriverId: null, status: 'pending', assignedAt: null })
+    .where(and(eq(reversePickups.id, input.id), eq(reversePickups.status, 'assigned')))
+    .returning({ id: reversePickups.id });
+  if (!updated) {
+    throw new AppError(409, ErrorCode.InvalidState, 'Only an assigned task can be unassigned');
+  }
+  notifyOffersChanged();
+  return ok({ reversePickupId: input.id });
+}
+
+/** Cancel the pickup task (the return itself stays open — store handles receipt another way). */
+export async function cancelReversePickup(input: { id: string }) {
+  const task = await db.query.reversePickups.findFirst({
+    where: eq(reversePickups.id, input.id),
+    columns: { id: true, consumerId: true },
+  });
+  if (!task) throw new AppError(404, ErrorCode.NotFound, 'Task not found');
+  const [updated] = await db
+    .update(reversePickups)
+    .set({ status: 'cancelled', cancelledAt: new Date(), assignedDriverId: null, assignedAt: null })
+    .where(
+      and(
+        eq(reversePickups.id, input.id),
+        inArray(reversePickups.status, ['pending', 'assigned']),
+      ),
+    )
+    .returning({ id: reversePickups.id });
+  if (!updated) {
+    throw new AppError(409, ErrorCode.InvalidState, 'Only a pending/assigned task can be cancelled');
+  }
+  notifyOffersChanged();
+  const { notifyConsumer } = await import('@/shared/notify-consumer.js');
+  await notifyConsumer({
+    consumerId: task.consumerId,
+    kind: 'order',
+    title: 'Return pickup cancelled',
+    body: 'The scheduled pickup was cancelled — the store will receive your items another way.',
+  }).catch(() => undefined);
+  return ok({ reversePickupId: input.id, status: 'cancelled' });
 }

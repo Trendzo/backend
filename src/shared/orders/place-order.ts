@@ -176,6 +176,8 @@ export async function placeOrder(
     walletAppliedPaise: number;
     amountChargedPaise: number;
     effectiveOutcome: PaymentOutcome;
+    /** COD remainder pending capture — the order still confirms and routes. */
+    codPendingCapture: boolean;
   };
   let placed: PlacementTxResult;
   try {
@@ -463,9 +465,13 @@ export async function placeOrder(
     // Payment row. Wallet already collected its portion; the gateway only charges
     // the remainder. When wallet fully covers the order the remainder is 0 and the
     // payment is settled as succeeded regardless of the requested outcome.
+    // COD truth: no cash exists at placement, so a COD remainder is ALWAYS born
+    // 'pending' (client-passed outcome ignored) and flipped to succeeded by
+    // settleCodPaymentOnDelivery when the cash is collected at door/counter.
     const amountChargedPaise = breakdown.totalPaise - walletAppliedPaise;
+    const isCodCharge = input.paymentMethod === 'cod' && amountChargedPaise > 0;
     const effectiveOutcome: PaymentOutcome =
-      amountChargedPaise === 0 ? 'succeeded' : input.paymentOutcome;
+      amountChargedPaise === 0 ? 'succeeded' : isCodCharge ? 'pending' : input.paymentOutcome;
     const paymentId = newId(IdPrefix.Payment);
     const settledAt =
       effectiveOutcome === 'succeeded' || effectiveOutcome === 'failed'
@@ -555,20 +561,23 @@ export async function placeOrder(
       walletAppliedPaise,
       amountChargedPaise,
       effectiveOutcome,
+      codPendingCapture: isCodCharge,
     };
    });
   }
 
   // ── Drive payment-outcome transitions outside the placement tx so each transition writes
   //    its own audit row cleanly. (transitionOrder is its own transaction-friendly call.)
+  //    COD: the payment row stays 'pending' until cash is collected, but the ORDER still
+  //    confirms and routes — order confirmation is decoupled from capture for COD.
   let finalStatus: string = 'pending';
-  if (placed.effectiveOutcome === 'succeeded') {
+  if (placed.effectiveOutcome === 'succeeded' || placed.codPendingCapture) {
     await transitionOrder(database, {
       orderId: placed.orderId,
       toStatus: 'confirmed',
       actorType: 'system',
       actorId: 'system',
-      reason: 'payment_succeeded',
+      reason: placed.codPendingCapture ? 'cod_confirmed' : 'payment_succeeded',
       metadata: { paymentId: placed.paymentId },
     });
     await transitionOrder(database, {

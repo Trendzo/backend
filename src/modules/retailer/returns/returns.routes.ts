@@ -6,6 +6,7 @@
  * - POST /retailer/orders/:id/returns/open-counter   (counter return)
  * - POST /retailer/orders/:id/returns/standard       (post-delivery return)
  * - POST /retailer/returns/:id/verify                 (store verification)
+ * - POST /retailer/returns/:id/mark-received          (goods arrived — starts verify window)
  * - GET  /retailer/held-items
  * - POST /retailer/held-items/:id/collect-at-counter
  * - POST /retailer/held-items/:id/redeliver
@@ -87,6 +88,15 @@ const retailerReturnsRoutes: FastifyPluginAsyncZod = async (app) => {
         id: req.params.id,
         body: req.body,
       }),
+  );
+
+  app.post(
+    '/returns/:id/mark-received',
+    {
+      preHandler: requirePermission('returns.accept'),
+      schema: { params: IdParam },
+    },
+    async (req) => ctrl.markReceived({ auth: getAuth(req), id: req.params.id }),
   );
 
   app.post(

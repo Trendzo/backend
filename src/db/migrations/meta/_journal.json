@@ -358,6 +358,27 @@
 			"when": 1784200000000,
 			"tag": "0050_driver_offer_rejections",
 			"breakpoints": true
+		},
+		{
+			"idx": 51,
+			"version": "7",
+			"when": 1784300000000,
+			"tag": "0051_order_lifecycle_columns",
+			"breakpoints": true
+		},
+		{
+			"idx": 52,
+			"version": "7",
+			"when": 1784400000000,
+			"tag": "0052_reverse_pickups",
+			"breakpoints": true
+		},
+		{
+			"idx": 53,
+			"version": "7",
+			"when": 1784500000000,
+			"tag": "0053_driver_earnings_reverse_pickup",
+			"breakpoints": true
 		}
 	]
 }

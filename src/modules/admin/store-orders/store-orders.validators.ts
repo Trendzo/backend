@@ -5,6 +5,9 @@ export const StoreOrderParam = z.object({ storeId: z.string(), orderId: z.string
 
 export const HandoverBody = z
   .object({
+    // Verify the dispatched driver's handoff code (mirrors the retailer handover), OR hand
+    // to an external courier by name/phone (no code).
+    handoffCode: z.string().trim().min(4).max(16).optional(),
     agentName: z.string().trim().min(1).max(120).optional(),
     agentPhone: z.string().trim().min(1).max(20).optional(),
   })

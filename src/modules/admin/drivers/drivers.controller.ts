@@ -74,7 +74,7 @@ export async function suspendDriver(input: { id: string }) {
   // Free any packed order this driver was holding so it returns to the dispatch pool.
   await db
     .update(orders)
-    .set({ assignedAgentId: null, agentHandoffCode: null })
+    .set({ assignedAgentId: null, agentHandoffCode: null, agentAssignedAt: null })
     .where(and(eq(orders.assignedAgentId, input.id), eq(orders.status, 'packed')));
   return setStatus(input.id, 'suspended');
 }

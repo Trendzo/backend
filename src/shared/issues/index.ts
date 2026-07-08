@@ -31,6 +31,7 @@ import { notify } from '@/shared/notify.js';
 import { recordAdjustment } from '@/shared/settlement/adjustments.js';
 import { autoReleaseHoldsForDispute } from '@/shared/settlement/holds.js';
 import { createRefundForReturns } from '@/shared/refunds/create-refund.js';
+import { applyAcceptedReturnStockEffect } from '@/shared/returns/restock.js';
 import { finalizeReturnedOrder } from '@/shared/orders/finalize-return.js';
 
 type IssueKind = (typeof issueKindEnum.enumValues)[number];
@@ -489,7 +490,7 @@ async function settleDisputedReturn(
 ): Promise<void> {
   const ret = await db.query.returns.findFirst({
     where: eq(returnsTable.id, returnId),
-    with: { orderItem: { columns: { orderId: true } } },
+    with: { orderItem: { columns: { orderId: true, variantId: true, qty: true } } },
   });
   if (!ret) return;
   const orderId = ret.orderItem.orderId;
@@ -502,15 +503,28 @@ async function settleDisputedReturn(
       actor: { type: 'admin', id: adminId },
     }).catch(() => undefined);
   }
-  // Resolve the shelved goods (guard: resolved requires disposition + resolvedAt).
-  await db
-    .update(heldItems)
-    .set({
-      status: 'resolved',
-      disposition: refundConsumer ? 'restocked' : 'forfeited_to_store',
-      resolvedAt: new Date(),
-    })
-    .where(eq(heldItems.returnId, returnId));
+  // Resolve the shelved goods. Guarded flip (only while 'holding') so a prior
+  // disposition never double-applies the inventory effect.
+  await db.transaction(async (tx) => {
+    const [resolved] = await tx
+      .update(heldItems)
+      .set({
+        status: 'resolved',
+        disposition: refundConsumer ? 'restocked' : 'forfeited_to_store',
+        resolvedAt: new Date(),
+      })
+      .where(and(eq(heldItems.returnId, returnId), eq(heldItems.status, 'holding')))
+      .returning({ id: heldItems.id });
+    if (resolved && refundConsumer) {
+      // "Restocked" must actually move inventory (standard return → stock+qty;
+      // door return → reservation release), same effect as forceDispose.
+      await applyAcceptedReturnStockEffect(tx, {
+        returnKind: ret.kind,
+        variantId: ret.orderItem.variantId,
+        qty: ret.orderItem.qty,
+      });
+    }
+  });
   // Drive the order to terminal now that the return is settled.
   await finalizeReturnedOrder(db, orderId, { type: 'admin', id: adminId }).catch(() => undefined);
 }

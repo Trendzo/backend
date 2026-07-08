@@ -25,7 +25,8 @@ import { IdPrefix, newId } from '@/shared/ids.js';
 import { logTransitionMarker, transitionOrder } from '@/shared/orders/transition.js';
 import { rerouteOrder } from '@/shared/orders/routing.js';
 import { notifyOffersChanged } from '@/shared/orders/offers-bus.js';
-import { finalizeReturnedOrder } from '@/shared/orders/finalize-return.js';
+import { arriveOrderAtStore } from '@/shared/orders/arrive-at-store.js';
+import { settleCodPaymentOnDelivery } from '@/shared/payments/settle-cod.js';
 import { recordUndelivered } from '@/shared/orders/undelivered.js';
 import { type OrderStatus, transitionsFrom } from '@/shared/orders/state-machine.js';
 import { closeDoor, extendDoor, openDoor } from '@/shared/orders/door-visit.js';
@@ -255,13 +256,16 @@ export async function getOrder(input: { auth: Auth; id: string }) {
   });
 }
 
-/** Retailer marks returned goods physically received → returned_to_store, then
- *  auto-finalizes the order if every return is resolved. */
+/** Retailer marks returned goods physically received → returned_to_store; arrival
+ *  auto-accepts pending door returns (refund-on-arrival) and finalizes the order. */
 export async function confirmReturnReceived(input: { auth: Auth; id: string }) {
   const storeId = await getOwnStoreId(input.auth);
   await loadOwnedOrder(input.id, storeId);
-  await finalizeReturnedOrder(db, input.id, { type: 'retailer', id: input.auth.sub });
-  return ok({ id: input.id });
+  const result = await arriveOrderAtStore(db, input.id, {
+    type: 'retailer',
+    id: input.auth.sub,
+  });
+  return ok(result);
 }
 
 export async function acceptOrder(input: { auth: Auth; id: string }) {
@@ -339,6 +343,23 @@ export async function pickupHandover(input: {
   if (submitted !== order.pickupCode) {
     throw new AppError(400, ErrorCode.InvalidPickupCode, 'Incorrect pickup code');
   }
+  // Customer collected the goods — finalize stock exactly like a delivery (no
+  // delivery_attempts row: pickups have no courier leg; the transition is the audit).
+  await db.transaction(async (tx) => {
+    const items = await tx
+      .select({ variantId: orderItems.variantId, qty: orderItems.qty })
+      .from(orderItems)
+      .where(eq(orderItems.orderId, order.id));
+    for (const it of items) {
+      await tx
+        .update(variants)
+        .set({
+          stock: sql`${variants.stock} - ${it.qty}`,
+          reserved: sql`GREATEST(${variants.reserved} - ${it.qty}, 0)`,
+        })
+        .where(eq(variants.id, it.variantId));
+    }
+  });
   const result = await transitionOrder(db, {
     orderId: order.id,
     toStatus: 'delivered',
@@ -350,6 +371,10 @@ export async function pickupHandover(input: {
         ? { impersonatingAdminSessionId: input.auth.impersonating.sessionId }
         : {}),
     },
+  });
+  // Pay-at-counter: flip the pending COD payment (COUNTER- ref) + codCollectedPaise.
+  await settleCodPaymentOnDelivery(db, { orderId: order.id }).catch((err) => {
+    console.error(`[pickup-handover] settle COD ${order.id}: ${(err as Error).message}`);
   });
   return ok(result);
 }
@@ -416,7 +441,7 @@ export async function handover(input: {
   if (order.assignedAgentId || order.agentHandoffCode) {
     await db
       .update(orders)
-      .set({ assignedAgentId: null, agentHandoffCode: null })
+      .set({ assignedAgentId: null, agentHandoffCode: null, agentAssignedAt: null })
       .where(eq(orders.id, input.id));
   }
   const result = await transitionOrder(db, {
@@ -505,6 +530,10 @@ export async function markDelivered(input: {
         ? { impersonatingAdminSessionId: input.auth.impersonating.sessionId }
         : {}),
     },
+  });
+  // Cash collected at the door: flip pending COD payment + record codCollectedPaise.
+  await settleCodPaymentOnDelivery(db, { orderId: input.id }).catch((err) => {
+    console.error(`[retailer-deliver] settle COD ${input.id}: ${(err as Error).message}`);
   });
   return ok(transition);
 }

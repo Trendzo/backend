@@ -26,11 +26,12 @@ const RULES: readonly TransitionRule[] = [
   // ── Payment outcome ──
   { from: 'pending', to: 'confirmed', actors: ['system'] },
   { from: 'pending', to: 'payment_failed', actors: ['system'] },
-  { from: 'pending', to: 'cancelled', actors: ['consumer', 'admin'] },
+  // system: payment-abandonment sweep cancels stale unpaid orders.
+  { from: 'pending', to: 'cancelled', actors: ['consumer', 'admin', 'system'] },
 
   // From payment_failed: retry, or give up
   { from: 'payment_failed', to: 'pending', actors: ['consumer', 'admin', 'system'] },
-  { from: 'payment_failed', to: 'cancelled', actors: ['consumer', 'admin'] },
+  { from: 'payment_failed', to: 'cancelled', actors: ['consumer', 'admin', 'system'] },
 
   // ── Routing ──
   { from: 'confirmed', to: 'routing', actors: ['system'] },
@@ -39,7 +40,9 @@ const RULES: readonly TransitionRule[] = [
   { from: 'routing', to: 'accepted', actors: ['retailer', 'admin'] },
   // Auto-reroute is modelled as a routing → routing self-loop in the audit log; we record
   // it as a transition with the same status (handled by transitionOrder caller).
-  { from: 'routing', to: 'cancelled', actors: ['admin', 'system'] },
+  // consumer: paid orders sit in routing (confirmed→routing is instant) — the
+  // consumer's cancel window would otherwise be milliseconds long.
+  { from: 'routing', to: 'cancelled', actors: ['admin', 'system', 'consumer'] },
 
   // ── Pack + handover ──
   { from: 'accepted', to: 'packed', actors: ['retailer', 'admin'] },
@@ -49,7 +52,8 @@ const RULES: readonly TransitionRule[] = [
   // Pickup orders: consumer collects from the store after verifying pickup_code.
   // Route handler enforces deliveryMethod === 'pickup' before allowing this jump.
   { from: 'packed', to: 'delivered', actors: ['retailer', 'admin'] },
-  { from: 'packed', to: 'cancelled', actors: ['admin'] },
+  // system: pickup no-show sweep cancels uncollected pickup orders.
+  { from: 'packed', to: 'cancelled', actors: ['admin', 'system'] },
 
   // ── Out for delivery ──
   { from: 'picked_up', to: 'out_for_delivery', actors: ['retailer', 'delivery_agent', 'system', 'admin'] },

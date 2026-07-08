@@ -14,6 +14,7 @@ export * from './cart.js';
 export * from './orders.js';
 export * from './driver-earnings.js';
 export * from './driver-offers.js';
+export * from './reverse-pickups.js';
 export * from './returns.js';
 export * from './refunds.js';
 export * from './payments-recon.js';

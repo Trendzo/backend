@@ -3,13 +3,16 @@ import { env } from './config/env.js';
 import { db, pool } from './db/client.js';
 import { processAcceptanceWindowSweep } from './shared/orders/routing.js';
 import { processDoorWindowSweep } from './shared/orders/door-visit.js';
+import { runLifecycleSweeps } from './shared/orders/lifecycle-sweeps.js';
 
 const app = buildApp();
 
 const ACCEPTANCE_SWEEP_INTERVAL_MS = 60_000;
 const DOOR_SWEEP_INTERVAL_MS = 60_000;
+const LIFECYCLE_SWEEP_INTERVAL_MS = 60_000;
 let sweepHandle: ReturnType<typeof setInterval> | null = null;
 let doorSweepHandle: ReturnType<typeof setInterval> | null = null;
+let lifecycleSweepHandle: ReturnType<typeof setInterval> | null = null;
 
 const start = async (): Promise<void> => {
   try {
@@ -31,6 +34,13 @@ const start = async (): Promise<void> => {
         })
         .catch((e) => app.log.error({ err: e }, 'door-window-sweep failed'));
     }, DOOR_SWEEP_INTERVAL_MS);
+    lifecycleSweepHandle = setInterval(() => {
+      runLifecycleSweeps(db)
+        .then((c) => {
+          if (Object.values(c).some((n) => n > 0)) app.log.info(c, 'lifecycle-sweep');
+        })
+        .catch((e) => app.log.error({ err: e }, 'lifecycle-sweep failed'));
+    }, LIFECYCLE_SWEEP_INTERVAL_MS);
   } catch (err) {
     app.log.error({ err }, 'failed to start');
     process.exit(1);
@@ -42,6 +52,7 @@ const shutdown = async (signal: string): Promise<void> => {
   try {
     if (sweepHandle) clearInterval(sweepHandle);
     if (doorSweepHandle) clearInterval(doorSweepHandle);
+    if (lifecycleSweepHandle) clearInterval(lifecycleSweepHandle);
     await app.close();
     await pool.end();
     process.exit(0);

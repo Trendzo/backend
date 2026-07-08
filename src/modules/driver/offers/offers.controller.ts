@@ -101,7 +101,7 @@ export async function acceptOffer(input: { auth: Auth; id: string }) {
   const code = generatePickupCode();
   const claimed = await db
     .update(orders)
-    .set({ assignedAgentId: driverId, agentHandoffCode: code })
+    .set({ assignedAgentId: driverId, agentHandoffCode: code, agentAssignedAt: new Date() })
     .where(and(eq(orders.id, input.id), eq(orders.status, 'packed'), isNull(orders.assignedAgentId)))
     .returning({ id: orders.id });
   if (claimed.length === 0) {

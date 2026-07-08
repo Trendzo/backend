@@ -341,6 +341,12 @@ export async function closeDoor(
       returnIds,
     },
   });
+  if (toStatus === 'delivered') {
+    // Dormant defense: cod+try_and_buy is rejected at quote, but every delivered
+    // path settles a still-pending COD payment to keep the capture invariant.
+    const { settleCodPaymentOnDelivery } = await import('@/shared/payments/settle-cod.js');
+    await settleCodPaymentOnDelivery(database, { orderId }).catch(() => undefined);
+  }
 
   return {
     orderId,

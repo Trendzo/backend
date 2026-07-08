@@ -219,6 +219,7 @@ function shapeDriver(d: typeof deliveryAgents.$inferSelect) {
     vehicleNumber: d.vehicleNumber,
     city: d.city,
     status: d.status,
+    createdAt: d.createdAt,
     // The app routes an incomplete profile through the profile-setup step.
     profileComplete: !!d.name,
   };

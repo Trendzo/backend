@@ -35,7 +35,9 @@ export const QuoteBody = z.object({
  * NOTE: paymentOutcome is accepted from the client as a pre-gateway stopgap — there
  * is no payment gateway yet. This is INSECURE for real money (a consumer could
  * self-declare 'succeeded'); replace with a gateway-driven outcome/webhook before
- * production.
+ * production. COD ignores this field entirely: the payment row is always born
+ * 'pending' and settles when cash is collected at door/counter, while the order
+ * still confirms and routes.
  */
 /** Consumer-initiated cancellation. Reason is optional free text for the audit log. */
 export const CancelOrderBody = z.object({
