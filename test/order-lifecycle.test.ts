@@ -47,6 +47,10 @@ import {
   sweepStalePayments,
   sweepVerificationWindows,
 } from '@/shared/orders/lifecycle-sweeps.js';
+import {
+  failGatewayCheckout,
+  settleGatewayCapture,
+} from '@/shared/payments/settle-gateway.js';
 import { buildApp } from '@/app.js';
 
 type App = ReturnType<typeof buildApp>;
@@ -1020,6 +1024,137 @@ describe('group checkout — one cart, N stores, one group', () => {
       pickupSlotEnd: new Date(Date.now() + 7_200_000).toISOString(),
     });
     expect(res.statusCode).toBe(422);
+  });
+});
+
+/* ═══ Razorpay gateway plumbing (mock-gateway mode — no network) ══════════ */
+
+describe('gateway settle/fail — pending checkout lifecycle', () => {
+  it('capture settles the pending payment and confirms+routes the order (idempotent)', async () => {
+    const { orderId, status } = await placeOrder({
+      deliveryMethod: 'standard',
+      paymentMethod: 'upi',
+      paymentOutcome: 'pending', // simulates the two-phase "awaiting Checkout" state
+    });
+    expect(status).toBe('pending');
+    const gwOrder = `order_test_${Date.now()}`;
+    await db
+      .update(payments)
+      .set({ gatewayOrderId: gwOrder })
+      .where(eq(payments.orderId, orderId));
+
+    const r1 = await settleGatewayCapture(db, {
+      gatewayOrderId: gwOrder,
+      razorpayPaymentId: 'pay_testCapture1',
+    });
+    expect(r1.settledOrderIds).toEqual([orderId]);
+    const o = await orderRow(orderId);
+    expect(o.status).toBe('routing');
+    expect(o.acceptanceDeadlineAt).toBeTruthy(); // dispatched
+    const pay = await db.query.payments.findFirst({ where: eq(payments.orderId, orderId) });
+    expect(pay!.status).toBe('succeeded');
+    expect(pay!.gatewayRef).toBe('pay_testCapture1');
+
+    // Webhook replay / verify race — converges, no duplicate transitions.
+    const r2 = await settleGatewayCapture(db, {
+      gatewayOrderId: gwOrder,
+      razorpayPaymentId: 'pay_testCapture1',
+    });
+    expect(r2.alreadySettled).toBe(true);
+    expect((await orderRow(orderId)).status).toBe('routing');
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/consumer/checkout/orders/${orderId}/cancel`,
+      headers: auth(consumerToken),
+      payload: {},
+    });
+  });
+
+  it('checkout failure flips payment+order to failed; a late capture recovers them', async () => {
+    const { orderId } = await placeOrder({
+      deliveryMethod: 'standard',
+      paymentMethod: 'upi',
+      paymentOutcome: 'pending',
+    });
+    const gwOrder = `order_testfail_${Date.now()}`;
+    await db
+      .update(payments)
+      .set({ gatewayOrderId: gwOrder })
+      .where(eq(payments.orderId, orderId));
+
+    const f = await failGatewayCheckout(db, { gatewayOrderId: gwOrder });
+    expect(f.failedOrderIds).toEqual([orderId]);
+    expect((await orderRow(orderId)).status).toBe('payment_failed');
+    let pay = await db.query.payments.findFirst({ where: eq(payments.orderId, orderId) });
+    expect(pay!.status).toBe('failed');
+
+    // Late webhook capture on the SAME gateway order: payment row is already
+    // failed (no flip) but the ORDER recovers payment_failed→pending→routing.
+    await settleGatewayCapture(db, {
+      gatewayOrderId: gwOrder,
+      razorpayPaymentId: 'pay_lateCapture',
+    });
+    expect((await orderRow(orderId)).status).toBe('routing');
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/consumer/checkout/orders/${orderId}/cancel`,
+      headers: auth(consumerToken),
+      payload: {},
+    });
+  });
+
+  it('webhook route (secret unset → verification skipped) settles a pending group', async () => {
+    // Two-store pending group sharing ONE gateway order — webhook settles both.
+    const key = `gik_rzp_${Date.now()}`;
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/checkout/group',
+      headers: auth(consumerToken),
+      payload: {
+        items: [{ variantId, qty: 1 }],
+        deliveryMethod: 'standard',
+        paymentMethod: 'upi',
+        paymentOutcome: 'pending',
+        addressId,
+        idempotencyKey: key,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = data(res) as { groupId: string; orders: Array<{ orderId: string }> };
+    const gwOrder = `order_grp_${Date.now()}`;
+    for (const child of body.orders) {
+      await db
+        .update(payments)
+        .set({ gatewayOrderId: gwOrder })
+        .where(eq(payments.orderId, child.orderId));
+    }
+
+    const hook = await app.inject({
+      method: 'POST',
+      url: '/api/v1/webhooks/razorpay',
+      headers: { 'content-type': 'application/json', 'x-razorpay-signature': 'skipped-in-dev' },
+      payload: {
+        event: 'payment.captured',
+        payload: { payment: { entity: { id: 'pay_webhook1', order_id: gwOrder } } },
+      },
+    });
+    expect(hook.statusCode).toBe(200);
+    for (const child of body.orders) {
+      expect((await orderRow(child.orderId)).status).toBe('routing');
+      const pay = await db.query.payments.findFirst({
+        where: eq(payments.orderId, child.orderId),
+      });
+      expect(pay!.status).toBe('succeeded');
+      expect(pay!.gatewayRef).toMatch(/^pay_webhook1/);
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/consumer/checkout/orders/${child.orderId}/cancel`,
+        headers: auth(consumerToken),
+        payload: {},
+      });
+    }
   });
 });
 

@@ -44,6 +44,19 @@ export const CancelOrderBody = z.object({
   reason: z.string().trim().min(1).max(300).optional(),
 });
 
+/** Razorpay Checkout success triplet — HMAC-verified server-side. */
+export const VerifyPaymentBody = z.object({
+  razorpayOrderId: z.string().min(1),
+  razorpayPaymentId: z.string().min(1),
+  razorpaySignature: z.string().min(1),
+});
+
+/** Checkout dismissed/failed on the device. */
+export const PaymentFailedBody = z.object({
+  razorpayOrderId: z.string().min(1),
+  reason: z.string().trim().max(300).optional(),
+});
+
 export const PlaceOrderBody = QuoteBody.extend({
   paymentOutcome: PaymentOutcomeEnum.default('succeeded'),
   idempotencyKey: z.string().min(1).optional(),

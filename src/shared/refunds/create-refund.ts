@@ -28,6 +28,7 @@ import {
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
+import { settleTenderDisbursement } from '@/shared/refunds/disburse-tender.js';
 import type { ActorType } from '@/shared/orders/state-machine.js';
 
 /**
@@ -101,12 +102,14 @@ export async function createRefundForReturns(
 
   // Pick the most recent succeeded payment for original-tender disbursement.
   let sourcePaymentId: string | null = null;
+  let sourceGatewayRef: string | null = null;
   if (originalTenderPortion > 0) {
     const succeeded = await database.query.payments.findFirst({
       where: and(eq(payments.orderId, order.id), eq(payments.status, 'succeeded')),
       orderBy: (p, { desc }) => desc(p.settledAt),
     });
     sourcePaymentId = succeeded?.id ?? null;
+    sourceGatewayRef = succeeded?.gatewayRef ?? null;
     if (!sourcePaymentId) {
       throw new AppError(
         409,
@@ -192,7 +195,8 @@ export async function createRefundForReturns(
       });
     }
 
-    // original-tender disbursement (auto-succeed simulated)
+    // original-tender disbursement — born pending; settled AFTER the tx (real
+    // gateway call when Razorpay is active, simulated otherwise).
     if (originalTenderPortion > 0 && sourcePaymentId) {
       const did = newId(IdPrefix.RefundDisbursement);
       disbursementIds.push(did);
@@ -202,18 +206,31 @@ export async function createRefundForReturns(
         destination: 'original_tender',
         sourcePaymentId,
         amountPaise: originalTenderPortion,
-        status: 'succeeded',
-        gatewayRef: `REFUND-TEST-${did.slice(4, 16)}`,
-        settledAt: new Date(),
+        status: 'pending',
       });
     }
 
-    // Roll up refund status
-    await tx
-      .update(refunds)
-      .set({ status: 'succeeded', completedAt: new Date() })
-      .where(eq(refunds.id, refundId));
+    // Roll up refund status: wallet-only refunds complete inside the tx; a
+    // tender portion resolves post-tx via settleTenderDisbursement.
+    if (originalTenderPortion > 0) {
+      await tx.update(refunds).set({ status: 'processing' }).where(eq(refunds.id, refundId));
+    } else {
+      await tx
+        .update(refunds)
+        .set({ status: 'succeeded', completedAt: new Date() })
+        .where(eq(refunds.id, refundId));
+    }
   });
+
+  if (originalTenderPortion > 0 && disbursementIds.length > 0) {
+    const tenderDisbId = disbursementIds[disbursementIds.length - 1]!;
+    await settleTenderDisbursement(database, {
+      refundId,
+      disbursementId: tenderDisbId,
+      amountPaise: originalTenderPortion,
+      sourceGatewayRef,
+    });
+  }
 
   // §14 L3 — loyalty credit-back (restore redeemed points) + earn claw-back (proportional).
   // Runs outside the refund tx because it has its own balance bookkeeping. Bypasses

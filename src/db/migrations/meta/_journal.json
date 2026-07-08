@@ -386,6 +386,13 @@
 			"when": 1784600000000,
 			"tag": "0054_driver_cash",
 			"breakpoints": true
+		},
+		{
+			"idx": 55,
+			"version": "7",
+			"when": 1784700000000,
+			"tag": "0055_payment_gateway_order",
+			"breakpoints": true
 		}
 	]
 }

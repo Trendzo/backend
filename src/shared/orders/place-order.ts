@@ -46,6 +46,7 @@ import {
 } from '@/shared/snapshots/order-snapshot.js';
 import { applyLoyaltyDelta } from '@/shared/loyalty/apply-delta.js';
 import { ensureWallet } from '@/shared/wallet/ensure-wallet.js';
+import { createRazorpayOrder, isRazorpayActive, razorpayKeyId } from '@/shared/payments/razorpay.js';
 import { computeQuote, resolveWalletApplyPaise } from './compute-quote.js';
 import { generateDeliveryOtp, generatePickupCode } from './pickup-code.js';
 import { transitionOrder } from './transition.js';
@@ -81,12 +82,26 @@ export type PlaceOrderInput = {
    * its total to the group's combinedTotalPaise.
    */
   existingGroupId?: string | undefined;
+  /**
+   * Group checkout only: suppress the per-order Razorpay order mint — the group
+   * orchestrator creates ONE gateway order spanning all children.
+   */
+  skipGatewayOrder?: boolean | undefined;
   /** §9 — pickup slot snap. Required when deliveryMethod==='pickup' and the caller
    *  is a consumer (real checkout). Admin test placement may omit (auto-default).
    *  All three are stored on the order so slot config edits don't drift. */
   pickupSlotId?: string;
   pickupSlotStart?: Date;
   pickupSlotEnd?: Date;
+};
+
+/** Hand-off for the app's Razorpay Checkout (present only on gateway-pending placements). */
+export type GatewayCheckoutBlock = {
+  gateway: 'razorpay';
+  keyId: string;
+  gatewayOrderId: string;
+  amountPaise: number;
+  currency: 'INR';
 };
 
 export type PlaceOrderResult = {
@@ -99,6 +114,8 @@ export type PlaceOrderResult = {
   /** Amount charged to the gateway tender = grandTotal − walletApplied. */
   amountChargedPaise: number;
   alreadyExisted: boolean;
+  /** Set when the order awaits a Razorpay Checkout (consumer upi/card, gateway active). */
+  payment?: GatewayCheckoutBlock;
 };
 
 export async function placeOrder(
@@ -184,6 +201,8 @@ export async function placeOrder(
     effectiveOutcome: PaymentOutcome;
     /** COD remainder pending capture — the order still confirms and routes. */
     codPendingCapture: boolean;
+    /** Razorpay remainder pending Checkout — the order waits at 'pending'. */
+    gatewayPendingCheckout: boolean;
   };
   let placed: PlacementTxResult;
   try {
@@ -483,10 +502,22 @@ export async function placeOrder(
     // COD truth: no cash exists at placement, so a COD remainder is ALWAYS born
     // 'pending' (client-passed outcome ignored) and flipped to succeeded by
     // settleCodPaymentOnDelivery when the cash is collected at door/counter.
+    // Razorpay truth: a consumer upi/card remainder with the gateway active is
+    // ALWAYS born 'pending' too (client outcome ignored) — capture arrives via
+    // the Checkout verify call / webhook, never self-declared.
     const amountChargedPaise = breakdown.totalPaise - walletAppliedPaise;
     const isCodCharge = input.paymentMethod === 'cod' && amountChargedPaise > 0;
+    const isGatewayCharge =
+      amountChargedPaise > 0 &&
+      input.placedByActorType === 'consumer' &&
+      (input.paymentMethod === 'upi' || input.paymentMethod === 'card') &&
+      isRazorpayActive();
     const effectiveOutcome: PaymentOutcome =
-      amountChargedPaise === 0 ? 'succeeded' : isCodCharge ? 'pending' : input.paymentOutcome;
+      amountChargedPaise === 0
+        ? 'succeeded'
+        : isCodCharge || isGatewayCharge
+          ? 'pending'
+          : input.paymentOutcome;
     const paymentId = newId(IdPrefix.Payment);
     const settledAt =
       effectiveOutcome === 'succeeded' || effectiveOutcome === 'failed'
@@ -577,6 +608,7 @@ export async function placeOrder(
       amountChargedPaise,
       effectiveOutcome,
       codPendingCapture: isCodCharge,
+      gatewayPendingCheckout: isGatewayCharge,
     };
    });
   }
@@ -621,6 +653,29 @@ export async function placeOrder(
     finalStatus = 'pending';
   }
 
+  // ── Razorpay two-phase: mint the gateway order AFTER the tx (network call) and
+  //    stamp it on the pending payment row. Group checkouts skip this (the group
+  //    orchestrator mints ONE gateway order across all children).
+  let paymentBlock: GatewayCheckoutBlock | undefined;
+  if (placed.gatewayPendingCheckout && !input.skipGatewayOrder) {
+    const rzpOrder = await createRazorpayOrder({
+      amountPaise: placed.amountChargedPaise,
+      receipt: placed.orderId,
+      notes: { orderId: placed.orderId, groupId: placed.groupId },
+    });
+    await database
+      .update(payments)
+      .set({ gatewayOrderId: rzpOrder.id })
+      .where(eq(payments.id, placed.paymentId));
+    paymentBlock = {
+      gateway: 'razorpay',
+      keyId: razorpayKeyId(),
+      gatewayOrderId: rzpOrder.id,
+      amountPaise: placed.amountChargedPaise,
+      currency: 'INR',
+    };
+  }
+
   return {
     orderId: placed.orderId,
     groupId: placed.groupId,
@@ -629,6 +684,7 @@ export async function placeOrder(
     walletAppliedPaise: placed.walletAppliedPaise,
     amountChargedPaise: placed.amountChargedPaise,
     alreadyExisted: false,
+    ...(paymentBlock ? { payment: paymentBlock } : {}),
   };
 }
 

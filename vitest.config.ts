@@ -18,6 +18,11 @@ export default defineConfig({
     env: {
       DATABASE_URL: 'postgresql://test:test@localhost:5434/closetx_test',
       NODE_ENV: 'test',
+      // Force the mock gateway: a developer's .env may carry live Razorpay keys,
+      // and tests must never hit the network. env.ts treats '' as unset.
+      RAZORPAY_KEY_ID: '',
+      RAZORPAY_KEY_SECRET: '',
+      RAZORPAY_WEBHOOK_SECRET: '',
     },
     pool: 'forks',
     poolOptions: { forks: { singleFork: true } },

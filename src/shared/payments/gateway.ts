@@ -115,13 +115,18 @@ class MockGateway implements PaymentGateway {
 
 const mockGateway = new MockGateway();
 
+// razorpay.ts only type-imports from this file, so the value import below is
+// cycle-free at runtime.
+import { isRazorpayActive, razorpayGateway } from './razorpay.js';
+
 /**
- * Single source of truth for which gateway is active. Wire real gateways in here when
- * the time comes; callers should not import adapter classes directly.
+ * Single source of truth for which gateway is active. Razorpay wins whenever its
+ * key pair is configured (or when explicitly named); otherwise the mock keeps
+ * dev/test flows network-free.
  */
 export function getGateway(name?: string): PaymentGateway {
-  // For now, every name resolves to mock. Real gateways register here later, e.g.:
-  //   if (name === 'razorpay') return razorpayGateway;
-  void name;
+  if (name === 'razorpay' || (name === undefined && isRazorpayActive())) {
+    return razorpayGateway;
+  }
   return mockGateway;
 }

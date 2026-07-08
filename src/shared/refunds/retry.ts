@@ -1,17 +1,20 @@
 /**
- * Admin retry of a pending disbursement (created by force-fail or manual). Auto-succeeds the
- * disbursement using the same simulated path as create-refund.ts.
+ * Admin retry of a pending disbursement (created by force-fail or manual).
+ * Wallet legs credit immediately; original-tender legs go through the active
+ * gateway (real Razorpay refund when configured, simulated otherwise).
  */
 import { and, eq } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
 import {
   consumerWallets,
+  payments,
   refundDisbursements,
   refunds,
   walletTransactions,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
+import { settleTenderDisbursement } from '@/shared/refunds/disburse-tender.js';
 import type { ActorType } from '@/shared/orders/state-machine.js';
 
 export async function retryDisbursement(
@@ -69,20 +72,16 @@ export async function retryDisbursement(
         throw new AppError(503, ErrorCode.InternalError, 'Wallet CAS retries exhausted');
       }
     }
-    await tx
-      .update(refundDisbursements)
-      .set({
-        status: 'succeeded',
-        gatewayRef:
-          d.destination === 'original_tender'
-            ? `REFUND-TEST-${d.id.slice(4, 16)}`
-            : null,
-        settledAt: new Date(),
-      })
-      .where(eq(refundDisbursements.id, input.disbursementId));
+    if (d.destination === 'wallet') {
+      await tx
+        .update(refundDisbursements)
+        .set({ status: 'succeeded', settledAt: new Date() })
+        .where(eq(refundDisbursements.id, input.disbursementId));
+    }
 
     // Roll up: are all *leaf* disbursements for this refund succeeded?
     // A leaf is one that is not superseded by a later retry in the chain.
+    // (Tender legs settle post-tx via the gateway; their own settle re-rolls-up.)
     const allDisb = await tx.query.refundDisbursements.findMany({
       where: eq(refundDisbursements.refundId, d.refundId),
     });
@@ -90,7 +89,9 @@ export async function retryDisbursement(
       allDisb.map((x) => x.previousDisbursementId).filter(Boolean),
     );
     const leafDisb = allDisb.filter((x) => !supersededIds.has(x.id));
-    const allSucceeded = leafDisb.every((x) => x.status === 'succeeded' || x.id === d.id);
+    const allSucceeded = leafDisb.every(
+      (x) => x.status === 'succeeded' || (x.id === d.id && d.destination === 'wallet'),
+    );
     if (allSucceeded) {
       await tx
         .update(refunds)
@@ -98,6 +99,25 @@ export async function retryDisbursement(
         .where(eq(refunds.id, d.refundId));
     }
   });
+
+  // Original-tender leg: real gateway refund when active (simulated otherwise).
+  if (d.destination === 'original_tender') {
+    const source = d.sourcePaymentId
+      ? await database.query.payments.findFirst({
+          where: eq(payments.id, d.sourcePaymentId),
+          columns: { gatewayRef: true },
+        })
+      : null;
+    const outcome = await settleTenderDisbursement(database, {
+      refundId: d.refundId,
+      disbursementId: d.id,
+      amountPaise: d.amountPaise,
+      sourceGatewayRef: source?.gatewayRef ?? null,
+    });
+    if (outcome === 'failed') {
+      throw new AppError(502, ErrorCode.PaymentFailed, 'Gateway refund failed — see admin alerts');
+    }
+  }
 
   return { disbursementId: input.disbursementId, refundId: d.refundId, outcome: 'succeeded' };
 }

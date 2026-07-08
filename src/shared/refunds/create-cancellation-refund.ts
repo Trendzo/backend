@@ -29,6 +29,7 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { ActorType } from '@/shared/orders/state-machine.js';
 import { ensureWallet } from '@/shared/wallet/ensure-wallet.js';
+import { settleTenderDisbursement } from '@/shared/refunds/disburse-tender.js';
 import { notifyConsumer } from '@/shared/notify-consumer.js';
 
 export async function createRefundForCancellation(
@@ -43,7 +44,7 @@ export async function createRefundForCancellation(
   // ── Money truth: what was actually paid vs already refunded ──
   const succeededPayments = await database.query.payments.findMany({
     where: and(eq(payments.orderId, order.id), eq(payments.status, 'succeeded')),
-    columns: { id: true, amountPaise: true, settledAt: true },
+    columns: { id: true, amountPaise: true, settledAt: true, gatewayRef: true },
   });
   const paidPaise =
     order.walletAppliedPaise + succeededPayments.reduce((s, p) => s + p.amountPaise, 0);
@@ -101,11 +102,13 @@ export async function createRefundForCancellation(
   const originalTenderPortion = refundable - walletPortion;
 
   let sourcePaymentId: string | null = null;
+  let sourceGatewayRef: string | null = null;
   if (originalTenderPortion > 0) {
     const latest = [...succeededPayments].sort(
       (a, b) => (b.settledAt?.getTime() ?? 0) - (a.settledAt?.getTime() ?? 0),
     )[0];
     sourcePaymentId = latest?.id ?? null;
+    sourceGatewayRef = latest?.gatewayRef ?? null;
     if (!sourcePaymentId) {
       // Defensive: originalTenderPortion > 0 implies a succeeded payment exists.
       throw new AppError(
@@ -188,6 +191,8 @@ export async function createRefundForCancellation(
       });
     }
 
+    // Tender disbursement born pending — settled post-tx (real Razorpay refund
+    // when active, simulated otherwise).
     if (originalTenderPortion > 0 && sourcePaymentId) {
       const did = newId(IdPrefix.RefundDisbursement);
       disbursementIds.push(did);
@@ -197,17 +202,28 @@ export async function createRefundForCancellation(
         destination: 'original_tender',
         sourcePaymentId,
         amountPaise: originalTenderPortion,
-        status: 'succeeded',
-        gatewayRef: `REFUND-TEST-${did.slice(4, 16)}`,
-        settledAt: new Date(),
+        status: 'pending',
       });
     }
 
-    await tx
-      .update(refunds)
-      .set({ status: 'succeeded', completedAt: new Date() })
-      .where(eq(refunds.id, refundId));
+    if (originalTenderPortion > 0) {
+      await tx.update(refunds).set({ status: 'processing' }).where(eq(refunds.id, refundId));
+    } else {
+      await tx
+        .update(refunds)
+        .set({ status: 'succeeded', completedAt: new Date() })
+        .where(eq(refunds.id, refundId));
+    }
   });
+
+  if (originalTenderPortion > 0 && disbursementIds.length > 0) {
+    await settleTenderDisbursement(database, {
+      refundId,
+      disbursementId: disbursementIds[disbursementIds.length - 1]!,
+      amountPaise: originalTenderPortion,
+      sourceGatewayRef,
+    });
+  }
 
   // Loyalty: restore redeemed points (full pre-delivery; proportional earn clawback
   // capped at live balance post-delivery). Same post-tx placement as create-refund.ts.

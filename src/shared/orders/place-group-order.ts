@@ -29,13 +29,23 @@
  *
  * Pickup carts must be single-store (a pickup slot belongs to one store).
  */
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
-import { orderGroups, orders, variants } from '@/db/schema/index.js';
+import { orderGroups, orders, payments, variants } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
+import {
+  createRazorpayOrder,
+  isRazorpayActive,
+  razorpayKeyId,
+} from '@/shared/payments/razorpay.js';
 import { cancelOrder } from './cancel.js';
-import { placeOrder, type PlaceOrderInput, type PlaceOrderResult } from './place-order.js';
+import {
+  placeOrder,
+  type GatewayCheckoutBlock,
+  type PlaceOrderInput,
+  type PlaceOrderResult,
+} from './place-order.js';
 
 export type PlaceGroupOrderInput = {
   consumerId: string;
@@ -64,6 +74,8 @@ export type PlaceGroupOrderResult = {
     > & { storeId: string }
   >;
   alreadyExisted: boolean;
+  /** ONE Razorpay Checkout for the whole cart (children share the gateway order). */
+  payment?: GatewayCheckoutBlock;
 };
 
 const childKey = (root: string, storeId: string) => `${root}#${storeId}`;
@@ -139,6 +151,8 @@ export async function placeGroupOrder(
         placedByActorType: input.placedByActorType,
         placedByActorId: input.placedByActorId,
         existingGroupId: groupId,
+        skipGatewayOrder: true, // the group mints ONE gateway order below
+
         ...(input.addressId !== undefined && { addressId: input.addressId }),
         ...(input.applyWallet !== undefined && { applyWallet: input.applyWallet }),
         ...(input.pickupSlotId !== undefined && { pickupSlotId: input.pickupSlotId }),
@@ -184,10 +198,58 @@ export async function placeGroupOrder(
     columns: { combinedTotalPaise: true },
   });
 
+  // ── ONE Razorpay Checkout for the whole cart: mint a single gateway order for
+  //    the sum of the children's still-pending gateway charges and stamp it on
+  //    every child payment row. A replay whose children already share a gateway
+  //    order reuses it (the client can reopen the same Checkout).
+  let paymentBlock: GatewayCheckoutBlock | undefined;
+  const gatewayEligible =
+    isRazorpayActive() &&
+    input.placedByActorType === 'consumer' &&
+    (input.paymentMethod === 'upi' || input.paymentMethod === 'card');
+  if (gatewayEligible) {
+    const childIds = placed.map((p) => p.orderId);
+    const pendingRows = childIds.length
+      ? await database.query.payments.findMany({
+          where: and(inArray(payments.orderId, childIds), eq(payments.status, 'pending')),
+          columns: { id: true, amountPaise: true, gatewayOrderId: true },
+        })
+      : [];
+    const chargePaise = pendingRows.reduce((s, r) => s + r.amountPaise, 0);
+    if (chargePaise > 0) {
+      const sharedExisting =
+        pendingRows.every((r) => r.gatewayOrderId !== null) &&
+        new Set(pendingRows.map((r) => r.gatewayOrderId)).size === 1
+          ? pendingRows[0]!.gatewayOrderId!
+          : null;
+      let gatewayOrderId = sharedExisting;
+      if (!gatewayOrderId) {
+        const rzpOrder = await createRazorpayOrder({
+          amountPaise: chargePaise,
+          receipt: groupId,
+          notes: { groupId },
+        });
+        gatewayOrderId = rzpOrder.id;
+        await database
+          .update(payments)
+          .set({ gatewayOrderId })
+          .where(inArray(payments.id, pendingRows.map((r) => r.id)));
+      }
+      paymentBlock = {
+        gateway: 'razorpay',
+        keyId: razorpayKeyId(),
+        gatewayOrderId,
+        amountPaise: chargePaise,
+        currency: 'INR',
+      };
+    }
+  }
+
   return {
     groupId,
     combinedTotalPaise: group?.combinedTotalPaise ?? placed.reduce((s, p) => s + p.pricing.totalPaise, 0),
     orders: placed,
     alreadyExisted: placed.length > 0 && placed.every((p) => p.alreadyExisted),
+    ...(paymentBlock ? { payment: paymentBlock } : {}),
   };
 }

@@ -44,6 +44,7 @@ import driverEarningsRoutes from '@/modules/driver/earnings/earnings.routes.js';
 import driverOffersRoutes from '@/modules/driver/offers/offers.routes.js';
 import driverReversePickupsRoutes from '@/modules/driver/reverse-pickups/reverse-pickups.routes.js';
 import driverCashRoutes from '@/modules/driver/cash/cash.routes.js';
+import razorpayWebhookRoutes from '@/modules/webhooks/razorpay.routes.js';
 import retailerInventoryRoutes from '@/modules/retailer/inventory/inventory.routes.js';
 import retailerPosRoutes from '@/modules/retailer/pos/pos.routes.js';
 import retailerPosStreamRoutes from '@/modules/retailer/pos/pos-stream.routes.js';
@@ -244,6 +245,9 @@ export function buildApp() {
       await api.register(driverOffersRoutes, { prefix: '/driver/offers' });
       await api.register(driverReversePickupsRoutes, { prefix: '/driver/reverse-pickups' });
       await api.register(driverCashRoutes, { prefix: '/driver/cash' });
+      // Server-to-server, no auth (HMAC-signed by Razorpay). Register the SAME
+      // URL in the Razorpay dashboard: <base>/api/v1/webhooks/razorpay
+      await api.register(razorpayWebhookRoutes, { prefix: '/webhooks/razorpay' });
       await api.register(retailerInventoryRoutes, { prefix: '/retailer/inventory' });
       await api.register(retailerPosRoutes, { prefix: '/retailer/pos' });
       // Separate plugin: SSE stream authenticates via ?token= (EventSource can't set headers).

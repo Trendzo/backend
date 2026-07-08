@@ -1,6 +1,10 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
+/** Optional secret that also treats '' as unset (lets tests blank a .env value). */
+const optionalSecret = (min: number) =>
+  z.preprocess((v) => (v === '' ? undefined : v), z.string().min(min).optional());
+
 /**
  * Validates env vars at startup. The app crashes immediately if anything is missing or malformed
  * — this is intentional and matches the api-validation skill's "parse, don't validate" stance.
@@ -36,6 +40,17 @@ const EnvSchema = z
     // if unset (and GOOGLE_APPLICATION_CREDENTIALS also unset), push is disabled and drivers
     // fall back to long-poll. This is the SERVER key, not the client google-services.json.
     FIREBASE_SERVICE_ACCOUNT: z.string().optional(),
+
+    // Razorpay — real payment gateway. All three optional at boot: when the key
+    // pair is unset the mock gateway runs (client-declared outcomes, simulated
+    // refunds) and every test stays network-free. Setting the pair activates the
+    // two-phase checkout (server creates a Razorpay Order, the app runs Checkout,
+    // the server verifies the signature / consumes the webhook). The webhook
+    // secret is separate — set it after registering the webhook in the dashboard;
+    // unset = webhook signature verification is skipped (dev only).
+    RAZORPAY_KEY_ID: optionalSecret(8),
+    RAZORPAY_KEY_SECRET: optionalSecret(8),
+    RAZORPAY_WEBHOOK_SECRET: optionalSecret(8),
 
     // Public legal/support pages used by App Store Connect.
     PUBLIC_APP_NAME: z.string().min(1).default('Trendzo Mockup'),

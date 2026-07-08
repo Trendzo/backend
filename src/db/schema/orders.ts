@@ -381,7 +381,10 @@ export const payments = pgTable(
     method: paymentMethod('method').notNull(),
     amountPaise: integer('amount_paise').notNull(),
     status: paymentStatus('status').notNull().default('pending'),
-    gatewayRef: text('gateway_ref'), // razorpay payment id
+    gatewayRef: text('gateway_ref'), // razorpay payment id (set on capture)
+    // Razorpay Order id created at placement — the verify endpoint / webhook joins
+    // on this to settle the pending row(s). Group checkouts share one across children.
+    gatewayOrderId: text('gateway_order_id'),
     previousPaymentId: text('previous_payment_id'), // self-ref for retry chain
     idempotencyKey: text('idempotency_key').notNull(),
     initiatedAt: timestamp('initiated_at', { withTimezone: true, mode: 'date' })
@@ -400,6 +403,9 @@ export const payments = pgTable(
   (t) => ({
     orderStatusIdx: index('payments_order_status_idx').on(t.orderId, t.status),
     idempotencyIdx: uniqueIndex('payments_idempotency_idx').on(t.idempotencyKey),
+    gatewayOrderIdx: index('payments_gateway_order_idx')
+      .on(t.gatewayOrderId)
+      .where(sql`${t.gatewayOrderId} IS NOT NULL`),
     previousPaymentFk: foreignKey({
       columns: [t.previousPaymentId],
       foreignColumns: [t.id],
