@@ -20,6 +20,14 @@ export const retailerSubRole = pgEnum('retailer_sub_role', [
 ]);
 export const adminAccountStatus = pgEnum('admin_account_status', ['active', 'revoked']);
 export const adminSubRole = pgEnum('admin_sub_role', ['super_admin', 'ops_admin', 'support']);
+// Driver COD cash accounting (append-only ledger + deposit workflow).
+export const driverCashEntryKind = pgEnum('driver_cash_entry_kind', ['collected', 'deposited']);
+export const driverCashDepositStatus = pgEnum('driver_cash_deposit_status', [
+  'pending',
+  'confirmed',
+  'rejected',
+]);
+
 // Reverse pickup task lifecycle: pending (broadcast pool) → assigned → collected
 // → delivered_to_store; cancelled by admin. 'pending' + unassigned = claimable.
 export const reversePickupStatus = pgEnum('reverse_pickup_status', [

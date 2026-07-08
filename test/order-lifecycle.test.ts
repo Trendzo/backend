@@ -19,6 +19,7 @@ import {
   consumers,
   consumerWallets,
   deliveryAgents,
+  driverCashLedger,
   driverEarnings,
   heldItems,
   orderItems,
@@ -58,6 +59,7 @@ const data = (res: InjectRes) => json(res).data;
 const PRICE = 50_000; // ₹500 per unit
 
 let app: App;
+let adminToken: string;
 let storeId: string;
 let retailerToken: string;
 let consumerId: string;
@@ -153,7 +155,7 @@ beforeAll(async () => {
     })
     .onConflictDoNothing({ target: platformConfig.key });
 
-  // admin (not used directly but mirrors real environment)
+  // admin
   const adminId = newId(IdPrefix.Admin);
   await db.insert(adminAccounts).values({
     id: adminId,
@@ -161,6 +163,7 @@ beforeAll(async () => {
     passwordHash: 'x'.repeat(20),
     subRole: 'super_admin',
   });
+  adminToken = signAccessToken({ sub: adminId, kind: 'admin', subRole: 'super_admin' });
 
   // store + owner
   storeId = newId(IdPrefix.Store);
@@ -835,5 +838,142 @@ describe('WS3 — reverse pickup', () => {
     expect(ret!.storeDecision).toBe('accepted');
     const refund = await db.query.refunds.findFirst({ where: eq(refunds.orderId, rpOrderId) });
     expect(refund).toBeTruthy();
+  });
+});
+
+/* ═══ Cash ledger ═════════════════════════════════════════════════════════ */
+
+describe('cash ledger — collect, deposit, confirm/reject', () => {
+  let depositId: string;
+  let outstandingAtStart = 0;
+
+  const balance = async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/driver/cash/balance',
+      headers: auth(driverToken),
+    });
+    expect(res.statusCode).toBe(200);
+    return data(res) as {
+      collectedTotalPaise: number;
+      depositedTotalPaise: number;
+      outstandingPaise: number;
+      pendingDepositPaise: number;
+      pendingDepositId: string | null;
+    };
+  };
+
+  it('driver-collected COD lands on the ledger as outstanding cash', async () => {
+    // The COD-lifecycle test earlier delivered a COD order via this driver.
+    const ledger = await db.query.driverCashLedger.findMany({
+      where: eq(driverCashLedger.driverId, driverId),
+    });
+    expect(ledger.some((l) => l.entryKind === 'collected')).toBe(true);
+    const b = await balance();
+    expect(b.outstandingPaise).toBeGreaterThan(0);
+    expect(b.outstandingPaise).toBe(b.collectedTotalPaise - b.depositedTotalPaise);
+    outstandingAtStart = b.outstandingPaise;
+  });
+
+  it('deposit request defaults to full outstanding; only one pending at a time', async () => {
+    const req = await app.inject({
+      method: 'POST',
+      url: '/api/v1/driver/cash/deposits',
+      headers: auth(driverToken),
+      payload: { note: 'end of shift' },
+    });
+    expect(req.statusCode).toBe(200);
+    depositId = data(req).depositId as string;
+    expect(data(req).amountPaise).toBe(outstandingAtStart);
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/v1/driver/cash/deposits',
+      headers: auth(driverToken),
+      payload: {},
+    });
+    expect(second.statusCode).toBe(409);
+
+    const b = await balance();
+    expect(b.pendingDepositId).toBe(depositId);
+    expect(b.outstandingPaise).toBe(outstandingAtStart); // request moves nothing
+  });
+
+  it('admin reject: nothing moves; driver can request again', async () => {
+    const rej = await app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/drivers/${driverId}/cash/deposits/${depositId}/reject`,
+      headers: auth(adminToken),
+      payload: { note: 'cash not received' },
+    });
+    expect(rej.statusCode).toBe(200);
+    const b = await balance();
+    expect(b.outstandingPaise).toBe(outstandingAtStart);
+    expect(b.pendingDepositId).toBeNull();
+
+    const again = await app.inject({
+      method: 'POST',
+      url: '/api/v1/driver/cash/deposits',
+      headers: auth(driverToken),
+      payload: {},
+    });
+    expect(again.statusCode).toBe(200);
+    depositId = data(again).depositId as string;
+  });
+
+  it('admin confirm: ledger deposited entry lands, outstanding hits zero; double-confirm 409', async () => {
+    const conf = await app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/drivers/${driverId}/cash/deposits/${depositId}/confirm`,
+      headers: auth(adminToken),
+      payload: { note: 'received at desk' },
+    });
+    expect(conf.statusCode).toBe(200);
+
+    const b = await balance();
+    expect(b.outstandingPaise).toBe(0);
+    expect(b.depositedTotalPaise).toBe(outstandingAtStart);
+    const entry = await db.query.driverCashLedger.findFirst({
+      where: and(
+        eq(driverCashLedger.driverId, driverId),
+        eq(driverCashLedger.entryKind, 'deposited'),
+      ),
+    });
+    expect(entry!.depositId).toBe(depositId);
+
+    const again = await app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/drivers/${driverId}/cash/deposits/${depositId}/confirm`,
+      headers: auth(adminToken),
+      payload: {},
+    });
+    expect(again.statusCode).toBe(409);
+
+    // Nothing left to deposit.
+    const over = await app.inject({
+      method: 'POST',
+      url: '/api/v1/driver/cash/deposits',
+      headers: auth(driverToken),
+      payload: {},
+    });
+    expect(over.statusCode).toBe(409);
+
+    // Admin visibility: list carries the outstanding + driver detail aggregates.
+    const list = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/drivers',
+      headers: auth(adminToken),
+    });
+    const row = (data(list) as Array<{ id: string; cashOutstandingPaise: number }>).find(
+      (r) => r.id === driverId,
+    );
+    expect(row!.cashOutstandingPaise).toBe(0);
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/drivers/${driverId}`,
+      headers: auth(adminToken),
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(data(detail).cash.outstandingPaise).toBe(0);
   });
 });

@@ -379,6 +379,13 @@
 			"when": 1784500000000,
 			"tag": "0053_driver_earnings_reverse_pickup",
 			"breakpoints": true
+		},
+		{
+			"idx": 54,
+			"version": "7",
+			"when": 1784600000000,
+			"tag": "0054_driver_cash",
+			"breakpoints": true
 		}
 	]
 }

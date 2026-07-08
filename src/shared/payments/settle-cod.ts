@@ -10,7 +10,8 @@
  */
 import { and, eq } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
-import { orders, payments } from '@/db/schema/index.js';
+import { driverCashLedger, orders, payments } from '@/db/schema/index.js';
+import { IdPrefix, newId } from '@/shared/ids.js';
 
 /**
  * Mark the order's pending COD payment collected. Idempotent: the conditional
@@ -24,7 +25,7 @@ export async function settleCodPaymentOnDelivery(
 ): Promise<{ paymentId: string; gatewayRef: string; codCollectedPaise: number } | null> {
   const order = await database.query.orders.findFirst({
     where: eq(orders.id, input.orderId),
-    columns: { id: true, paymentMethod: true, deliveryMethod: true },
+    columns: { id: true, paymentMethod: true, deliveryMethod: true, assignedAgentId: true },
   });
   if (!order || order.paymentMethod !== 'cod') return null;
 
@@ -49,6 +50,18 @@ export async function settleCodPaymentOnDelivery(
       .update(orders)
       .set({ codCollectedPaise })
       .where(eq(orders.id, input.orderId));
+    // Cash landed in a DRIVER's hands → append the 'collected' ledger entry
+    // (store-handled COD — counter pickup / external courier — has no driver
+    // liability, so no entry). Rides the flip guard: exactly-once per order.
+    if (order.assignedAgentId && codCollectedPaise > 0) {
+      await tx.insert(driverCashLedger).values({
+        id: newId(IdPrefix.DriverCashLedger),
+        driverId: order.assignedAgentId,
+        entryKind: 'collected',
+        amountPaise: codCollectedPaise,
+        orderId: input.orderId,
+      });
+    }
     return { paymentId: flipped.id, gatewayRef, codCollectedPaise };
   });
 }
