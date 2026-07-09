@@ -53,9 +53,17 @@ export type CartQuoteResult = {
   aggregate: {
     itemsSubtotalPaise: number;
     discountPaise: number;
+    /** Split of `discountPaise` so the client can render honest line items. */
+    mrpPromoPaise: number;
+    couponPaise: number;
+    pointsRedeemedPaise: number;
     deliveryFeePaise: number;
     taxPaise: number;
     grandTotalPaise: number;
+    /** Wallet is a PARTIAL TENDER on top of grandTotal, not a discount. */
+    walletAppliedPaise: number;
+    /** grandTotalPaise − walletAppliedPaise → what the gateway/COD collects. */
+    amountDuePaise: number;
     loyaltyEarnedPoints: number;
   };
 };
@@ -247,27 +255,33 @@ export async function computeCartQuote(
   const aggregate = buckets.reduce(
     (a, b) => {
       const bd = b.quote.breakdown;
+      const promo = bd.retailerPromoDiscountPaise + bd.platformPromoDiscountPaise;
       a.itemsSubtotalPaise += bd.lineSubtotalPaise;
-      a.discountPaise +=
-        bd.retailerPromoDiscountPaise +
-        bd.platformPromoDiscountPaise +
-        bd.couponDiscountPaise +
-        bd.loyaltyDiscountPaise;
+      a.mrpPromoPaise += promo;
+      a.couponPaise += bd.couponDiscountPaise;
+      a.pointsRedeemedPaise += bd.loyaltyDiscountPaise;
+      a.discountPaise += promo + bd.couponDiscountPaise + bd.loyaltyDiscountPaise;
       a.deliveryFeePaise += bd.deliveryFeePaise;
       a.taxPaise += bd.cgstPaise + bd.sgstPaise + bd.igstPaise;
       a.grandTotalPaise += bd.totalPaise;
+      a.walletAppliedPaise += b.quote.walletAppliedPaise;
       a.loyaltyEarnedPoints += bd.loyaltyEarnedPoints;
       return a;
     },
     {
       itemsSubtotalPaise: 0,
       discountPaise: 0,
+      mrpPromoPaise: 0,
+      couponPaise: 0,
+      pointsRedeemedPaise: 0,
       deliveryFeePaise: 0,
       taxPaise: 0,
       grandTotalPaise: 0,
+      walletAppliedPaise: 0,
       loyaltyEarnedPoints: 0,
     },
   );
+  const aggregateWithDue = { ...aggregate, amountDuePaise: aggregate.grandTotalPaise - aggregate.walletAppliedPaise };
 
   return {
     buckets,
@@ -276,6 +290,6 @@ export async function computeCartQuote(
     ...(couponPromotionId !== undefined && { couponPromotionId }),
     ...(resolved.voucherCodeId !== undefined && { voucherCodeId: resolved.voucherCodeId }),
     rejectedCodes,
-    aggregate,
+    aggregate: aggregateWithDue,
   };
 }
