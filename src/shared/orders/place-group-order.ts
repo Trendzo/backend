@@ -29,17 +29,32 @@
  *
  * Pickup carts must be single-store (a pickup slot belongs to one store).
  */
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
-import { orderGroups, orders, payments, variants } from '@/db/schema/index.js';
+import {
+  loyaltyTransactions,
+  orderGroups,
+  orders,
+  payments,
+  promotionConsumerUsage,
+  promotionRedemptions,
+  variants,
+} from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
+import {
+  bumpPromotionCounter,
+  bumpVoucherCodeCounter,
+} from '@/modules/admin/promotions/redemption-counter.js';
+import { applyLoyaltyDelta } from '@/shared/loyalty/apply-delta.js';
 import {
   createRazorpayOrder,
   isRazorpayActive,
   razorpayKeyId,
 } from '@/shared/payments/razorpay.js';
 import { cancelOrder } from './cancel.js';
+import { computeCartQuote } from './compute-cart-quote.js';
+import type { RejectedCode } from './compute-quote.js';
 import {
   placeOrder,
   type GatewayCheckoutBlock,
@@ -56,6 +71,10 @@ export type PlaceGroupOrderInput = {
   paymentOutcome: PlaceOrderInput['paymentOutcome'];
   addressId?: string | undefined;
   applyWallet?: boolean | undefined;
+  /** Cart-level codes — resolved once against the WHOLE cart and split across children. */
+  couponCode?: string | undefined;
+  voucherCode?: string | undefined;
+  pointsToRedeem?: number | undefined;
   idempotencyKey: string;
   placedByActorType: PlaceOrderInput['placedByActorType'];
   placedByActorId: string;
@@ -76,7 +95,97 @@ export type PlaceGroupOrderResult = {
   alreadyExisted: boolean;
   /** ONE Razorpay Checkout for the whole cart (children share the gateway order). */
   payment?: GatewayCheckoutBlock;
+  /** Coupon/voucher codes that could not be applied to the cart (for the app to surface). */
+  rejectedCodes?: RejectedCode[];
 };
+
+type PreAllocatedShare = NonNullable<PlaceOrderInput['preAllocated']>;
+
+/**
+ * Redeem the cart coupon + debit the redeemed points ONCE for the whole group,
+ * anchored + replay-guarded on the deterministic first-child order id. The
+ * `promotion_redemptions(promotion_id, order_id)` unique index makes the coupon
+ * bump exactly-once; a prior `loyalty_transactions` redeem row for the same order
+ * makes the points debit exactly-once. Runs inside the group's try/catch so a
+ * CouponExhausted throw triggers the all-or-nothing compensation.
+ */
+async function finalizeGroupCouponAndPoints(
+  database: typeof Db,
+  input: {
+    firstChildOrderId: string;
+    consumerId: string;
+    couponPromotionId?: string | undefined;
+    voucherCodeId?: string | undefined;
+    cartCouponPaise: number;
+    cartPointsRedeemed: number;
+  },
+): Promise<void> {
+  await database.transaction(async (tx) => {
+    if (input.couponPromotionId) {
+      const [redemption] = await tx
+        .insert(promotionRedemptions)
+        .values({
+          id: newId(IdPrefix.Promotion).replace(/^prm_/, 'prd_'),
+          promotionId: input.couponPromotionId,
+          orderId: input.firstChildOrderId,
+          consumerId: input.consumerId,
+          voucherCodeId: input.voucherCodeId ?? null,
+          amountAppliedPaise: input.cartCouponPaise,
+        })
+        .onConflictDoNothing({
+          target: [promotionRedemptions.promotionId, promotionRedemptions.orderId],
+        })
+        .returning({ id: promotionRedemptions.id });
+      // Row inserted = first apply; no row = replay (already redeemed, skip counters).
+      if (redemption) {
+        const newCount = await bumpPromotionCounter(tx as unknown as typeof Db, input.couponPromotionId);
+        if (newCount === null) {
+          throw new AppError(409, ErrorCode.CouponExhausted, 'Coupon is exhausted');
+        }
+        if (input.voucherCodeId) {
+          const v = await bumpVoucherCodeCounter(tx as unknown as typeof Db, input.voucherCodeId);
+          if (v === null) {
+            throw new AppError(409, ErrorCode.VoucherAlreadyRedeemed, 'Voucher already redeemed');
+          }
+        }
+        await tx
+          .insert(promotionConsumerUsage)
+          .values({
+            promotionId: input.couponPromotionId,
+            consumerId: input.consumerId,
+            useCount: 1,
+            lastUsedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: [promotionConsumerUsage.promotionId, promotionConsumerUsage.consumerId],
+            set: {
+              useCount: sql`${promotionConsumerUsage.useCount} + 1`,
+              lastUsedAt: new Date(),
+            },
+          });
+      }
+    }
+
+    if (input.cartPointsRedeemed > 0) {
+      const priorRedeem = await tx.query.loyaltyTransactions.findFirst({
+        where: and(
+          eq(loyaltyTransactions.refOrderId, input.firstChildOrderId),
+          eq(loyaltyTransactions.kind, 'redeem'),
+        ),
+        columns: { id: true },
+      });
+      if (!priorRedeem) {
+        await applyLoyaltyDelta(tx, {
+          consumerId: input.consumerId,
+          points: -input.cartPointsRedeemed,
+          kind: 'redeem',
+          refOrderId: input.firstChildOrderId,
+          note: 'Redeemed at group placement',
+        });
+      }
+    }
+  });
+}
 
 const childKey = (root: string, storeId: string) => `${root}#${storeId}`;
 
@@ -113,6 +222,55 @@ export async function placeGroupOrder(
       ErrorCode.ValidationError,
       'Pickup carts must be single-store — a pickup slot belongs to one store',
     );
+  }
+
+  // ── Cart-level coupon/points: resolve ONCE against the whole cart + split across
+  //    stores. Only when a code/points were supplied (plain carts skip this entirely,
+  //    keeping the common no-coupon path unchanged). ──
+  const wantsCartDiscount = !!(
+    input.couponCode ||
+    input.voucherCode ||
+    (input.pointsToRedeem && input.pointsToRedeem > 0)
+  );
+  const preAllocByStore = new Map<string, PreAllocatedShare>();
+  let groupRejectedCodes: RejectedCode[] = [];
+  let cartFinalize:
+    | {
+        couponPromotionId?: string;
+        voucherCodeId?: string;
+        cartCouponPaise: number;
+        cartPointsRedeemed: number;
+      }
+    | null = null;
+  if (wantsCartDiscount) {
+    const cq = await computeCartQuote(database, {
+      consumerId: input.consumerId,
+      items: input.items,
+      deliveryMethod: input.deliveryMethod,
+      paymentMethod: input.paymentMethod,
+      ...(input.addressId !== undefined && { addressId: input.addressId }),
+      ...(input.couponCode !== undefined && { couponCode: input.couponCode }),
+      ...(input.voucherCode !== undefined && { voucherCode: input.voucherCode }),
+      ...(input.pointsToRedeem !== undefined && { pointsToRedeem: input.pointsToRedeem }),
+    });
+    groupRejectedCodes = cq.rejectedCodes;
+    // A supplied code that couldn't apply to the cart → reject the whole placement
+    // BEFORE placing any child (all-or-nothing; the app re-quotes on the 409).
+    const codeRejected =
+      (input.couponCode && cq.rejectedCodes.some((r) => r.kind === 'coupon')) ||
+      (input.voucherCode && cq.rejectedCodes.some((r) => r.kind === 'voucher'));
+    if (codeRejected) {
+      throw new AppError(409, ErrorCode.CouponInvalid, 'Coupon or voucher could not be applied', {
+        rejectedCodes: cq.rejectedCodes,
+      });
+    }
+    for (const b of cq.buckets) preAllocByStore.set(b.storeId, b.preAllocated);
+    cartFinalize = {
+      ...(cq.couponPromotionId !== undefined && { couponPromotionId: cq.couponPromotionId }),
+      ...(cq.voucherCodeId !== undefined && { voucherCodeId: cq.voucherCodeId }),
+      cartCouponPaise: cq.cartCouponPaise,
+      cartPointsRedeemed: cq.cartPointsRedeemed,
+    };
   }
 
   // ── Replay detection: the first bucket's child key marks a prior attempt.
@@ -153,6 +311,7 @@ export async function placeGroupOrder(
         existingGroupId: groupId,
         skipGatewayOrder: true, // the group mints ONE gateway order below
 
+        ...(preAllocByStore.has(storeId) && { preAllocated: preAllocByStore.get(storeId)! }),
         ...(input.addressId !== undefined && { addressId: input.addressId }),
         ...(input.applyWallet !== undefined && { applyWallet: input.applyWallet }),
         ...(input.pickupSlotId !== undefined && { pickupSlotId: input.pickupSlotId }),
@@ -167,6 +326,22 @@ export async function placeGroupOrder(
         walletAppliedPaise: res.walletAppliedPaise,
         amountChargedPaise: res.amountChargedPaise,
         alreadyExisted: res.alreadyExisted,
+      });
+    }
+    // Redeem the coupon + debit points ONCE for the group (anchored on the first
+    // child; replay-safe). Inside the try so a CouponExhausted throw compensates.
+    if (cartFinalize && (cartFinalize.couponPromotionId || cartFinalize.cartPointsRedeemed > 0)) {
+      await finalizeGroupCouponAndPoints(database, {
+        firstChildOrderId: placed[0]!.orderId, // placed in sorted storeIds order → storeIds[0]
+        consumerId: input.consumerId,
+        ...(cartFinalize.couponPromotionId !== undefined && {
+          couponPromotionId: cartFinalize.couponPromotionId,
+        }),
+        ...(cartFinalize.voucherCodeId !== undefined && {
+          voucherCodeId: cartFinalize.voucherCodeId,
+        }),
+        cartCouponPaise: cartFinalize.cartCouponPaise,
+        cartPointsRedeemed: cartFinalize.cartPointsRedeemed,
       });
     }
   } catch (err) {
@@ -251,5 +426,6 @@ export async function placeGroupOrder(
     orders: placed,
     alreadyExisted: placed.length > 0 && placed.every((p) => p.alreadyExisted),
     ...(paymentBlock ? { payment: paymentBlock } : {}),
+    ...(groupRejectedCodes.length > 0 && { rejectedCodes: groupRejectedCodes }),
   };
 }

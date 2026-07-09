@@ -91,6 +91,9 @@ export async function placeConsumerGroupOrder(input: {
     paymentOutcome: body.paymentOutcome,
     ...(body.addressId !== undefined && { addressId: body.addressId }),
     ...(body.applyWallet !== undefined && { applyWallet: body.applyWallet }),
+    ...(body.couponCode !== undefined && { couponCode: body.couponCode }),
+    ...(body.voucherCode !== undefined && { voucherCode: body.voucherCode }),
+    ...(body.pointsToRedeem !== undefined && { pointsToRedeem: body.pointsToRedeem }),
     ...(body.pickupSlotId !== undefined && { pickupSlotId: body.pickupSlotId }),
     ...(body.pickupSlotStart !== undefined && { pickupSlotStart: body.pickupSlotStart }),
     ...(body.pickupSlotEnd !== undefined && { pickupSlotEnd: body.pickupSlotEnd }),
@@ -366,11 +369,105 @@ export async function retryGroupPayment(input: { auth: Auth; groupId: string }) 
 }
 
 /** One order with line items — ownership enforced via the consumerId filter. */
+type OrderRow = typeof orders.$inferSelect;
+
+/** Consumer-safe order-item projection — drops internal tax/promo allocations + hsn/gstRate. */
+function shapeOrderItem(it: {
+  id: string; listingId: string; variantId: string;
+  listingNameSnap: string; brandSnap: string; categorySnap: string;
+  galleryImageSnap: string | null; attributesLabelSnap: string; listingPolicySnap: string;
+  qty: number; unitPricePaise: number; lineSubtotalPaise: number; netLinePaise: number; outcome: string;
+}) {
+  return {
+    id: it.id,
+    listingId: it.listingId,
+    variantId: it.variantId,
+    listingNameSnap: it.listingNameSnap,
+    brandSnap: it.brandSnap,
+    categorySnap: it.categorySnap,
+    galleryImageSnap: it.galleryImageSnap,
+    attributesLabelSnap: it.attributesLabelSnap,
+    listingPolicySnap: it.listingPolicySnap,
+    qty: it.qty,
+    unitPricePaise: it.unitPricePaise,
+    lineSubtotalPaise: it.lineSubtotalPaise,
+    netLinePaise: it.netLinePaise,
+    outcome: it.outcome,
+  };
+}
+
+/**
+ * Consumer-safe order-detail projection. Whitelist (default-deny) so no internal
+ * column ever leaks to the app: strips agentHandoffCode, routing internals, fee/TCS
+ * snaps, cod cash, idempotencyKey, PII-scrub marker, etc. KEEPS deliveryOtp +
+ * pickupCode — those are the consumer's own handover proofs.
+ */
+function shapeOrderDetail(o: OrderRow & { items: Parameters<typeof shapeOrderItem>[0][] }) {
+  return {
+    id: o.id,
+    groupId: o.groupId,
+    storeId: o.storeId,
+    addressId: o.addressId,
+    deliveryMethod: o.deliveryMethod,
+    paymentMethod: o.paymentMethod,
+    paymentMethodLabel: o.paymentMethodLabel,
+    status: o.status,
+    // own PII snapshot
+    consumerNameSnap: o.consumerNameSnap,
+    consumerEmailSnap: o.consumerEmailSnap,
+    consumerPhoneSnap: o.consumerPhoneSnap,
+    addressLine1Snap: o.addressLine1Snap,
+    addressLine2Snap: o.addressLine2Snap,
+    addressCitySnap: o.addressCitySnap,
+    addressPincodeSnap: o.addressPincodeSnap,
+    addressStateCodeSnap: o.addressStateCodeSnap,
+    addressLatSnap: o.addressLatSnap,
+    addressLngSnap: o.addressLngSnap,
+    // store snapshot
+    storeNameSnap: o.storeNameSnap,
+    storeAddressSnap: o.storeAddressSnap,
+    storeGstinSnap: o.storeGstinSnap,
+    storeStateCodeSnap: o.storeStateCodeSnap,
+    // pricing snapshot
+    itemsSubtotalPaise: o.itemsSubtotalPaise,
+    retailerPromoPaise: o.retailerPromoPaise,
+    platformPromoPaise: o.platformPromoPaise,
+    couponPaise: o.couponPaise,
+    pointsRedeemedPaise: o.pointsRedeemedPaise,
+    walletAppliedPaise: o.walletAppliedPaise,
+    taxPaise: o.taxPaise,
+    taxSplitKind: o.taxSplitKind,
+    cgstPaise: o.cgstPaise,
+    sgstPaise: o.sgstPaise,
+    igstPaise: o.igstPaise,
+    deliveryFeePaise: o.deliveryFeePaise,
+    handlingFeePaise: o.handlingFeePaise,
+    convenienceFeePaise: o.convenienceFeePaise,
+    grandTotalPaise: o.grandTotalPaise,
+    loyaltyEarnedPoints: o.loyaltyEarnedPoints,
+    // consumer-facing handover proofs — KEEP
+    deliveryOtp: o.deliveryOtp,
+    pickupCode: o.pickupCode,
+    // pickup slot + try-on window (consumer-facing)
+    pickupSlotId: o.pickupSlotId,
+    pickupSlotStart: o.pickupSlotStart,
+    pickupSlotEnd: o.pickupSlotEnd,
+    doorWindowExpiresAt: o.doorWindowExpiresAt,
+    // timestamps
+    placedAt: o.placedAt,
+    acceptedAt: o.acceptedAt,
+    packedAt: o.packedAt,
+    deliveredAt: o.deliveredAt,
+    closedAt: o.closedAt,
+    items: o.items.map(shapeOrderItem),
+  };
+}
+
 export async function getOrder(input: { auth: Auth; id: string }) {
   const order = await db.query.orders.findFirst({
     where: and(eq(orders.id, input.id), eq(orders.consumerId, input.auth.sub)),
     with: { items: true },
   });
   if (!order) throw new AppError(404, ErrorCode.NotFound, 'Order not found');
-  return ok(order);
+  return ok(shapeOrderDetail(order));
 }

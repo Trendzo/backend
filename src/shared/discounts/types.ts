@@ -22,6 +22,9 @@ export type CartLine = {
   /** Optional metadata used by `bogo`/`bxgy`/`bundle` and scope filters. */
   brandId?: string | undefined;
   categoryId?: string | undefined;
+  /** Owning store. Set on multi-store carts so store-scoped coupons attach only to
+   *  eligible-store lines; unset on single-store carts (store-scope gated upstream). */
+  storeId?: string | undefined;
   /** ₹ per unit, paise. */
   unitPricePaise: number;
   qty: number;

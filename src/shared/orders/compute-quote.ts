@@ -61,6 +61,16 @@ export type QuoteInput = {
   pointsToRedeem?: number | undefined;
   /** Apply wallet balance as a partial tender alongside `paymentMethod`. */
   applyWallet?: boolean | undefined;
+  /**
+   * Group child only: inject this child's pre-allocated coupon/loyalty share (paise).
+   * When set, coupon/voucher resolution + loyalty redemption are SKIPPED (the coupon
+   * was resolved once against the whole cart in `computeCartQuote`; the counter-bump +
+   * points-debit happen once at group level). The per-line allocation still runs so the
+   * child's order_items carry their share.
+   */
+  preAllocated?:
+    | { couponPaise: number; pointsPaise: number; couponPromotionId?: string; voucherCodeId?: string }
+    | undefined;
 };
 
 export type StockLine = {
@@ -130,6 +140,169 @@ export function resolveWalletApplyPaise(args: {
 }
 
 /**
+ * Resolve explicit coupon/voucher codes against a cart (single- or multi-store).
+ * Runs gates G1 (validity window), G2 (first-order-only), G4 (loyalty tier) + store
+ * scope (drop only when the coupon's storeIds are DISJOINT from the cart's stores —
+ * per-line `eligibleLines` then restricts the discount to eligible-store lines). No
+ * throws: unusable codes land in `rejectedCodes` and the cart prices without them.
+ * Shared by single-store `computeQuote` and cart-level `computeCartQuote` so the
+ * gating never drifts.
+ */
+export async function resolveExplicitPromotions(
+  database: typeof Db,
+  args: {
+    consumer: { id: string } | null;
+    isGuest: boolean;
+    couponCode?: string | undefined;
+    voucherCode?: string | undefined;
+    storeIdsInCart: string[];
+    consumerLoyaltyBalance: number;
+    now?: Date | undefined;
+  },
+): Promise<{
+  enginePromos: EnginePromotion[];
+  rejectedCodes: RejectedCode[];
+  explicitCodeByPromoId: Map<string, { code: string; kind: 'coupon' | 'voucher' }>;
+  voucherCodeId?: string;
+  voucherCodePromotionId?: string;
+}> {
+  const { consumer, isGuest, consumerLoyaltyBalance } = args;
+  const rejectedCodes: RejectedCode[] = [];
+  const promoIds = new Set<string>();
+  const explicitCodeByPromoId = new Map<string, { code: string; kind: 'coupon' | 'voucher' }>();
+  let voucherCodeId: string | undefined;
+  let voucherCodePromotionId: string | undefined;
+
+  if (args.couponCode) {
+    const promo = await database.query.promotions.findFirst({
+      where: and(eq(promotions.name, args.couponCode), eq(promotions.mechanism, 'coupon')),
+    });
+    if (!promo) {
+      rejectedCodes.push({ code: args.couponCode, kind: 'coupon', reason: 'not_found' });
+    } else {
+      promoIds.add(promo.id);
+      explicitCodeByPromoId.set(promo.id, { code: args.couponCode, kind: 'coupon' });
+    }
+  }
+
+  if (args.voucherCode) {
+    const code = await database.query.voucherCodes.findFirst({
+      where: eq(voucherCodes.code, args.voucherCode.toUpperCase()),
+    });
+    if (!code) {
+      rejectedCodes.push({ code: args.voucherCode, kind: 'voucher', reason: 'not_found' });
+    } else if (code.totalUses != null && code.redeemedCount >= code.totalUses) {
+      rejectedCodes.push({ code: args.voucherCode, kind: 'voucher', reason: 'fully_redeemed' });
+    } else if (code.assignedConsumerId && (isGuest || code.assignedConsumerId !== consumer!.id)) {
+      rejectedCodes.push({
+        code: args.voucherCode,
+        kind: 'voucher',
+        reason: isGuest ? 'requires_login' : 'assigned_to_other',
+      });
+    } else {
+      promoIds.add(code.promotionId);
+      explicitCodeByPromoId.set(code.promotionId, { code: args.voucherCode, kind: 'voucher' });
+      voucherCodeId = code.id;
+      voucherCodePromotionId = code.promotionId;
+    }
+  }
+
+  const promoRows =
+    promoIds.size === 0
+      ? []
+      : await database.query.promotions.findMany({ where: inArray(promotions.id, [...promoIds]) });
+
+  const now = args.now ?? new Date();
+  const validPromoRows = promoRows.filter((p) => {
+    const isActive = p.status === 'active';
+    const inWindow = p.validFrom <= now && p.validUntil >= now;
+    if (!isActive || !inWindow) {
+      const explicit = explicitCodeByPromoId.get(p.id);
+      if (explicit) rejectedCodes.push({ ...explicit, reason: !isActive ? 'inactive' : 'expired' });
+      return false;
+    }
+    return true;
+  });
+
+  const enginePromos: EnginePromotion[] = validPromoRows.map((p) => {
+    const promo: EnginePromotion = {
+      id: p.id,
+      mechanism: p.mechanism as Mechanism,
+      discountType: p.discountType as DiscountType,
+      appliedTo: p.appliedTo as AppliedTo,
+      config: p.config as unknown as PromotionConfig,
+      scope: p.scope as unknown as Scope,
+      stackableWith: p.stackableWith,
+      nonStackable: p.nonStackable,
+    };
+    if (voucherCodeId && p.id === voucherCodePromotionId) promo.voucherCodeId = voucherCodeId;
+    return promo;
+  });
+
+  // G2: firstOrderOnly — only for a signed-in consumer with a prior (non-failed) order.
+  if (consumer && enginePromos.some((p) => p.scope?.firstOrderOnly)) {
+    const priorOrder = await database.query.orders.findFirst({
+      where: and(eq(orders.consumerId, consumer.id), sql`${orders.status} != 'payment_failed'`),
+      columns: { id: true },
+    });
+    if (priorOrder) {
+      for (let i = enginePromos.length - 1; i >= 0; i--) {
+        if (!enginePromos[i]!.scope?.firstOrderOnly) continue;
+        const explicit = explicitCodeByPromoId.get(enginePromos[i]!.id);
+        if (explicit) rejectedCodes.push({ ...explicit, reason: 'first_order_only' });
+        enginePromos.splice(i, 1);
+      }
+    }
+  }
+
+  // G4: loyaltyTierFilter — derive consumer tier (guest = bronze).
+  if (enginePromos.some((p) => p.scope?.loyaltyTierFilter?.length)) {
+    const tierCfg = await database.query.platformConfig.findMany({
+      where: inArray(platformConfig.key, [
+        'loyalty_tier_silver_min',
+        'loyalty_tier_gold_min',
+        'loyalty_tier_platinum_min',
+      ]),
+    });
+    const silver = (tierCfg.find((c) => c.key === 'loyalty_tier_silver_min')?.value as number | undefined) ?? 500;
+    const gold   = (tierCfg.find((c) => c.key === 'loyalty_tier_gold_min')?.value   as number | undefined) ?? 2000;
+    const plat   = (tierCfg.find((c) => c.key === 'loyalty_tier_platinum_min')?.value as number | undefined) ?? 5000;
+    const consumerTier: 'bronze' | 'silver' | 'gold' | 'platinum' =
+      consumerLoyaltyBalance >= plat ? 'platinum'
+        : consumerLoyaltyBalance >= gold ? 'gold'
+        : consumerLoyaltyBalance >= silver ? 'silver'
+        : 'bronze';
+    for (let i = enginePromos.length - 1; i >= 0; i--) {
+      const filter = enginePromos[i]!.scope?.loyaltyTierFilter;
+      if (filter?.length && !filter.includes(consumerTier)) {
+        const explicit = explicitCodeByPromoId.get(enginePromos[i]!.id);
+        if (explicit) rejectedCodes.push({ ...explicit, reason: 'tier_ineligible' });
+        enginePromos.splice(i, 1);
+      }
+    }
+  }
+
+  // Store scope — drop the promo only when its storeIds are DISJOINT from the cart's
+  // stores. (Single-store: storeIdsInCart=[store] → identical to the old exact-match gate.)
+  for (let i = enginePromos.length - 1; i >= 0; i--) {
+    const storeIds = enginePromos[i]!.scope?.storeIds;
+    if (storeIds?.length && !storeIds.some((s) => args.storeIdsInCart.includes(s))) {
+      const explicit = explicitCodeByPromoId.get(enginePromos[i]!.id);
+      if (explicit) rejectedCodes.push({ ...explicit, reason: 'store_ineligible' });
+      enginePromos.splice(i, 1);
+    }
+  }
+
+  return {
+    enginePromos,
+    rejectedCodes,
+    explicitCodeByPromoId,
+    ...(voucherCodeId !== undefined && { voucherCodeId }),
+    ...(voucherCodePromotionId !== undefined && { voucherCodePromotionId }),
+  };
+}
+
+/**
  * Resolve + price a cart without writing anything. Returns the pricing breakdown
  * plus every entity `placeOrder` needs downstream, so placement does not re-query.
  *
@@ -138,7 +311,6 @@ export function resolveWalletApplyPaise(args: {
  */
 export async function computeQuote(database: typeof Db, input: QuoteInput) {
   const isGuest = !input.consumerId;
-  const rejectedCodes: RejectedCode[] = [];
 
   // ── Pre-load static data (consumer, store, address, items) ──
   // Consumer is optional: a guest/preview quote skips loyalty, wallet, and all
@@ -236,6 +408,7 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
       lineId: v.id,
       listingId: v.listing.id,
       variantId: v.id,
+      storeId: v.listing.storeId,
       unitPricePaise: v.pricePaise,
       qty: it.qty,
       // Same authoritative GST table as the POS counter — rate from HSN/category, GST 2.0 slabs.
@@ -260,89 +433,7 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
     lines: cartLines,
   };
 
-  // ── Resolve promotions (explicit coupon/voucher only; auto-offers out of scope) ──
-  // No throws: an unusable explicit code is recorded in `rejectedCodes` and the cart
-  // is priced WITHOUT it, so a bad coupon can never block a quote or a placement.
-  const promoIds = new Set<string>();
-  const explicitCodeByPromoId = new Map<string, { code: string; kind: 'coupon' | 'voucher' }>();
-  let voucherCodeId: string | undefined;
-  let voucherCodePromotionId: string | undefined;
-
-  if (input.couponCode) {
-    const promo = await database.query.promotions.findFirst({
-      where: and(eq(promotions.name, input.couponCode), eq(promotions.mechanism, 'coupon')),
-    });
-    if (!promo) {
-      rejectedCodes.push({ code: input.couponCode, kind: 'coupon', reason: 'not_found' });
-    } else {
-      promoIds.add(promo.id);
-      explicitCodeByPromoId.set(promo.id, { code: input.couponCode, kind: 'coupon' });
-    }
-  }
-
-  if (input.voucherCode) {
-    const code = await database.query.voucherCodes.findFirst({
-      where: eq(voucherCodes.code, input.voucherCode.toUpperCase()),
-    });
-    if (!code) {
-      rejectedCodes.push({ code: input.voucherCode, kind: 'voucher', reason: 'not_found' });
-    } else if (code.totalUses != null && code.redeemedCount >= code.totalUses) {
-      rejectedCodes.push({ code: input.voucherCode, kind: 'voucher', reason: 'fully_redeemed' });
-    } else if (code.assignedConsumerId && (isGuest || code.assignedConsumerId !== consumer!.id)) {
-      // §13 P6 — targeted vouchers are reserved for a specific consumer.
-      rejectedCodes.push({
-        code: input.voucherCode,
-        kind: 'voucher',
-        reason: isGuest ? 'requires_login' : 'assigned_to_other',
-      });
-    } else {
-      promoIds.add(code.promotionId);
-      explicitCodeByPromoId.set(code.promotionId, { code: input.voucherCode, kind: 'voucher' });
-      voucherCodeId = code.id;
-      voucherCodePromotionId = code.promotionId;
-    }
-  }
-
-  const promoRows =
-    promoIds.size === 0
-      ? []
-      : await database.query.promotions.findMany({
-          where: inArray(promotions.id, [...promoIds]),
-        });
-
-  // G1: Validate status and validity window. Unusable explicit codes → rejectedCodes.
-  const now = new Date();
-  const validPromoRows = promoRows.filter((p) => {
-    const isActive = p.status === 'active';
-    const inWindow = p.validFrom <= now && p.validUntil >= now;
-    if (!isActive || !inWindow) {
-      const explicit = explicitCodeByPromoId.get(p.id);
-      if (explicit) {
-        rejectedCodes.push({ ...explicit, reason: !isActive ? 'inactive' : 'expired' });
-      }
-      return false;
-    }
-    return true;
-  });
-
-  const enginePromos: EnginePromotion[] = validPromoRows.map((p) => {
-    const promo: EnginePromotion = {
-      id: p.id,
-      mechanism: p.mechanism as Mechanism,
-      discountType: p.discountType as DiscountType,
-      appliedTo: p.appliedTo as AppliedTo,
-      config: p.config as unknown as PromotionConfig,
-      scope: p.scope as unknown as Scope,
-      stackableWith: p.stackableWith,
-      nonStackable: p.nonStackable,
-    };
-    if (voucherCodeId && p.id === voucherCodePromotionId) {
-      promo.voucherCodeId = voucherCodeId;
-    }
-    return promo;
-  });
-
-  // Loyalty balance — consumer only (used for redemption math + tier checks). Guest = 0.
+  // Loyalty balance — consumer only (feeds the promo tier gate + redemption math). Guest = 0.
   const loyaltyAcct = consumer
     ? await database.query.consumerLoyalty.findFirst({
         where: eq(consumerLoyalty.consumerId, consumer.id),
@@ -350,60 +441,25 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
     : null;
   const consumerLoyaltyBalance = loyaltyAcct?.balancePoints ?? 0;
 
-  // G2: firstOrderOnly — only meaningful for a signed-in consumer with prior orders.
-  // Guests are first-time by definition, so these promos stay.
-  if (consumer && enginePromos.some((p) => p.scope?.firstOrderOnly)) {
-    const priorOrder = await database.query.orders.findFirst({
-      where: and(eq(orders.consumerId, consumer.id), sql`${orders.status} != 'payment_failed'`),
-      columns: { id: true },
-    });
-    if (priorOrder) {
-      for (let i = enginePromos.length - 1; i >= 0; i--) {
-        if (!enginePromos[i]!.scope?.firstOrderOnly) continue;
-        const explicit = explicitCodeByPromoId.get(enginePromos[i]!.id);
-        if (explicit) rejectedCodes.push({ ...explicit, reason: 'first_order_only' });
-        enginePromos.splice(i, 1);
+  // ── Resolve explicit coupon/voucher (skipped for a pre-allocated group child, whose
+  //    coupon was resolved once against the whole cart in computeCartQuote) ──
+  const resolved = input.preAllocated
+    ? {
+        enginePromos: [] as EnginePromotion[],
+        rejectedCodes: [] as RejectedCode[],
+        explicitCodeByPromoId: new Map<string, { code: string; kind: 'coupon' | 'voucher' }>(),
       }
-    }
-  }
-
-  // G4: Enforce loyaltyTierFilter — derive consumer tier (guest = bronze).
-  if (enginePromos.some((p) => p.scope?.loyaltyTierFilter?.length)) {
-    const tierCfg = await database.query.platformConfig.findMany({
-      where: inArray(platformConfig.key, [
-        'loyalty_tier_silver_min',
-        'loyalty_tier_gold_min',
-        'loyalty_tier_platinum_min',
-      ]),
-    });
-    const silver = (tierCfg.find((c) => c.key === 'loyalty_tier_silver_min')?.value as number | undefined) ?? 500;
-    const gold   = (tierCfg.find((c) => c.key === 'loyalty_tier_gold_min')?.value   as number | undefined) ?? 2000;
-    const plat   = (tierCfg.find((c) => c.key === 'loyalty_tier_platinum_min')?.value as number | undefined) ?? 5000;
-    const consumerTier: 'bronze' | 'silver' | 'gold' | 'platinum' =
-      consumerLoyaltyBalance >= plat ? 'platinum'
-        : consumerLoyaltyBalance >= gold ? 'gold'
-        : consumerLoyaltyBalance >= silver ? 'silver'
-        : 'bronze';
-    for (let i = enginePromos.length - 1; i >= 0; i--) {
-      const filter = enginePromos[i]!.scope?.loyaltyTierFilter;
-      if (filter?.length && !filter.includes(consumerTier)) {
-        const explicit = explicitCodeByPromoId.get(enginePromos[i]!.id);
-        if (explicit) rejectedCodes.push({ ...explicit, reason: 'tier_ineligible' });
-        enginePromos.splice(i, 1);
-      }
-    }
-  }
-
-  // §13 A5 — scope.storeIds gating (cart represents one store). Unusable explicit
-  // codes → rejectedCodes; auto-applied offers silently drop.
-  for (let i = enginePromos.length - 1; i >= 0; i--) {
-    const storeIds = enginePromos[i]!.scope?.storeIds;
-    if (storeIds?.length && !storeIds.includes(store.id)) {
-      const explicit = explicitCodeByPromoId.get(enginePromos[i]!.id);
-      if (explicit) rejectedCodes.push({ ...explicit, reason: 'store_ineligible' });
-      enginePromos.splice(i, 1);
-    }
-  }
+    : await resolveExplicitPromotions(database, {
+        consumer: consumer ?? null,
+        isGuest,
+        ...(input.couponCode !== undefined && { couponCode: input.couponCode }),
+        ...(input.voucherCode !== undefined && { voucherCode: input.voucherCode }),
+        storeIdsInCart: [store.id],
+        consumerLoyaltyBalance,
+      });
+  const enginePromos = resolved.enginePromos;
+  const rejectedCodes = resolved.rejectedCodes;
+  const explicitCodeByPromoId = resolved.explicitCodeByPromoId;
 
   const clubbingRows = await database.query.clubbingMatrixEntries.findMany();
   const clubbingMatrix = clubbingRows.map((r) => ({
@@ -419,9 +475,16 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
     promotions: enginePromos,
     clubbingMatrix,
     config: engineConfig,
-    // Guests can't redeem loyalty (no balance / no account).
-    pointsToRedeem: isGuest ? 0 : (input.pointsToRedeem ?? 0),
+    // Guests can't redeem loyalty; a pre-allocated group child redeems 0 (its loyalty
+    // share is injected via preAllocated and the points are debited once at group level).
+    pointsToRedeem: isGuest || input.preAllocated ? 0 : (input.pointsToRedeem ?? 0),
     consumerLoyaltyBalance,
+    ...(input.preAllocated && {
+      preAllocated: {
+        couponPaise: input.preAllocated.couponPaise,
+        loyaltyPaise: input.preAllocated.pointsPaise,
+      },
+    }),
   });
 
   // Explicit codes that survived gating but the engine still couldn't apply

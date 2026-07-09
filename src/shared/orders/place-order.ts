@@ -87,6 +87,17 @@ export type PlaceOrderInput = {
    * orchestrator creates ONE gateway order spanning all children.
    */
   skipGatewayOrder?: boolean | undefined;
+  /**
+   * Group checkout only: this child's pre-allocated coupon + loyalty share (paise),
+   * resolved once against the whole cart in `computeCartQuote`. When set, per-store
+   * coupon/voucher resolution + the promotion counter-bump/redemption rows + the
+   * loyalty debit are ALL skipped here — they happen once at group level in
+   * `finalizeGroupCouponAndPoints`. The child still writes its share into
+   * order/order_items so per-child refunds stay correct.
+   */
+  preAllocated?:
+    | { couponPaise: number; pointsPaise: number; couponPromotionId?: string; voucherCodeId?: string }
+    | undefined;
   /** §9 — pickup slot snap. Required when deliveryMethod==='pickup' and the caller
    *  is a consumer (real checkout). Admin test placement may omit (auto-default).
    *  All three are stored on the order so slot config edits don't drift. */
@@ -155,6 +166,7 @@ export async function placeOrder(
     ...(input.voucherCode !== undefined && { voucherCode: input.voucherCode }),
     ...(input.pointsToRedeem !== undefined && { pointsToRedeem: input.pointsToRedeem }),
     ...(input.applyWallet !== undefined && { applyWallet: input.applyWallet }),
+    ...(input.preAllocated !== undefined && { preAllocated: input.preAllocated }),
   });
   const {
     store,
@@ -537,8 +549,10 @@ export async function placeOrder(
       ...(settledAt && { settledAt }),
     });
 
-    // Redemptions + counters.
-    for (const applied of breakdown.appliedPromotions) {
+    // Redemptions + counters. Skipped for a group child — its coupon was resolved
+    // once against the whole cart; the single counter-bump + redemption rows land in
+    // finalizeGroupCouponAndPoints (breakdown.appliedPromotions is empty here anyway).
+    if (!input.preAllocated) for (const applied of breakdown.appliedPromotions) {
       const newCount = await bumpPromotionCounter(tx as unknown as typeof Db, applied.promotionId);
       if (newCount === null) {
         throw new AppError(
@@ -590,7 +604,9 @@ export async function placeOrder(
     // applyLoyaltyDelta re-reads the authoritative balance inside this transaction and throws
     // InsufficientPoints if a concurrent redeem already drew it down, so a stale quote can
     // never overdraw points.
-    if (breakdown.loyaltyRedeemedPoints > 0) {
+    // Skipped for a group child (loyaltyRedeemedPoints is 0 here — the child's points
+    // share is injected via preAllocated and debited once in finalizeGroupCouponAndPoints).
+    if (!input.preAllocated && breakdown.loyaltyRedeemedPoints > 0) {
       await applyLoyaltyDelta(tx, {
         consumerId: consumer.id,
         points: -breakdown.loyaltyRedeemedPoints,

@@ -22,11 +22,15 @@ import {
   driverCashLedger,
   driverEarnings,
   heldItems,
+  consumerLoyalty,
+  loyaltyTransactions,
   orderItems,
   orders,
   payments,
   platformConfig,
   productListings,
+  promotionRedemptions,
+  promotions,
   refundDisbursements,
   refunds,
   retailerAccounts,
@@ -1024,6 +1028,206 @@ describe('group checkout — one cart, N stores, one group', () => {
       pickupSlotEnd: new Date(Date.now() + 7_200_000).toISOString(),
     });
     expect(res.statusCode).toBe(422);
+  });
+
+  it('cart-level coupon: applies once to the whole 2-store cart (min-spend met only combined), splits exact, one redemption', async () => {
+    // Combined cart = store1 ₹500 + store2 ₹600 = ₹1100. Coupon needs ₹1000 min —
+    // neither store alone qualifies (₹500 / ₹600); only the whole cart does.
+    const promoId = newId(IdPrefix.Promotion);
+    await db.insert(promotions).values({
+      id: promoId,
+      name: 'CART200',
+      mechanism: 'coupon',
+      discountType: 'flat_amount',
+      issuerType: 'admin',
+      appliedTo: 'coupon',
+      scope: { minCartPaise: 100_000 },
+      config: { amountPaise: 20_000 },
+      status: 'active',
+      validFrom: new Date(Date.now() - 86_400_000),
+      validUntil: new Date(Date.now() + 86_400_000),
+    });
+
+    // Preview must equal placement.
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/v1/pricing/cart',
+      headers: auth(consumerToken),
+      payload: { items: [{ variantId, qty: 1 }, { variantId: variant2Id, qty: 2 }], couponCode: 'CART200' },
+    });
+    expect(preview.statusCode).toBe(200);
+    const previewTotal = (data(preview) as { aggregate: { grandTotalPaise: number }; rejectedCodes: unknown[] }).aggregate.grandTotalPaise;
+    expect((data(preview) as { rejectedCodes: unknown[] }).rejectedCodes).toHaveLength(0);
+
+    const key = `gik_coupon_${Date.now()}`;
+    const res = await groupPlace({
+      items: [{ variantId, qty: 1 }, { variantId: variant2Id, qty: 2 }],
+      deliveryMethod: 'standard',
+      paymentMethod: 'upi',
+      addressId,
+      couponCode: 'CART200',
+      idempotencyKey: key,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = data(res) as { groupId: string; orders: Array<{ orderId: string }> };
+    expect(body.orders).toHaveLength(2);
+
+    // Each child carries its coupon share; the shares sum to the full ₹200.
+    const children = await db.query.orders.findMany({ where: eq(orders.groupId, body.groupId) });
+    const totalCoupon = children.reduce((s, o) => s + o.couponPaise, 0);
+    expect(totalCoupon).toBe(20_000);
+    expect(children.every((o) => o.couponPaise > 0)).toBe(true); // both stores got a share
+    // Per-child order_items coupon allocs sum to the child's couponPaise.
+    for (const o of children) {
+      const its = await db.query.orderItems.findMany({ where: eq(orderItems.orderId, o.id) });
+      expect(its.reduce((s, i) => s + i.couponAllocPaise, 0)).toBe(o.couponPaise);
+    }
+    // Placement total == preview total.
+    const placedTotal = children.reduce((s, o) => s + o.grandTotalPaise, 0);
+    expect(placedTotal).toBe(previewTotal);
+
+    // Coupon redeemed EXACTLY ONCE for the group (not once per child).
+    const redemptions = await db.query.promotionRedemptions.findMany({
+      where: eq(promotionRedemptions.promotionId, promoId),
+    });
+    expect(redemptions).toHaveLength(1);
+    expect(redemptions[0]!.amountAppliedPaise).toBe(20_000);
+
+    // Replay: same key → same group, still one redemption.
+    const replay = await groupPlace({
+      items: [{ variantId, qty: 1 }, { variantId: variant2Id, qty: 2 }],
+      deliveryMethod: 'standard',
+      paymentMethod: 'upi',
+      addressId,
+      couponCode: 'CART200',
+      idempotencyKey: key,
+    });
+    expect(replay.statusCode).toBe(200);
+    expect((data(replay) as { groupId: string }).groupId).toBe(body.groupId);
+    expect(
+      (await db.query.promotionRedemptions.findMany({ where: eq(promotionRedemptions.promotionId, promoId) })).length,
+    ).toBe(1);
+
+    // Clean up the placed orders.
+    for (const o of children) {
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/consumer/checkout/orders/${o.id}/cancel`,
+        headers: auth(consumerToken),
+        payload: {},
+      });
+    }
+  });
+
+  it('cart-level coupon rejected when the full cart is below min-spend → 409, no children placed', async () => {
+    const promoId = newId(IdPrefix.Promotion);
+    await db.insert(promotions).values({
+      id: promoId,
+      name: 'BIGMIN',
+      mechanism: 'coupon',
+      discountType: 'flat_amount',
+      issuerType: 'admin',
+      appliedTo: 'coupon',
+      scope: { minCartPaise: 9_999_900 },
+      config: { amountPaise: 20_000 },
+      status: 'active',
+      validFrom: new Date(Date.now() - 86_400_000),
+      validUntil: new Date(Date.now() + 86_400_000),
+    });
+    const key = `gik_reject_${Date.now()}`;
+    const res = await groupPlace({
+      items: [{ variantId, qty: 1 }, { variantId: variant2Id, qty: 2 }],
+      deliveryMethod: 'standard',
+      paymentMethod: 'upi',
+      addressId,
+      couponCode: 'BIGMIN',
+      idempotencyKey: key,
+    });
+    expect(res.statusCode).toBe(409);
+    // No children left behind under this key.
+    for (const sid of [storeId, store2Id]) {
+      const child = await db.query.orders.findFirst({
+        where: eq(orders.idempotencyKey, `${key}#${sid}`),
+      });
+      expect(child).toBeUndefined();
+    }
+  });
+
+  it('cart-level points: redeemed once across the group, shares sum to the redemption', async () => {
+    // Give the consumer a points balance.
+    await db
+      .insert(consumerLoyalty)
+      .values({ id: newId(IdPrefix.LoyaltyAccount), consumerId, balancePoints: 5000 })
+      .onConflictDoUpdate({ target: consumerLoyalty.consumerId, set: { balancePoints: 5000 } });
+    const key = `gik_points_${Date.now()}`;
+    const res = await groupPlace({
+      items: [{ variantId, qty: 1 }, { variantId: variant2Id, qty: 2 }],
+      deliveryMethod: 'standard',
+      paymentMethod: 'upi',
+      addressId,
+      pointsToRedeem: 100, // ₹100 at ₹1/point
+      idempotencyKey: key,
+    });
+    expect(res.statusCode).toBe(200);
+    const body = data(res) as { groupId: string };
+    const children = await db.query.orders.findMany({ where: eq(orders.groupId, body.groupId) });
+    const totalPoints = children.reduce((s, o) => s + o.pointsRedeemedPaise, 0);
+    expect(totalPoints).toBe(10_000); // 100 pts × ₹1 = ₹100 = 10000 paise
+    // Exactly one loyalty 'redeem' row for the group.
+    const firstChildId = children.map((o) => o.id).sort()[0];
+    const redeemRows = await db.query.loyaltyTransactions.findMany({
+      where: and(eq(loyaltyTransactions.kind, 'redeem'), eq(loyaltyTransactions.refOrderId, firstChildId!)),
+    });
+    // (first child by placement is storeIds[0]; assert a single redeem exists somewhere in the group)
+    const allRedeems = await db.query.loyaltyTransactions.findMany({
+      where: eq(loyaltyTransactions.kind, 'redeem'),
+    });
+    const groupRedeems = allRedeems.filter((r) => children.some((o) => o.id === r.refOrderId));
+    expect(groupRedeems).toHaveLength(1);
+    expect(groupRedeems[0]!.points).toBe(-100);
+    void redeemRows;
+    for (const o of children) {
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/consumer/checkout/orders/${o.id}/cancel`,
+        headers: auth(consumerToken),
+        payload: {},
+      });
+    }
+  });
+});
+
+/* ═══ getOrder response shaper (A2) ═══════════════════════════════════════ */
+
+describe('getOrder — consumer-safe shaper', () => {
+  it('strips internal fields, keeps consumer-facing OTP/pickupCode + items', async () => {
+    const { orderId } = await placeOrder({ deliveryMethod: 'standard', paymentMethod: 'upi' });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/consumer/checkout/orders/${orderId}`,
+      headers: auth(consumerToken),
+    });
+    expect(res.statusCode).toBe(200);
+    const o = data(res) as Record<string, unknown> & { items: Array<Record<string, unknown>> };
+    // internal fields stripped
+    for (const leak of ['agentHandoffCode', 'idempotencyKey', 'routingHistory', 'routingAttempts', 'codCollectedPaise', 'platformFeeBpSnap', 'tcsRateBpSnap', 'assignedAgentId']) {
+      expect(o).not.toHaveProperty(leak);
+    }
+    // consumer-facing kept
+    expect(o).toHaveProperty('status');
+    expect(o).toHaveProperty('deliveryOtp'); // standard delivery carries one (may be a string)
+    expect(o).toHaveProperty('grandTotalPaise');
+    expect(Array.isArray(o.items)).toBe(true);
+    // item internals stripped
+    expect(o.items[0]).not.toHaveProperty('couponAllocPaise');
+    expect(o.items[0]).not.toHaveProperty('gstRateBp');
+    expect(o.items[0]).toHaveProperty('listingNameSnap');
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/consumer/checkout/orders/${orderId}/cancel`,
+      headers: auth(consumerToken),
+      payload: {},
+    });
   });
 });
 

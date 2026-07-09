@@ -8,8 +8,11 @@ import type { Cart, EnginePromotion } from './types.js';
 export function eligibleLines(promo: EnginePromotion, cart: Cart) {
   const s = promo.scope ?? {};
   return cart.lines.filter((line) => {
+    // Store scope on a multi-store cart: a store-scoped coupon attaches only to lines
+    // from an eligible store. On single-store carts `line.storeId` is unset and the
+    // whole-promo store gate is enforced upstream (compute-quote), so this is a no-op.
+    if (s.storeIds?.length && line.storeId && !s.storeIds.includes(line.storeId)) return false;
     // Inclusion lists — if any are set, line must match at least one inclusion check.
-    // Note: storeIds is enforced in place-order (the cart represents one store), not here.
     const hasIncludes = !!(
       s.listingIds?.length ||
       s.variantIds?.length ||

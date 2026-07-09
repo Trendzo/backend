@@ -79,6 +79,10 @@ export const PlaceGroupOrderBody = z.object({
   paymentOutcome: PaymentOutcomeEnum.default('succeeded'),
   addressId: z.string().min(1).optional(),
   applyWallet: z.boolean().optional(),
+  // Cart-level codes/points — resolved once against the whole cart, split across stores.
+  couponCode: z.string().trim().optional(),
+  voucherCode: z.string().trim().optional(),
+  pointsToRedeem: z.number().int().nonnegative().optional(),
   idempotencyKey: z.string().min(1).optional(),
   pickupSlotId: z.string().min(1).optional(),
   pickupSlotStart: z.coerce.date().optional(),

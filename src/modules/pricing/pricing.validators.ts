@@ -17,9 +17,12 @@ export const PriceQuoteBody = z.object({
   applyWallet: z.boolean().optional(),
 });
 
-/** Price the whole cart (cart screen). Backend groups by store + aggregates. */
+/** Price the whole cart (cart screen). Backend groups by store + aggregates; a
+ *  coupon/voucher + points apply ONCE across the whole cart (split per store). */
 export const PriceCartBody = z.object({
   items: Items,
   couponCode: z.string().trim().optional(),
   voucherCode: z.string().trim().optional(),
+  pointsToRedeem: z.number().int().nonnegative().optional(),
+  applyWallet: z.boolean().optional(),
 });

@@ -58,6 +58,14 @@ export type ComputeInput = {
   pointsToRedeem?: number;
   /** Their current points balance (used to clamp). */
   consumerLoyaltyBalance?: number;
+  /**
+   * Group child only: this child's pre-allocated coupon + loyalty share (paise),
+   * resolved once against the whole cart and split across children. When set, the
+   * engine injects these instead of deriving the coupon from `promotions` or running
+   * loyalty redemption (child gets no coupon promo + `pointsToRedeem=0`). The single
+   * counter-bump + points-debit happen once at group level.
+   */
+  preAllocated?: { couponPaise: number; loyaltyPaise: number } | undefined;
 };
 
 export function compute(input: ComputeInput): PricingBreakdown {
@@ -145,6 +153,12 @@ export function compute(input: ComputeInput): PricingBreakdown {
     }
   }
 
+  // Group child: inject this child's pre-allocated coupon share (the coupon was
+  // resolved once against the whole cart; the child carries no coupon promo).
+  if (input.preAllocated) {
+    couponDiscountPaise = input.preAllocated.couponPaise;
+  }
+
   // 4. Subtotals.
   const postPromoSubtotalPaise = Math.max(
     0,
@@ -153,13 +167,16 @@ export function compute(input: ComputeInput): PricingBreakdown {
 
   // 5. Loyalty redemption — applied on top, NOT subject to clubbing (per spec line 778).
   //    Uses the *uncapped* coupon discount for headroom; the cap rule clamps both
-  //    coupon + loyalty after the redemption math runs.
-  const loyalty = applyLoyaltyRedemption({
-    pointsRequested: input.pointsToRedeem ?? 0,
-    consumerBalancePoints: input.consumerLoyaltyBalance ?? 0,
-    eligibleSubtotalPaise: Math.max(0, postPromoSubtotalPaise - couponDiscountPaise),
-    config: config.loyalty,
-  });
+  //    coupon + loyalty after the redemption math runs. A group child injects its
+  //    pre-allocated loyalty share (points debited once at group level → 0 here).
+  const loyalty = input.preAllocated
+    ? { pointsRedeemed: 0, discountPaise: input.preAllocated.loyaltyPaise }
+    : applyLoyaltyRedemption({
+        pointsRequested: input.pointsToRedeem ?? 0,
+        consumerBalancePoints: input.consumerLoyaltyBalance ?? 0,
+        eligibleSubtotalPaise: Math.max(0, postPromoSubtotalPaise - couponDiscountPaise),
+        config: config.loyalty,
+      });
   const loyaltyRedeemedPoints = loyalty.pointsRedeemed;
 
   // 6. Discount cap rule (§11). Coupon + loyalty cannot exceed post-promo subtotal.
