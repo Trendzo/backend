@@ -7,6 +7,7 @@
  */
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { z } from 'zod';
+import { env } from '@/config/env.js';
 import { db } from '@/db/client.js';
 import { deliveryAgents, deliveryAttempts, orderItems, orders, variants } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
@@ -58,12 +59,15 @@ function actorOf(auth: Auth): { type: 'delivery_agent'; id: string } {
   return { type: 'delivery_agent', id: auth.sub };
 }
 
-// TEMP test backdoor: '1111' is always accepted as the consumer delivery OTP so QA can
-// close doors / deliver without the real code. Remove before production.
+// QA test backdoor: '1111' is accepted as the consumer delivery OTP so QA can close
+// doors / deliver without the real code. Gated to non-production — in production the
+// real crypto OTP is the ONLY accepted value.
 const TEST_DELIVERY_OTP = '1111';
+const ALLOW_TEST_OTP = env.NODE_ENV !== 'production';
 function otpOk(orderOtp: string | null, submitted: string | undefined): boolean {
   if (!orderOtp) return true; // legacy orders with no OTP
-  return submitted === orderOtp || submitted === TEST_DELIVERY_OTP;
+  if (submitted === orderOtp) return true;
+  return ALLOW_TEST_OTP && submitted === TEST_DELIVERY_OTP;
 }
 
 // `packed` is included so an assigned driver sees the order as "ready for pickup" and

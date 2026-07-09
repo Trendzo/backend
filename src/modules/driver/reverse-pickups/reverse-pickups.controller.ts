@@ -11,6 +11,7 @@
  */
 import { and, asc, eq, inArray, isNull, notInArray } from 'drizzle-orm';
 import type { z } from 'zod';
+import { env } from '@/config/env.js';
 import { db } from '@/db/client.js';
 import {
   deliveryAgents,
@@ -44,11 +45,14 @@ async function getDriverId(auth: Auth): Promise<string> {
   return driver.id;
 }
 
-// TEMP test backdoor: '1111' is always accepted as the collect OTP so QA can run
-// the flow without the real code. Remove before production (same as deliveries).
+// QA test backdoor: '1111' is accepted as the collect OTP so QA can run the flow
+// without the real code. Gated to non-production — in production the real crypto
+// collect OTP is the ONLY accepted value (same policy as deliveries).
 const TEST_COLLECT_OTP = '1111';
+const ALLOW_TEST_OTP = env.NODE_ENV !== 'production';
 function otpOk(taskOtp: string, submitted: string | undefined): boolean {
-  return submitted === taskOtp || submitted === TEST_COLLECT_OTP;
+  if (submitted === taskOtp) return true;
+  return ALLOW_TEST_OTP && submitted === TEST_COLLECT_OTP;
 }
 
 const taskShape = {
