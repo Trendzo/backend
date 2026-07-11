@@ -46,11 +46,17 @@ const aiCatalogBetaRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: { body: SubmissionBody },
     },
     async (req) => {
-      req.log.info(
-        { ...activeImageProvider(), mode: req.body.mode, route: 'ai-catalog-beta/submissions' },
-        'ai-catalog generate',
-      );
-      return ctrl.createSubmission({ auth: getAuth(req), body: req.body });
+      const ai = activeImageProvider();
+      req.log.info({ ...ai, mode: req.body.mode, route: 'submissions' }, 'ai-catalog generate');
+      try {
+        return await ctrl.createSubmission({ auth: getAuth(req), body: req.body });
+      } catch (err) {
+        req.log.error(
+          { provider: ai.provider, error: err instanceof Error ? err.message : String(err) },
+          'ai-catalog generate failed',
+        );
+        throw err;
+      }
     },
   );
 
@@ -82,11 +88,17 @@ const aiCatalogBetaRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: { body: MockupsBody },
     },
     async (req) => {
-      req.log.info(
-        { ...activeImageProvider(), mode: req.body.mode, route: 'ai-catalog-beta/mockups' },
-        'ai-catalog generate',
-      );
-      return ctrl.quickMockups({ auth: getAuth(req), body: req.body });
+      const ai = activeImageProvider();
+      req.log.info({ ...ai, mode: req.body.mode, route: 'mockups' }, 'ai-catalog generate');
+      try {
+        return await ctrl.quickMockups({ auth: getAuth(req), body: req.body });
+      } catch (err) {
+        req.log.error(
+          { provider: ai.provider, error: err instanceof Error ? err.message : String(err) },
+          'ai-catalog generate failed',
+        );
+        throw err;
+      }
     },
   );
 

@@ -142,6 +142,10 @@ export function buildApp() {
 
   const app = Fastify({
     logger: loggerOptions,
+    // Silence Fastify's automatic per-request/response logs (method, url, remote
+    // IP, user-agent, response time). Only what we explicitly log is printed —
+    // keeps output compact. Errors still surface via the error handler below.
+    disableRequestLogging: true,
     trustProxy: env.NODE_ENV === 'production',
     requestIdHeader: 'x-request-id',
     requestIdLogLabel: 'reqId',
