@@ -1,6 +1,7 @@
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { getVertexClient } from '@/shared/vertex-image.js';
 import { fetchReferenceImage } from '@/shared/gemini.js';
+import { withRetry } from '@/shared/retry.js';
 
 /**
  * Customer virtual try-on via Vertex AI's dedicated model `virtual-try-on-001`
@@ -22,16 +23,18 @@ export async function virtualTryOn(
 
   let response;
   try {
-    response = await ai.models.recontextImage({
-      model: VTO_MODEL,
-      source: {
-        personImage: { imageBytes: person.data, mimeType: person.mimeType },
-        productImages: [
-          { productImage: { imageBytes: garment.data, mimeType: garment.mimeType } },
-        ],
-      },
-      config: { numberOfImages: 1, outputMimeType: 'image/png' },
-    });
+    response = await withRetry(() =>
+      ai.models.recontextImage({
+        model: VTO_MODEL,
+        source: {
+          personImage: { imageBytes: person.data, mimeType: person.mimeType },
+          productImages: [
+            { productImage: { imageBytes: garment.data, mimeType: garment.mimeType } },
+          ],
+        },
+        config: { numberOfImages: 1, outputMimeType: 'image/png' },
+      }),
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown Vertex VTO error';
     throw new AppError(502, ErrorCode.InternalError, `Virtual try-on failed: ${message}`);

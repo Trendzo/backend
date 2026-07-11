@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { env } from '@/config/env.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
+import { withRetry } from '@/shared/retry.js';
 import {
   composePrompt,
   fetchReferenceImage,
@@ -54,10 +55,12 @@ export async function generateCatalogImageViaVertex(input: GenerateInput): Promi
 
   let response;
   try {
-    response = await ai.models.generateContent({
-      model: MODEL,
-      contents: [{ role: 'user', parts }],
-    });
+    response = await withRetry(() =>
+      ai.models.generateContent({
+        model: MODEL,
+        contents: [{ role: 'user', parts }],
+      }),
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown Vertex error';
     throw new AppError(502, ErrorCode.InternalError, `Vertex call failed: ${message}`);

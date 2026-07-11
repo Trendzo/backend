@@ -11,6 +11,7 @@ import { virtualTryOn } from '@/shared/vertex-tryon.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import { createListing, createVariant } from '@/modules/retailer/listings/listings.controller.js';
 import { MODEL_POSES, PRODUCT_ANGLES } from './ai-catalog-beta.angles.js';
+import { mapLimit } from '@/shared/concurrency.js';
 import type {
   DecisionBody,
   ListQuery,
@@ -38,6 +39,10 @@ async function loadStore(retailerId: string) {
   if (!store) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
   return store;
 }
+
+// Max image-gen calls in flight per submission. Vertex Dynamic Shared Quota
+// 429s on bursts, so cap the angle fan-out instead of firing every view at once.
+const IMAGE_GEN_CONCURRENCY = 2;
 
 // Generate one image and store it on Cloudinary; returns the URL.
 async function genAndUpload(input: {
@@ -124,20 +129,18 @@ async function generateMockupViews(body: z.infer<typeof SubmissionBody>): Promis
       ? 'full-body view from BEHIND showing the back of the garment, neutral seamless studio backdrop, professional fashion lighting; reproduce the garment back exactly as in the reference image — colour, fabric, cut, seams, and any back graphic'
       : 'back view, ghost-mannequin / invisible-mannequin, centered, clean seamless white background, soft even studio lighting; reproduce the garment back exactly as in the reference image — colour, fabric, cut, seams, and any back graphic';
 
-  const views = await Promise.all(
-    angles.map(async (a) => {
-      const isBackView = a.name === 'back' || a.name === 'model-back';
-      const useBack = isBackView && !!body.apparelBackImageUrl && !body.designImageUrl;
-      const mainRef = useBack ? [body.apparelBackImageUrl as string] : baseRefs;
-      const url = await genAndUpload({
-        prompt: `${basePrompt || 'Polished, listing-ready product photograph.'}${detailNote}${modelNote}`.trim(),
-        mode: body.mode,
-        referenceImageUrls: [...mainRef, ...detailRefs],
-        posePreferences: [useBack ? backPose(a.name) : a.pose],
-      });
-      return { name: a.name, url };
-    }),
-  );
+  const views = await mapLimit(angles, IMAGE_GEN_CONCURRENCY, async (a) => {
+    const isBackView = a.name === 'back' || a.name === 'model-back';
+    const useBack = isBackView && !!body.apparelBackImageUrl && !body.designImageUrl;
+    const mainRef = useBack ? [body.apparelBackImageUrl as string] : baseRefs;
+    const url = await genAndUpload({
+      prompt: `${basePrompt || 'Polished, listing-ready product photograph.'}${detailNote}${modelNote}`.trim(),
+      mode: body.mode,
+      referenceImageUrls: [...mainRef, ...detailRefs],
+      posePreferences: [useBack ? backPose(a.name) : a.pose],
+    });
+    return { name: a.name, url };
+  });
 
   return { printedUrl, views };
 }
