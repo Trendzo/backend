@@ -1,7 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { env } from '@/config/env.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
-import { withRetry } from '@/shared/retry.js';
 import {
   composePrompt,
   fetchReferenceImage,
@@ -38,6 +37,9 @@ export function getVertexClient(): GoogleGenAI {
       vertexai: true,
       project: env.GOOGLE_CLOUD_PROJECT,
       location: env.GOOGLE_CLOUD_LOCATION,
+      // Single attempt — no automatic SDK retries (a retry on 429/500 can bill
+      // for an extra generated image).
+      httpOptions: { retryOptions: { attempts: 1 } },
     });
   }
   return client;
@@ -55,12 +57,10 @@ export async function generateCatalogImageViaVertex(input: GenerateInput): Promi
 
   let response;
   try {
-    response = await withRetry(() =>
-      ai.models.generateContent({
-        model: MODEL,
-        contents: [{ role: 'user', parts }],
-      }),
-    );
+    response = await ai.models.generateContent({
+      model: MODEL,
+      contents: [{ role: 'user', parts }],
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown Vertex error';
     throw new AppError(502, ErrorCode.InternalError, `Vertex call failed: ${message}`);

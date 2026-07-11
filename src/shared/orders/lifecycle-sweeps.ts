@@ -61,11 +61,15 @@ async function lastEnteredStatusAt(
   orderId: string,
   toStatus: string,
 ): Promise<Date | null> {
+  // NB: max() built from a raw sql`` expression comes back as a STRING — pg
+  // doesn't run Drizzle's Date parser on it — so coerce to a real Date before
+  // returning. Callers do date math (.getTime()) and would otherwise crash.
   const row = await database
-    .select({ at: sql<Date>`max(${orderTransitions.at})` })
+    .select({ at: sql<string | null>`max(${orderTransitions.at})` })
     .from(orderTransitions)
     .where(and(eq(orderTransitions.orderId, orderId), eq(orderTransitions.toStatus, toStatus as never)));
-  return row[0]?.at ?? null;
+  const at = row[0]?.at ?? null;
+  return at ? new Date(at) : null;
 }
 
 /* ── 1. Auto-close ────────────────────────────────────────────────────────── */
