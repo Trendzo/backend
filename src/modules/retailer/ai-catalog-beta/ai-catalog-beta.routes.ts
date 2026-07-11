@@ -2,6 +2,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
 import { requirePermission } from '@/shared/permissions.js';
 import * as ctrl from './ai-catalog-beta.controller.js';
+import { activeImageProvider } from '@/shared/ai-image.js';
 import {
   DecisionBody,
   IdParam,
@@ -44,7 +45,13 @@ const aiCatalogBetaRoutes: FastifyPluginAsyncZod = async (app) => {
       preHandler: requirePermission('ai_catalog.generate'),
       schema: { body: SubmissionBody },
     },
-    async (req) => ctrl.createSubmission({ auth: getAuth(req), body: req.body }),
+    async (req) => {
+      req.log.info(
+        { ...activeImageProvider(), mode: req.body.mode, route: 'ai-catalog-beta/submissions' },
+        'ai-catalog generate',
+      );
+      return ctrl.createSubmission({ auth: getAuth(req), body: req.body });
+    },
   );
 
   app.post(
@@ -74,7 +81,13 @@ const aiCatalogBetaRoutes: FastifyPluginAsyncZod = async (app) => {
       preHandler: requirePermission('ai_catalog.generate'),
       schema: { body: MockupsBody },
     },
-    async (req) => ctrl.quickMockups({ auth: getAuth(req), body: req.body }),
+    async (req) => {
+      req.log.info(
+        { ...activeImageProvider(), mode: req.body.mode, route: 'ai-catalog-beta/mockups' },
+        'ai-catalog generate',
+      );
+      return ctrl.quickMockups({ auth: getAuth(req), body: req.body });
+    },
   );
 
   // Customer virtual try-on (Vertex virtual-try-on-001).

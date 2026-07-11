@@ -29,4 +29,24 @@ export async function generateCatalogImage(input: GenerateInput): Promise<Genera
   }
 }
 
+/**
+ * The image provider + model generateCatalogImage() uses right now, derived from
+ * env.AI_IMAGE_PROVIDER. Exposed for per-request logging so you can see whether a
+ * given generation hit gemini (AI Studio), vertex, or openrouter.
+ */
+export function activeImageProvider(): {
+  provider: 'gemini' | 'vertex' | 'openrouter';
+  model: string;
+} {
+  switch (env.AI_IMAGE_PROVIDER) {
+    case 'vertex':
+      return { provider: 'vertex', model: 'gemini-2.5-flash-image' };
+    case 'openrouter':
+      return { provider: 'openrouter', model: env.OPENROUTER_MODEL };
+    case 'gemini':
+    default:
+      return { provider: 'gemini', model: 'gemini-2.5-flash-image' };
+  }
+}
+
 export type { GenerateInput, GenerateOutput };
