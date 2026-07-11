@@ -22,6 +22,10 @@ pool.on('error', (err) => {
   console.error('[pg pool] idle client error — connection will be recycled:', err.message);
 });
 
-export const db = drizzle(pool, { schema, logger: env.NODE_ENV === 'development' });
+// Drizzle dumps every SQL statement + params when logging is on. That's noisy,
+// so gate it on log level: silent by default, and only when you explicitly set
+// LOG_LEVEL=debug (or trace) do the raw queries come back for DB debugging.
+const logSql = env.LOG_LEVEL === 'debug' || env.LOG_LEVEL === 'trace';
+export const db = drizzle(pool, { schema, logger: logSql });
 
 export type Database = typeof db;
