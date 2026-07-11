@@ -22,10 +22,10 @@ pool.on('error', (err) => {
   console.error('[pg pool] idle client error — connection will be recycled:', err.message);
 });
 
-// Drizzle dumps every SQL statement + params when logging is on. That's noisy,
-// so gate it on log level: silent by default, and only when you explicitly set
-// LOG_LEVEL=debug (or trace) do the raw queries come back for DB debugging.
-const logSql = env.LOG_LEVEL === 'debug' || env.LOG_LEVEL === 'trace';
+// Drizzle dumps every SQL statement + params when logging is on. That's noisy
+// and unrelated to app log verbosity, so gate it on its OWN flag: OFF by default
+// (even when LOG_LEVEL=debug). Set DB_QUERY_LOG=true only to inspect raw queries.
+const logSql = env.DB_QUERY_LOG === 'true';
 export const db = drizzle(pool, { schema, logger: logSql });
 
 export type Database = typeof db;
