@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { env } from '@/config/env.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
+import { withRetry } from '@/shared/retry.js';
 
 /**
  * Google Gemini provider for AI catalog image generation. Uses
@@ -95,10 +96,12 @@ export async function generateCatalogImage(input: GenerateInput): Promise<Genera
 
   let response;
   try {
-    response = await ai.models.generateContent({
-      model: MODEL,
-      contents: [{ role: 'user', parts }],
-    });
+    response = await withRetry(() =>
+      ai.models.generateContent({
+        model: MODEL,
+        contents: [{ role: 'user', parts }],
+      }),
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown Gemini error';
     throw new AppError(502, ErrorCode.InternalError, `Gemini call failed: ${message}`);

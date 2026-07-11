@@ -24,11 +24,15 @@ export async function withRetry<T>(
   }
 }
 
-/** True for 429 (RESOURCE_EXHAUSTED) and 503 (UNAVAILABLE) — the transient class. */
+/**
+ * Transient class worth retrying: 429 RESOURCE_EXHAUSTED, 500 INTERNAL, and 503
+ * UNAVAILABLE. Google's guidance is to back off + retry all three (500/503 are
+ * server-side blips; 429 is contention). Other 4xx (bad input, auth) are not.
+ */
 function isRetryable(err: unknown): boolean {
   const e = err as { status?: number; code?: number; message?: string } | null;
   if (!e) return false;
-  if (e.status === 429 || e.status === 503) return true;
-  if (e.code === 429 || e.code === 503) return true;
-  return /\b(429|503)\b|RESOURCE_EXHAUSTED|UNAVAILABLE/i.test(e.message ?? '');
+  if (e.status === 429 || e.status === 500 || e.status === 503) return true;
+  if (e.code === 429 || e.code === 500 || e.code === 503) return true;
+  return /\b(429|500|503)\b|RESOURCE_EXHAUSTED|UNAVAILABLE|INTERNAL/i.test(e.message ?? '');
 }
