@@ -1,29 +1,22 @@
 /**
  * Retailer profile: /me snapshot + store create + store profile patch.
  */
-import { and, eq } from 'drizzle-orm';
-import { randomUUID } from 'node:crypto';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
-  aiCatalogSubmissions,
-  productListings,
+  changeRequests,
   retailerAccounts,
   retailerStores,
   retailerTermsAcceptances,
-  storeMedia,
-  variants,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
-import { hashPassword } from '@/shared/auth/password.js';
-import { recordAudit } from '@/shared/audit.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import { currentTerms, hasAcceptedCurrentTerms } from '@/shared/terms.js';
 import type {
   CreateStoreBody,
-  DeleteAccountBody,
   PatchProfileBody,
 } from './profile.validators.js';
 
@@ -48,8 +41,26 @@ export async function getMe(input: { auth: Auth }) {
   const termsAccepted = store ? await hasAcceptedCurrentTerms(db, store.id) : true;
   const termsAcceptanceRequired = store ? !termsAccepted : false;
   const ct = await currentTerms(db);
+
+  // Surface any in-flight account-lifecycle request so the app can show
+  // "closure pending" / "reopen pending" instead of a stale action button.
+  const pendingLifecycle = store
+    ? await db.query.changeRequests.findFirst({
+        where: and(
+          eq(changeRequests.storeId, store.id),
+          eq(changeRequests.status, 'pending'),
+          inArray(changeRequests.field, ['account_deletion', 'account_reopen']),
+        ),
+        orderBy: desc(changeRequests.submittedAt),
+        columns: { field: true },
+      })
+    : null;
+  const pendingAccountRequest =
+    (pendingLifecycle?.field as 'account_deletion' | 'account_reopen' | undefined) ?? null;
+
   return ok({
     termsAcceptanceRequired,
+    pendingAccountRequest,
     termsStatus: (store ? (termsAccepted ? 'accepted' : 'pending') : 'accepted') as
       | 'accepted'
       | 'pending',
@@ -170,112 +181,11 @@ export async function patchStoreProfile(input: {
   return ok({ success: true });
 }
 
-/**
- * Close the retailer business account immediately. Commerce/tax records remain
- * available to the operator only where legally required, while credentials and
- * customer-facing/profile media are revoked or anonymized.
- */
-export async function deleteAccount(input: {
-  auth: Auth;
-  body: z.infer<typeof DeleteAccountBody>;
-  requestId?: string;
-}) {
-  const retailer = await loadRetailer(input.auth.sub);
-  if (retailer.subRole !== 'owner' || input.auth.subRole !== 'owner') {
-    throw AppError.forbidden('Only the store owner can delete the business account');
-  }
-
-  const now = new Date();
-  const storeId = retailer.storeId;
-  const accounts = storeId
-    ? await db.query.retailerAccounts.findMany({ where: eq(retailerAccounts.storeId, storeId) })
-    : [retailer];
-  const revoked = await Promise.all(
-    accounts.map(async (account) => ({
-      id: account.id,
-      passwordHash: await hashPassword(randomUUID()),
-    })),
-  );
-
-  await db.transaction(async (tx) => {
-    for (const account of revoked) {
-      await tx
-        .update(retailerAccounts)
-        .set({
-          email: `deleted+${account.id}@deleted.invalid`,
-          phone: '',
-          legalName: 'Deleted account',
-          passwordHash: account.passwordHash,
-          status: 'terminated',
-          permanentSuspend: true,
-          suspendReason: 'account_deleted_by_user',
-          suspendedAt: now,
-          suspendedByAccountId: input.auth.sub,
-        })
-        .where(eq(retailerAccounts.id, account.id));
-    }
-
-    if (storeId) {
-      await tx
-        .update(retailerStores)
-        .set({
-          contactPhone: null,
-          managerName: null,
-          galleryImageUrls: [],
-          status: 'terminated',
-          permanentSuspend: true,
-          suspendReason: 'account_deleted_by_user',
-          suspendedAt: now,
-          suspendedByAccountId: input.auth.sub,
-        })
-        .where(eq(retailerStores.id, storeId));
-      await tx
-        .update(productListings)
-        .set({ status: 'retired', galleryUrls: [], updatedAt: now })
-        .where(eq(productListings.storeId, storeId));
-      await tx
-        .update(variants)
-        .set({ isActive: false, imageUrls: [] })
-        .where(eq(variants.storeId, storeId));
-      await tx.update(storeMedia).set({ deletedAt: now }).where(eq(storeMedia.storeId, storeId));
-      await tx
-        .update(aiCatalogSubmissions)
-        .set({
-          prompt: '[deleted]',
-          referenceImageUrls: [],
-          rawPhotos: [],
-          outputUrls: [],
-          revisionNotes: null,
-          thirdPartyRequestId: null,
-        })
-        .where(eq(aiCatalogSubmissions.storeId, storeId));
-    }
-  });
-
-  // Deletion is already complete at this point. A secondary audit failure must
-  // not turn the response into an error and prompt an impossible retry.
-  await recordAudit({
-    actor: input.auth,
-    action: 'retailer.account_delete',
-    resourceKind: 'retailer_account',
-    resourceId: retailer.id,
-    before: { storeId, status: retailer.status },
-    after: { status: 'terminated', personalDataAnonymized: true },
-    ...(input.requestId !== undefined && { requestId: input.requestId }),
-    note: 'Deletion initiated in the iOS app by the retailer owner',
-  }).catch(() => undefined);
-
-  return ok({
-    deleted: true,
-    deletedAt: now.toISOString(),
-    retainedForLegalCompliance: [
-      'GST and tax records',
-      'orders and invoices',
-      'payout and accounting records',
-      'fraud-prevention and audit records',
-    ],
-  });
-}
+// Account closure is no longer a destructive single-click delete. The owner/manager
+// files an `account_deletion` change request (POST /retailer/account/close-request),
+// an admin approves it, and the store is SUSPENDED + accounts marked `closed` —
+// reversibly, records intact — so the retailer can later reopen. See
+// modules/retailer/compliance and modules/admin/compliance.
 
 /** Current Retailer T&C (current admin version + short text) + whether this store accepted it. */
 export async function getTerms(input: { auth: Auth }) {

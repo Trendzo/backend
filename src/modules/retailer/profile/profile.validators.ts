@@ -1,10 +1,6 @@
 import { z } from 'zod';
 import { StateCodeSchema } from '@/shared/validation/common.js';
 
-export const DeleteAccountBody = z.object({
-  confirmation: z.literal('DELETE'),
-});
-
 export const AcceptTermsBody = z.object({ version: z.string().trim().min(1).max(64) });
 
 export const CreateStoreBody = z.object({

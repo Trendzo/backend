@@ -1,17 +1,19 @@
 /**
  * Admin store-management: direct create, edit, pause, resume, suspend, ban, unsuspend, unban.
  */
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
-import { retailerAccounts, retailerStores } from '@/db/schema/index.js';
+import { accountAppealMessages, retailerAccounts, retailerStores } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { recordAudit } from '@/shared/audit.js';
 import { notify } from '@/shared/notify.js';
+import { notifyStoreAccounts } from '@/shared/notify-store.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
+  AppealMessageBody,
   OptionalReasonBody,
   PauseBody,
   ReasonBody,
@@ -398,4 +400,67 @@ export async function unbanStore(input: {
     deepLink: '/retailer/store',
   });
   return ok(updated);
+}
+
+/** Canonical wire shape for one appeal-thread message (admin ↔ retailer). */
+function serializeAppealMessage(m: {
+  id: string;
+  storeId: string;
+  authorKind: string;
+  body: string;
+  attachmentUrls: string[] | null;
+  at: Date;
+}) {
+  return {
+    id: m.id,
+    storeId: m.storeId,
+    authorKind: m.authorKind === 'admin' ? 'admin' : m.authorKind === 'system' ? 'system' : 'retailer',
+    body: m.body,
+    attachments: m.attachmentUrls ?? [],
+    createdAt: m.at.toISOString(),
+  };
+}
+
+/** Admin view of a store's suspend/terminate appeal thread. */
+export async function getStoreAppeal(input: { id: string }) {
+  const store = await db.query.retailerStores.findFirst({
+    where: eq(retailerStores.id, input.id),
+    columns: { id: true, status: true, legalName: true },
+  });
+  if (!store) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
+  const msgs = await db.query.accountAppealMessages.findMany({
+    where: eq(accountAppealMessages.storeId, store.id),
+    orderBy: asc(accountAppealMessages.at),
+  });
+  return ok({ storeStatus: store.status, messages: msgs.map(serializeAppealMessage) });
+}
+
+/** Admin reply in a store's appeal thread. */
+export async function postStoreAppeal(input: {
+  id: string;
+  auth: Auth;
+  body: z.infer<typeof AppealMessageBody>;
+}) {
+  const store = await db.query.retailerStores.findFirst({
+    where: eq(retailerStores.id, input.id),
+    columns: { id: true },
+  });
+  if (!store) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
+  const id = newId('apmsg');
+  await db.insert(accountAppealMessages).values({
+    id,
+    storeId: store.id,
+    authorKind: 'admin',
+    authorAccountId: input.auth.sub,
+    body: input.body.body,
+    attachmentUrls: input.body.attachmentUrls ?? null,
+  });
+  await notifyStoreAccounts({
+    storeId: store.id,
+    kind: 'system',
+    title: 'Appeal update from ClosetX',
+    body: 'The ClosetX team replied on your store appeal. Open the app to read it.',
+    deepLink: '/retailer/store/status',
+  }).catch(() => undefined);
+  return ok({ id });
 }

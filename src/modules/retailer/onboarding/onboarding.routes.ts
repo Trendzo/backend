@@ -6,10 +6,12 @@ import {
   FetchForResubmitBody,
   IdParam,
   MessagesQuery,
+  OwnMessageBody,
   PostMessageBody,
   ResubmitBody,
   StatusQuery,
   SubmitApplicationBody,
+  SubmitDocumentsBody,
 } from './onboarding.validators.js';
 
 /**
@@ -50,9 +52,22 @@ const retailerOnboardingRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   app.post(
+    '/application/messages',
+    { preHandler: requireAuth('retailer'), schema: { body: OwnMessageBody } },
+    async (req) => ctrl.postOwnApplicationMessage({ auth: getAuth(req), body: req.body }),
+  );
+
+  app.post(
     '/applications/:id/messages',
     { schema: { params: IdParam, body: PostMessageBody } },
     async (req) => ctrl.postPublicMessage({ id: req.params.id, body: req.body }),
+  );
+
+  // Submit the specific docs requested during docs_requested (structured re-upload).
+  app.post(
+    '/applications/:id/documents',
+    { schema: { params: IdParam, body: SubmitDocumentsBody } },
+    async (req) => ctrl.submitClarificationDocuments({ id: req.params.id, body: req.body }),
   );
 
   app.post(

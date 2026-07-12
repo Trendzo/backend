@@ -11,6 +11,8 @@ export const retailerAccountStatus = pgEnum('retailer_account_status', [
   'pending_approval', // freshly signed up, awaiting admin approval
   'active',
   'terminated', // account permanently dead (rejection, admin termination, staff revoke)
+  'closed', // owner-requested closure, admin-approved. REVERSIBLE: records kept, store
+  // suspended (not permanentSuspend); the owner/manager can submit a reopen request.
 ]);
 export const retailerSubRole = pgEnum('retailer_sub_role', [
   'owner',
@@ -122,6 +124,11 @@ export const changeRequestField = pgEnum('change_request_field', [
   // Retailer-raised request to switch on the offline POS / counter-billing surface.
   // Approving the change request flips retailer_stores.pos_billing_enabled to true.
   'pos_billing_activation',
+  // Owner/manager-raised business-account lifecycle requests (action requests, no
+  // requestedValue). Approving 'account_deletion' suspends the store + closes all
+  // store accounts (reversibly); 'account_reopen' restores them to active.
+  'account_deletion',
+  'account_reopen',
 ]);
 export const dataExportStatus = pgEnum('data_export_status', [
   'pending',

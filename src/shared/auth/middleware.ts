@@ -92,7 +92,11 @@ export function requireAuth(...allowedKinds: TokenKind[]): preHandlerAsyncHookHa
         throw AppError.unauthorized('This account has been deleted');
       }
       const locked = row.status === 'terminated' || row.permanentSuspend;
-      if (locked && !READ_METHODS.has(req.method.toUpperCase())) {
+      // A terminated/locked retailer may still POST to their appeal thread — that's
+      // their only in-band channel to contest the action. Everything else stays read-only.
+      const path = req.url.split('?')[0] ?? '';
+      const appealWriteAllowed = path.endsWith('/account/appeal');
+      if (locked && !READ_METHODS.has(req.method.toUpperCase()) && !appealWriteAllowed) {
         throw new AppError(
           403,
           ErrorCode.Forbidden,

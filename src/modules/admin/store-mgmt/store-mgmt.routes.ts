@@ -3,6 +3,7 @@ import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
 import { requirePermission } from '@/shared/permissions.js';
 import * as ctrl from './store-mgmt.controller.js';
 import {
+  AppealMessageBody,
   IdParam,
   OptionalReasonBody,
   PauseBody,
@@ -31,6 +32,21 @@ const adminStoreMgmtRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: { params: IdParam },
     },
     async (req) => ctrl.getStore({ id: req.params.id }),
+  );
+
+  // Suspend/terminate appeal thread (admin side).
+  app.get(
+    '/:id/appeal',
+    { preHandler: requirePermission('store_management.view'), schema: { params: IdParam } },
+    async (req) => ctrl.getStoreAppeal({ id: req.params.id }),
+  );
+  app.post(
+    '/:id/appeal',
+    {
+      preHandler: requirePermission('store_management.edit'),
+      schema: { params: IdParam, body: AppealMessageBody },
+    },
+    async (req) => ctrl.postStoreAppeal({ id: req.params.id, auth: getAuth(req), body: req.body }),
   );
 
   app.patch(

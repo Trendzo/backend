@@ -1,4 +1,4 @@
-import { asc, eq, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, or } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
@@ -13,15 +13,18 @@ import { newId } from '@/shared/ids.js';
 import { hashPassword, verifyPassword } from '@/shared/auth/password.js';
 import { notifyAllAdmins } from '@/shared/notify-admins.js';
 import { recordAudit } from '@/shared/audit.js';
+import { serializeApplicationMessage } from '@/shared/onboarding/messages.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
   CheckIdentityQuery,
   FetchForResubmitBody,
   MessagesQuery,
+  OwnMessageBody,
   PostMessageBody,
   ResubmitBody,
   StatusQuery,
   SubmitApplicationBody,
+  SubmitDocumentsBody,
 } from './onboarding.validators.js';
 
 type Auth = AccessTokenPayload;
@@ -132,6 +135,9 @@ export async function getApplicationStatus(input: {
     submittedAt: application.submittedAt,
     decidedAt: application.decidedAt,
     decisionReason: application.decisionReason,
+    // Which document kinds the admin asked to (re)upload — drives the structured
+    // upload slots in the app's docs_requested / resubmit screens.
+    mustReuploadDocKinds: application.mustReuploadDocKinds ?? [],
   });
 }
 
@@ -204,7 +210,7 @@ export async function getPublicMessages(input: {
     where: eq(applicationMessages.applicationId, application.id),
     orderBy: asc(applicationMessages.at),
   });
-  return ok(messages);
+  return ok(messages.map(serializeApplicationMessage));
 }
 
 export async function getOwnApplicationMessages(input: { auth: Auth }) {
@@ -218,18 +224,28 @@ export async function getOwnApplicationMessages(input: { auth: Auth }) {
     orderBy: asc(applicationMessages.at),
   });
 
-  return ok(
-    msgs.map((m) => ({
-      id: m.id,
-      applicationId: m.applicationId,
-      authorKind: m.authorKind === 'applicant' ? 'retailer' : m.authorKind,
-      authorLabel: m.authorKind === 'admin' ? 'ClosetX admin' : 'You',
-      body: m.body,
-      attachments: m.attachmentUrls ?? [],
-      fieldKey: null as string | null,
-      createdAt: m.at.toISOString(),
-    })),
-  );
+  return ok(msgs.map(serializeApplicationMessage));
+}
+
+/** Authenticated retailer reply on their own application thread (web dashboard). */
+export async function postOwnApplicationMessage(input: {
+  auth: Auth;
+  body: z.infer<typeof OwnMessageBody>;
+}) {
+  const application = await db.query.retailerApplications.findFirst({
+    where: eq(retailerApplications.provisionedRetailerAccountId, input.auth.sub),
+  });
+  if (!application) throw new AppError(404, ErrorCode.NotFound, 'No application found for this account');
+  const id = newId('amsg');
+  await db.insert(applicationMessages).values({
+    id,
+    applicationId: application.id,
+    authorKind: 'applicant',
+    applicantEmail: application.ownerEmail,
+    body: input.body.body,
+    attachmentUrls: input.body.attachmentUrls ?? null,
+  });
+  return ok({ id });
 }
 
 export async function postPublicMessage(input: {
@@ -252,6 +268,79 @@ export async function postPublicMessage(input: {
     attachmentUrls: input.body.attachmentUrls ?? null,
   });
   return ok({ id });
+}
+
+/**
+ * Submit the documents the admin requested while the application is docs_requested.
+ * Upserts each doc by kind (keeps others), clears the satisfied kinds from
+ * mustReuploadDocKinds, drops a thread note, and — once nothing remains outstanding —
+ * flips the application back to `pending` for re-review.
+ */
+export async function submitClarificationDocuments(input: {
+  id: string;
+  body: z.infer<typeof SubmitDocumentsBody>;
+}) {
+  const application = await db.query.retailerApplications.findFirst({
+    where: eq(retailerApplications.id, input.id),
+  });
+  if (!application || application.ownerEmail !== input.body.applicantEmail) {
+    throw new AppError(404, ErrorCode.NotFound, 'Application not found');
+  }
+  if (application.status !== 'docs_requested') {
+    throw new AppError(409, ErrorCode.InvalidState, 'No documents are being requested for this application');
+  }
+
+  const submittedKinds = new Set<string>(input.body.documents.map((d) => d.kind));
+  const remaining = (application.mustReuploadDocKinds ?? []).filter((k) => !submittedKinds.has(k));
+  const allSatisfied = remaining.length === 0;
+  const kindList = input.body.documents.map((d) => d.kind).join(', ');
+
+  await db.transaction(async (tx) => {
+    // Upsert each submitted kind (replace matching kinds, keep the rest).
+    await tx
+      .delete(applicationDocuments)
+      .where(
+        and(
+          eq(applicationDocuments.applicationId, application.id),
+          inArray(applicationDocuments.kind, input.body.documents.map((d) => d.kind)),
+        ),
+      );
+    await tx.insert(applicationDocuments).values(
+      input.body.documents.map((d) => ({
+        id: newId('adoc'),
+        applicationId: application.id,
+        kind: d.kind,
+        url: d.url,
+      })),
+    );
+    await tx.insert(applicationMessages).values({
+      id: newId('amsg'),
+      applicationId: application.id,
+      authorKind: 'applicant',
+      applicantEmail: input.body.applicantEmail,
+      body: input.body.note?.trim()
+        ? `${input.body.note.trim()}\n\nSubmitted documents: ${kindList}`
+        : `Submitted requested documents: ${kindList}`,
+      attachmentUrls: input.body.documents.map((d) => d.url),
+    });
+    await tx
+      .update(retailerApplications)
+      .set({
+        mustReuploadDocKinds: remaining,
+        // Back to the review queue once everything requested is in.
+        ...(allSatisfied && { status: 'pending' }),
+      })
+      .where(eq(retailerApplications.id, application.id));
+  });
+
+  await notifyAllAdmins({
+    kind: 'compliance',
+    title: allSatisfied ? 'Requested documents submitted' : 'Some requested documents submitted',
+    body: `${application.legalName} submitted: ${kindList}.`,
+    deepLink: `/admin/applications/${application.id}`,
+  }).catch(() => undefined);
+
+  return ok({ status: allSatisfied ? 'pending' : 'docs_requested', remainingDocKinds: remaining });
 }
 
 export async function fetchForResubmit(input: {

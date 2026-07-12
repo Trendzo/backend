@@ -5,7 +5,6 @@ import * as ctrl from './profile.controller.js';
 import {
   AcceptTermsBody,
   CreateStoreBody,
-  DeleteAccountBody,
   PatchProfileBody,
 } from './profile.validators.js';
 
@@ -55,10 +54,6 @@ const retailerProfileRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: { body: PatchProfileBody },
     },
     async (req) => ctrl.patchStoreProfile({ auth: getAuth(req), body: req.body }),
-  );
-
-  app.delete('/account', { schema: { body: DeleteAccountBody } }, async (req) =>
-    ctrl.deleteAccount({ auth: getAuth(req), body: req.body, requestId: req.id }),
   );
 };
 

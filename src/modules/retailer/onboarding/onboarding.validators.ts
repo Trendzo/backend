@@ -67,6 +67,19 @@ export const PostMessageBody = z.object({
   attachmentUrls: z.array(z.string().url()).optional(),
 });
 
+/** Authed retailer reply on their own application thread (no applicantEmail needed). */
+export const OwnMessageBody = z.object({
+  body: z.string().trim().min(1).max(2000),
+  attachmentUrls: z.array(z.string().url()).optional(),
+});
+
+/** Submit the specific documents an admin requested while the application is docs_requested. */
+export const SubmitDocumentsBody = z.object({
+  applicantEmail: EmailSchema,
+  documents: z.array(z.object({ kind: DocKindEnum, url: z.string().url() })).min(1),
+  note: z.string().trim().max(500).optional(),
+});
+
 export const FetchForResubmitBody = z.object({
   email: EmailSchema,
   password: z.string().min(1).max(128),

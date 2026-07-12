@@ -38,8 +38,31 @@ export const RejectBody = z.object({
     .optional(),
 });
 
+const DocKindEnum = z.enum([
+  'gst_certificate',
+  'pan',
+  'address_proof',
+  'bank_proof',
+  'storefront_photo',
+  'other',
+]);
+
 export const MessageBody = z.object({
   body: z.string().trim().min(1).max(2000),
+  attachmentUrls: z.array(z.string().url()).optional(),
+  // Optional field/doc this reply is about (tags the thread bubble).
+  fieldKey: z.string().trim().max(64).optional(),
+});
+
+/**
+ * "Request clarification" — one call that posts the admin's question, flips the
+ * application to docs_requested, and (optionally) records which doc kinds the
+ * applicant must (re)upload so the app can render structured upload slots.
+ */
+export const ClarificationBody = z.object({
+  question: z.string().trim().min(1).max(2000),
+  fieldKey: z.string().trim().max(64).optional(),
+  requestedDocKinds: z.array(DocKindEnum).optional(),
   attachmentUrls: z.array(z.string().url()).optional(),
 });
 

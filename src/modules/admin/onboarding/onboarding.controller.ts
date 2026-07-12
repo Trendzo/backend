@@ -16,9 +16,11 @@ import { hashPassword } from '@/shared/auth/password.js';
 import { newId } from '@/shared/ids.js';
 import { recordAudit } from '@/shared/audit.js';
 import { notify } from '@/shared/notify.js';
+import { serializeApplicationMessage } from '@/shared/onboarding/messages.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
   ApproveBody,
+  ClarificationBody,
   ListApplicationsQuery,
   MessageBody,
   RejectBody,
@@ -111,16 +113,7 @@ export async function getApplication(id: string) {
   return ok({
     ...summary,
     documents: r.documents,
-    messages: r.messages.map((m) => ({
-      id: m.id,
-      applicationId: m.applicationId,
-      authorKind: m.authorKind,
-      authorLabel: m.authorKind === 'admin' ? 'ClosetX admin' : 'Applicant',
-      body: m.body,
-      attachments: m.attachmentUrls ?? [],
-      fieldKey: null as string | null,
-      createdAt: m.at.toISOString(),
-    })),
+    messages: r.messages.map(serializeApplicationMessage),
   });
 }
 
@@ -365,8 +358,75 @@ export async function postMessage(input: {
     authorAccountId: auth.sub,
     body: body.body,
     attachmentUrls: body.attachmentUrls ?? null,
+    fieldKey: body.fieldKey ?? null,
   });
   return ok({ id: newMessageId });
+}
+
+/**
+ * Request clarification in one call: post the admin's question (tagged to a field),
+ * flip the application to docs_requested, and record any doc kinds the applicant must
+ * (re)upload — so the retailer app can render structured upload slots and the thread.
+ */
+export async function requestClarification(input: {
+  id: string;
+  auth: Auth;
+  body: z.infer<typeof ClarificationBody>;
+  requestId: string;
+}) {
+  const { id, auth, body, requestId } = input;
+  const application = await db.query.retailerApplications.findFirst({
+    where: eq(retailerApplications.id, id),
+  });
+  if (!application) throw new AppError(404, ErrorCode.NotFound, 'Application not found');
+  if (application.status === 'approved') {
+    throw new AppError(409, ErrorCode.InvalidState, 'Cannot request clarification on an approved application');
+  }
+
+  const messageId = newId('amsg');
+  await db.transaction(async (tx) => {
+    await tx.insert(applicationMessages).values({
+      id: messageId,
+      applicationId: application.id,
+      authorKind: 'admin',
+      authorAccountId: auth.sub,
+      body: body.question,
+      attachmentUrls: body.attachmentUrls ?? null,
+      fieldKey: body.fieldKey ?? null,
+    });
+    await tx
+      .update(retailerApplications)
+      .set({
+        status: 'docs_requested',
+        ...(body.requestedDocKinds !== undefined && {
+          mustReuploadDocKinds: Array.from(new Set(body.requestedDocKinds)),
+        }),
+      })
+      .where(eq(retailerApplications.id, application.id));
+  });
+
+  await recordAudit({
+    actor: auth,
+    action: 'application.docs_requested',
+    resourceKind: 'retailer_application',
+    resourceId: application.id,
+    after: { fieldKey: body.fieldKey ?? null, requestedDocKinds: body.requestedDocKinds ?? [] },
+    requestId,
+  });
+
+  // Best-effort: if the applicant already has a provisioned account, ping it.
+  if (application.provisionedRetailerAccountId) {
+    await notify({
+      recipientKind: 'retailer',
+      recipientId: application.provisionedRetailerAccountId,
+      kind: 'system',
+      title: 'Clarification requested',
+      body: 'ClosetX asked for more information on your application. Open the app to respond.',
+      deepLink: '/retailer/application/status',
+    }).catch(() => undefined);
+  }
+
+  return ok({ messageId, status: 'docs_requested' });
 }
 
 export async function recordVerificationCheck(input: {

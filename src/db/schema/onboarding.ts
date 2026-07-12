@@ -23,7 +23,7 @@ import {
   verificationCheckKind,
   verificationCheckStatus,
 } from './enums.js';
-import { retailerAccounts } from './store.js';
+import { retailerAccounts, retailerStores } from './store.js';
 
 /**
  * Public onboarding application — captured before any account exists. On
@@ -167,6 +167,9 @@ export const applicationMessages = pgTable('application_messages', {
   applicantEmail: text('applicant_email'),
   body: text('body').notNull(),
   attachmentUrls: jsonb('attachment_urls').$type<string[]>(),
+  // Optional field/doc this message is about (e.g. 'gstin', 'address', 'pan') so the
+  // clarification thread can tag which part of the application the admin is asking about.
+  fieldKey: text('field_key'),
   at: timestamp('at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 });
 
@@ -174,5 +177,31 @@ export const applicationMessagesRelations = relations(applicationMessages, ({ on
   application: one(retailerApplications, {
     fields: [applicationMessages.applicationId],
     references: [retailerApplications.id],
+  }),
+}));
+
+/**
+ * Appeal/clarification thread for a suspended or terminated store. Unlike the
+ * onboarding thread (pre-account, keyed by application), this is keyed by store —
+ * the retailer already has an account and signs in read-only, so they can appeal a
+ * suspension/termination and the admin can respond in-band before lifting or upholding.
+ */
+export const accountAppealMessages = pgTable('account_appeal_messages', {
+  id: text('id').primaryKey(),
+  storeId: text('store_id')
+    .notNull()
+    .references(() => retailerStores.id, { onDelete: 'cascade' }),
+  // 'admin' | 'retailer' | 'system' — text (not enum) for the same forward-compat reason.
+  authorKind: text('author_kind').notNull(),
+  authorAccountId: text('author_account_id'),
+  body: text('body').notNull(),
+  attachmentUrls: jsonb('attachment_urls').$type<string[]>(),
+  at: timestamp('at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+});
+
+export const accountAppealMessagesRelations = relations(accountAppealMessages, ({ one }) => ({
+  store: one(retailerStores, {
+    fields: [accountAppealMessages.storeId],
+    references: [retailerStores.id],
   }),
 }));

@@ -4,6 +4,7 @@ import { requirePermission } from '@/shared/permissions.js';
 import * as ctrl from './onboarding.controller.js';
 import {
   ApproveBody,
+  ClarificationBody,
   IdParam,
   ListApplicationsQuery,
   MessageBody,
@@ -90,6 +91,23 @@ const adminOnboardingRoutes: FastifyPluginAsyncZod = async (app) => {
         id: req.params.id,
         auth: getAuth(req),
         body: req.body,
+      }),
+  );
+
+  // One-shot "request clarification": posts the question, flips to docs_requested,
+  // records requested doc kinds. The dashboard's clarification dialog calls this.
+  app.post(
+    '/applications/:id/clarifications',
+    {
+      preHandler: requirePermission('applications.message'),
+      schema: { params: IdParam, body: ClarificationBody },
+    },
+    async (req) =>
+      ctrl.requestClarification({
+        id: req.params.id,
+        auth: getAuth(req),
+        body: req.body,
+        requestId: req.id,
       }),
   );
 

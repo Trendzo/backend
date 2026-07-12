@@ -21,3 +21,14 @@ export const ChangeRequestBody = z.object({
   reason: z.string().trim().min(3).max(500),
   evidenceUrl: z.string().url().optional(),
 });
+
+/** Body for the owner/manager account-closure and account-reopen requests. */
+export const AccountLifecycleBody = z.object({
+  reason: z.string().trim().max(500).optional(),
+});
+
+/** Body for a suspend/terminate appeal-thread message. */
+export const AppealMessageBody = z.object({
+  body: z.string().trim().min(1).max(2000),
+  attachmentUrls: z.array(z.string().url()).optional(),
+});

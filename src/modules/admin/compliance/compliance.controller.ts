@@ -390,6 +390,55 @@ export async function decideChangeRequest(input: {
           .update(retailerStores)
           .set({ posBillingEnabled: true })
           .where(eq(retailerStores.id, cr.storeId));
+      } else if (cr.field === 'account_deletion') {
+        // Reversible closure: suspend the store (NOT terminate/permanentSuspend) and
+        // close every store account. Records are kept so the owner can reopen. The
+        // suspendReason is intentionally NOT 'account_deleted_by_user' so login is not
+        // blocked (assertRetailerNotDeleted) — a closed owner must still sign in to
+        // file a reopen request.
+        await tx
+          .update(retailerStores)
+          .set({
+            status: 'suspended',
+            permanentSuspend: false,
+            suspendReason: 'account_closed_by_owner',
+            suspendedAt: now,
+            suspendedByAccountId: auth.sub,
+          })
+          .where(eq(retailerStores.id, cr.storeId));
+        await tx
+          .update(retailerAccounts)
+          .set({
+            status: 'closed',
+            permanentSuspend: false,
+            suspendReason: 'account_closed_by_owner',
+            suspendedAt: now,
+            suspendedByAccountId: auth.sub,
+          })
+          .where(eq(retailerAccounts.storeId, cr.storeId));
+      } else if (cr.field === 'account_reopen') {
+        // Restore the store + all its accounts to active, clearing the closure marks.
+        await tx
+          .update(retailerStores)
+          .set({
+            status: 'active',
+            permanentSuspend: false,
+            suspendReason: null,
+            suspendedAt: null,
+            suspendedByAccountId: null,
+            pauseReason: null,
+          })
+          .where(eq(retailerStores.id, cr.storeId));
+        await tx
+          .update(retailerAccounts)
+          .set({
+            status: 'active',
+            permanentSuspend: false,
+            suspendReason: null,
+            suspendedAt: null,
+            suspendedByAccountId: null,
+          })
+          .where(eq(retailerAccounts.storeId, cr.storeId));
       }
     }
 
@@ -426,6 +475,32 @@ export async function decideChangeRequest(input: {
           ? 'Your POS/counter billing request was approved — the Register is now in your dashboard.'
           : `Your POS billing request was declined.${body.note ? ` Note: ${body.note}` : ''}`,
       deepLink: body.decision === 'approved' ? '/retailer/pos' : '/retailer/store/status',
+    }).catch(() => undefined);
+  }
+
+  // Tell the store when a closure/reopen request is decided (best-effort).
+  if (updated?.field === 'account_deletion') {
+    await notifyStoreAccounts({
+      storeId: updated.storeId,
+      kind: 'system',
+      title: body.decision === 'approved' ? 'Account closed' : 'Closure request declined',
+      body:
+        body.decision === 'approved'
+          ? 'Your account-closure request was approved. Your store is now suspended. You can request to reopen anytime from the app.'
+          : `Your account-closure request was declined.${body.note ? ` Note: ${body.note}` : ''}`,
+      deepLink: '/retailer/store/status',
+    }).catch(() => undefined);
+  }
+  if (updated?.field === 'account_reopen') {
+    await notifyStoreAccounts({
+      storeId: updated.storeId,
+      kind: 'system',
+      title: body.decision === 'approved' ? 'Account reopened' : 'Reopen request declined',
+      body:
+        body.decision === 'approved'
+          ? 'Your reopen request was approved — your store and account are active again. Welcome back!'
+          : `Your reopen request was declined.${body.note ? ` Note: ${body.note}` : ''}`,
+      deepLink: '/retailer/store/status',
     }).catch(() => undefined);
   }
 

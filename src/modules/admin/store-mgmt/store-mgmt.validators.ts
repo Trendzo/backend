@@ -6,6 +6,12 @@ const HoursSchema = z
 
 export const IdParam = z.object({ id: z.string() });
 
+/** Admin reply in a store's suspend/terminate appeal thread. */
+export const AppealMessageBody = z.object({
+  body: z.string().trim().min(1).max(2000),
+  attachmentUrls: z.array(z.string().url()).optional(),
+});
+
 export const StoreCreateBody = z.object({
   legalEntityId: z.string(),
   storeName: z.string().trim().min(1).max(200),
