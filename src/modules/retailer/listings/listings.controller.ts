@@ -1484,6 +1484,24 @@ function sizeOfVariant(attrs: Record<string, string>): string | null {
   return null;
 }
 
+/**
+ * Get-or-create the listing's colour-less DEFAULT group and return it. This is what a
+ * "no colour" (size-only) product hangs its size variants off: the default group
+ * contributes no colour key, so each variant's identity is just its size ("M").
+ */
+export async function ensureDefaultGroup(input: { auth: Auth; listingId: string }) {
+  const { store, listing } = await loadOwnedListing(input.auth, input.listingId);
+  if (listing.variantMode === 'custom') {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      'This product uses custom options — the default group applies to the standard colors & sizes structure',
+    );
+  }
+  const group = await getOrCreateDefaultGroup(db, listing.id, store.id);
+  return ok(group);
+}
+
 export async function createGroup(input: {
   auth: Auth;
   listingId: string;
@@ -1754,12 +1772,16 @@ export async function bulkCreateGroupVariants(input: {
 
   const seen = new Set<string>();
   for (const v of input.body.variants) {
-    const k = v.size.toLowerCase();
+    // A size-less (colour-only) variant keys on '' — two of them in one group would
+    // be the same variant, so the duplicate guard still applies.
+    const k = (v.size ?? '').toLowerCase();
     if (seen.has(k)) {
       throw new AppError(
         409,
         ErrorCode.InvalidState,
-        `Size '${v.size}' appears more than once in this batch`,
+        v.size
+          ? `Size '${v.size}' appears more than once in this batch`
+          : 'This colour already has a size-less variant in this batch',
       );
     }
     seen.add(k);

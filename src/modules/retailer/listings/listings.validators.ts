@@ -86,10 +86,13 @@ export const PatchGroupBody = z
   })
   .refine((v) => Object.keys(v).length > 0, { message: 'No fields to update' });
 
-/** Group-scoped variant create: identity (attributes/label) is server-derived. */
+/** Group-scoped variant create: identity (attributes/label) is server-derived.
+ *  `size` is OPTIONAL — omitting it makes a colour-only variant ("Black"), the
+ *  single-axis case. Omitting it inside the default (colour-less) group is rejected,
+ *  since that would leave the variant with no axes at all. */
 const GroupVariantInput = z
   .object({
-    size: z.string().trim().min(1).max(40),
+    size: z.string().trim().min(1).max(40).optional(),
     sku: z.string().trim().min(1).max(64).optional(),
     pricePaise: PositivePaiseSchema,
     compareAtPrice: PositivePaiseSchema.optional(),

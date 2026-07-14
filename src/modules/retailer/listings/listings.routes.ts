@@ -86,6 +86,18 @@ const retailerListingsRoutes: FastifyPluginAsyncZod = async (app) => {
 
   // ===== Variant groups (system color → size hierarchy) =====
 
+  // Get-or-create the colour-less default group — the home for a "no colour"
+  // (size-only) product's variants.
+  app.post(
+    '/listings/:listingId/default-group',
+    {
+      preHandler: requirePermission('listings.edit'),
+      schema: { params: ListingIdParam },
+    },
+    async (req) =>
+      ctrl.ensureDefaultGroup({ auth: getAuth(req), listingId: req.params.listingId }),
+  );
+
   app.post(
     '/listings/:listingId/groups',
     {

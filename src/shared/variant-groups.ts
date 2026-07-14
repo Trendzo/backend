@@ -140,14 +140,27 @@ export async function resolveGroupId(
  */
 export function deriveVariantIdentity(
   group: { name: string; isDefault: boolean },
-  size: string,
+  size: string | null | undefined,
 ): { attributes: Record<string, string>; attributesLabel: string } {
+  const hasSize = typeof size === 'string' && size.trim().length > 0;
   if (group.isDefault) {
-    return { attributes: { size }, attributesLabel: size };
+    // Default group carries no color. Size-only ("M") is a valid single-axis product;
+    // no size AND no color means no axes at all — that's the single-product default
+    // variant, which has its own idempotent endpoint.
+    if (!hasSize) {
+      throw AppError.validation(
+        'A variant needs a colour or a size. For a product with neither, use the single-product default variant.',
+      );
+    }
+    return { attributes: { size: size! }, attributesLabel: size! };
+  }
+  // Named (colour) group. Colour-only ("Black") is a valid single-axis product.
+  if (!hasSize) {
+    return { attributes: { color: group.name }, attributesLabel: group.name };
   }
   return {
-    attributes: { color: group.name, size },
-    attributesLabel: `${group.name} / ${size}`,
+    attributes: { color: group.name, size: size! },
+    attributesLabel: `${group.name} / ${size!}`,
   };
 }
 
