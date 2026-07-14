@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { KycDocKindEnum } from '@/shared/kyc/doc-kinds.js';
 
 export const IdParam = z.object({ id: z.string() });
 
@@ -9,8 +10,10 @@ export const BankAccountValueSchema = z.object({
   legalName: z.string().trim().min(1).max(200),
 });
 
+/** `kind` is validated against the canonical 5 — a free string used to silently
+ *  insert an orphan 6th document row instead of filling a seeded slot. */
 export const KycUploadBody = z.object({
-  kind: z.string().trim().min(1).max(64),
+  kind: KycDocKindEnum,
   url: z.string().url(),
 });
 

@@ -5,7 +5,6 @@ import {
   accountAppealMessages,
   bankAccounts,
   changeRequests,
-  kycDocuments,
   kycReverifications,
   policyEnforcementActions,
   retailerAccounts,
@@ -13,8 +12,12 @@ import {
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
-import { IdPrefix, newId } from '@/shared/ids.js';
+import { newId } from '@/shared/ids.js';
 import { notifyAllAdmins } from '@/shared/notify-admins.js';
+import { KYC_REQUIRED_DOC_KINDS } from '@/shared/kyc/doc-kinds.js';
+import { shapeKycCycle } from '@/shared/kyc/serialize.js';
+import { canSubmit, isWritableCycle } from '@/shared/kyc/state.js';
+import { assertCycleAcceptsUploads, upsertKycDocument } from '@/shared/kyc/upload.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import {
   type AccountLifecycleBody,
@@ -25,15 +28,6 @@ import {
 } from './compliance.validators.js';
 
 type Auth = AccessTokenPayload;
-
-/** Human labels for the standard KYC document kinds the dashboard renders. */
-const KYC_DOC_LABELS: Record<string, string> = {
-  gstin_certificate: 'GSTIN Certificate',
-  pan_card: 'PAN Card',
-  address_proof: 'Address Proof',
-  cancelled_cheque: 'Cancelled Cheque',
-  shop_act_license: 'Shop & Establishment License',
-};
 
 async function loadStore(retailerId: string) {
   const retailer = await db.query.retailerAccounts.findFirst({
@@ -55,41 +49,60 @@ export async function getKyc(input: { auth: Auth }) {
     with: { documents: true },
   });
   if (!kyc) return ok(null);
-  return ok({
-    id: kyc.id,
-    retailerId: input.auth.sub,
-    status: kyc.status,
-    dueAt: kyc.dueAt.toISOString(),
-    gracePeriodEndsAt: kyc.gracePeriodEndsAt.toISOString(),
-    lastVerifiedAt: kyc.lastVerifiedAt ? kyc.lastVerifiedAt.toISOString() : null,
-    documents: kyc.documents.map((d) => ({
-      id: d.id,
-      kind: d.kind,
-      label: KYC_DOC_LABELS[d.kind] ?? d.kind.replace(/_/g, ' '),
-      status: d.status,
-      uploadedAt: d.uploadedAt ? d.uploadedAt.toISOString() : null,
-      fileUrl: d.url,
-    })),
-  });
+  // The shared serializer finally projects `decisionReason` and each document's
+  // `reviewerNote` — without them a rejected retailer could never see WHY they failed.
+  return ok({ ...shapeKycCycle(kyc), retailerId: input.auth.sub });
 }
 
-export async function submitKyc(input: { auth: Auth; id: string }) {
-  const store = await loadStore(input.auth.sub);
+/** Load the retailer's own cycle (404s if it isn't theirs). */
+async function loadOwnCycle(retailerId: string, cycleId: string) {
+  const store = await loadStore(retailerId);
   const kyc = await db.query.kycReverifications.findFirst({
-    where: and(
-      eq(kycReverifications.id, input.id),
-      eq(kycReverifications.storeId, store.id),
-    ),
+    where: and(eq(kycReverifications.id, cycleId), eq(kycReverifications.storeId, store.id)),
+    with: { documents: true },
   });
   if (!kyc) throw new AppError(404, ErrorCode.NotFound, 'KYC reverification not found');
-  if (kyc.status !== 'pending') {
-    throw new AppError(409, ErrorCode.InvalidState, 'KYC cycle already submitted or decided');
+  return { store, kyc };
+}
+
+/**
+ * Submit the cycle for review. Allowed from any state that awaits the retailer —
+ * including `rejected`, which is the whole point: a rejection is a request to fix
+ * specific documents, not a dead end.
+ */
+export async function submitKyc(input: { auth: Auth; id: string }) {
+  const { store, kyc } = await loadOwnCycle(input.auth.sub, input.id);
+  if (!isWritableCycle(kyc.status)) {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      kyc.status === 'submitted'
+        ? 'This KYC cycle is already under review'
+        : 'This KYC cycle is closed',
+    );
   }
+  if (!canSubmit(kyc.documents, KYC_REQUIRED_DOC_KINDS)) {
+    throw new AppError(
+      422,
+      ErrorCode.ValidationError,
+      'Upload every required document — and replace any that were rejected — before submitting',
+    );
+  }
+
   const [updated] = await db
     .update(kycReverifications)
     .set({ status: 'submitted', submittedAt: new Date() })
     .where(eq(kycReverifications.id, kyc.id))
     .returning();
+
+  // Nothing alerted the review desk before — a submitted cycle just sat there.
+  await notifyAllAdmins({
+    kind: 'compliance',
+    title: 'KYC documents submitted',
+    body: `${store.legalName} submitted their KYC documents for review.`,
+    deepLink: `/admin/compliance/${kyc.id}`,
+  }).catch(() => undefined);
+
   return ok(updated);
 }
 
@@ -98,42 +111,9 @@ export async function uploadKycDocument(input: {
   id: string;
   body: z.infer<typeof KycUploadBody>;
 }) {
-  const store = await loadStore(input.auth.sub);
-  const kyc = await db.query.kycReverifications.findFirst({
-    where: and(
-      eq(kycReverifications.id, input.id),
-      eq(kycReverifications.storeId, store.id),
-    ),
-  });
-  if (!kyc) throw new AppError(404, ErrorCode.NotFound, 'KYC cycle not found');
-  if (kyc.status !== 'pending') {
-    throw new AppError(409, ErrorCode.InvalidState, 'KYC cycle is not accepting uploads');
-  }
-  const existing = await db.query.kycDocuments.findFirst({
-    where: and(
-      eq(kycDocuments.reverificationId, kyc.id),
-      eq(kycDocuments.kind, input.body.kind),
-    ),
-  });
-  if (existing) {
-    const [doc] = await db
-      .update(kycDocuments)
-      .set({ url: input.body.url, status: 'pending_review', uploadedAt: new Date() })
-      .where(eq(kycDocuments.id, existing.id))
-      .returning();
-    return ok(doc);
-  }
-  const [doc] = await db
-    .insert(kycDocuments)
-    .values({
-      id: newId(IdPrefix.KycDocument),
-      reverificationId: kyc.id,
-      kind: input.body.kind,
-      url: input.body.url,
-      status: 'pending_review',
-      uploadedAt: new Date(),
-    })
-    .returning();
+  const { kyc } = await loadOwnCycle(input.auth.sub, input.id);
+  assertCycleAcceptsUploads(kyc.status);
+  const doc = await upsertKycDocument(db, kyc.id, input.body.kind, input.body.url);
   return ok(doc);
 }
 

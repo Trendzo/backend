@@ -15,6 +15,21 @@ export const KycDecideBody = z.object({
   reason: z.string().trim().max(500).optional(),
 });
 
+/** Review a single document. The note is shown to the retailer, so they know what to fix. */
+export const KycDocumentDecideBody = z.object({
+  decision: z.enum(['verified', 'rejected']),
+  note: z.string().trim().max(500).optional(),
+});
+
+export const KycDocIdParam = z.object({ id: z.string(), docId: z.string() });
+
+/** Mirrors ChangeRequestStatusQuery — the KYC list took no arguments at all before,
+ *  returning every cycle that ever existed, unbounded. */
+export const KycStatusQuery = z.object({
+  status: z.enum(['pending', 'submitted', 'approved', 'rejected', 'overdue']).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+});
+
 export const ChangeRequestStatusQuery = z.object({
   status: z.enum(['pending', 'approved', 'rejected']).optional(),
 });

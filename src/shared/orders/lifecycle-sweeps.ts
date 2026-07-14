@@ -32,6 +32,7 @@ import {
   returns,
 } from '@/db/schema/index.js';
 import { markExpired } from '@/shared/held-items/dispositions.js';
+import { sweepKycDeadlines } from '@/shared/kyc/sweep.js';
 import { notifyAllAdmins } from '@/shared/notify-admins.js';
 import { notifyConsumer } from '@/shared/notify-consumer.js';
 import { notifyStoreAccounts } from '@/shared/notify-store.js';
@@ -527,6 +528,8 @@ export type SweepCounts = {
   dispatchAlerts: number;
   dispatchUnassigned: number;
   pickupNoShowCancelled: number;
+  kycMarkedOverdue: number;
+  kycStoresPaused: number;
 };
 
 const ZERO_COUNTS: SweepCounts = {
@@ -539,6 +542,8 @@ const ZERO_COUNTS: SweepCounts = {
   dispatchAlerts: 0,
   dispatchUnassigned: 0,
   pickupNoShowCancelled: 0,
+  kycMarkedOverdue: 0,
+  kycStoresPaused: 0,
 };
 
 let running = false;
@@ -587,6 +592,13 @@ export async function runLifecycleSweeps(database: typeof Db): Promise<SweepCoun
       counts.pickupNoShowCancelled = await sweepPickupNoShows(database);
     } catch (e) {
       console.error(`[lifecycle-sweep] pickup-noshow failed: ${(e as Error).message}`);
+    }
+    try {
+      const r = await sweepKycDeadlines(database);
+      counts.kycMarkedOverdue = r.markedOverdue;
+      counts.kycStoresPaused = r.storesPaused;
+    } catch (e) {
+      console.error(`[lifecycle-sweep] kyc-deadlines failed: ${(e as Error).message}`);
     }
   } finally {
     running = false;

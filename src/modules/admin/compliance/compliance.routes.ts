@@ -10,6 +10,9 @@ import {
   DeletionCancelBody,
   IdParam,
   KycDecideBody,
+  KycDocIdParam,
+  KycDocumentDecideBody,
+  KycStatusQuery,
   PolicyEnforcementBody,
   PolicyEnforcementQuery,
   ReverifyBody,
@@ -21,8 +24,11 @@ const adminComplianceRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get(
     '/compliance/kyc',
-    { preHandler: requirePermission('kyc.review') },
-    async () => ctrl.listKycCycles(),
+    {
+      preHandler: requirePermission('kyc.review'),
+      schema: { querystring: KycStatusQuery },
+    },
+    async (req) => ctrl.listKycCycles({ query: req.query }),
   );
 
   app.get(
@@ -32,6 +38,23 @@ const adminComplianceRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: { params: IdParam },
     },
     async (req) => ctrl.getKycCycle(req.params.id),
+  );
+
+  // Review ONE document — this is what makes a partial rejection possible.
+  app.post(
+    '/compliance/kyc/:id/documents/:docId/decide',
+    {
+      preHandler: requirePermission('kyc.decide'),
+      schema: { params: KycDocIdParam, body: KycDocumentDecideBody },
+    },
+    async (req) =>
+      ctrl.decideKycDocument({
+        id: req.params.id,
+        docId: req.params.docId,
+        auth: getAuth(req),
+        body: req.body,
+        requestId: req.id,
+      }),
   );
 
   app.post(
@@ -125,7 +148,8 @@ const adminComplianceRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     '/compliance/stores/:storeId/reverify',
     {
-      preHandler: requirePermission('kyc.review'),
+      // Opening a cycle is a WRITE — it was gated on the read permission `kyc.review`.
+      preHandler: requirePermission('kyc.decide'),
       schema: { params: StoreIdParam, body: ReverifyBody },
     },
     async (req) =>

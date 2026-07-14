@@ -19,6 +19,11 @@ import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { recordAudit } from '@/shared/audit.js';
 import { notifyStoreAccounts } from '@/shared/notify-store.js';
+import { loadKycConfig } from '@/shared/kyc/config.js';
+import { KYC_REQUIRED_DOC_KINDS, kycDocLabel } from '@/shared/kyc/doc-kinds.js';
+import { resumeStoreAfterKyc } from '@/shared/kyc/enforcement.js';
+import { shapeKycCycle } from '@/shared/kyc/serialize.js';
+import { allRequiredVerified, isDecidableCycle } from '@/shared/kyc/state.js';
 import {
   type AdminChangeRequestBody,
   BankAccountValueSchema,
@@ -27,44 +32,36 @@ import {
   type DataExportProcessBody,
   type DeletionCancelBody,
   type KycDecideBody,
+  type KycDocumentDecideBody,
+  type KycStatusQuery,
   type PolicyEnforcementBody,
   type PolicyEnforcementQuery,
   type ReverifyBody,
 } from './compliance.validators.js';
 import type { Auth, RawCycle } from './compliance.types.js';
 
-const KYC_REQUIRED_DOC_KINDS = [
-  'gstin_certificate',
-  'pan_card',
-  'address_proof',
-  'cancelled_cheque',
-  'shop_act_license',
-] as const;
-
-/** Human-readable labels for the canonical 5 KYC doc kinds. Mirrors the same
- *  mapping in the retailer-side handler so both portals see identical labels. */
-const KYC_DOC_LABELS: Record<string, string> = {
-  gstin_certificate: 'GSTIN Certificate',
-  pan_card: 'PAN Card',
-  address_proof: 'Address Proof',
-  cancelled_cheque: 'Cancelled Cheque',
-  shop_act_license: 'Shop & Establishment License',
-};
-
 /**
- * Open a new KYC re-verification cycle for `storeId`, or revive the most recent
- * approved/rejected one. Idempotent on already-pending cycles (only updates the
- * deadlines). Seeds required document slots when starting fresh or when the
- * existing cycle has zero docs.
+ * Open a KYC re-verification cycle for `storeId`.
+ *
+ * A NEW cycle is only started when there is no live one — i.e. the latest is `approved`
+ * or absent. Previously a `rejected` cycle also triggered a fresh insert, which orphaned
+ * the cycle **and every document the retailer had uploaded**. That was the only escape
+ * hatch from a rejection, because rejection was a dead end; now that `rejected` is a
+ * working state the retailer just fixes it in place, and a re-trigger on a live cycle
+ * simply extends its deadline.
  */
 async function openOrRefreshKycCycle(
   storeId: string,
-  dueDays = 14,
-  graceDays = 30,
+  dueDaysOverride?: number,
+  graceDaysOverride?: number,
 ): Promise<string> {
+  const cfg = await loadKycConfig();
+  const dueDays = dueDaysOverride ?? cfg.dueDays;
+  const graceDays = graceDaysOverride ?? cfg.graceDays;
+
   const now = new Date();
   const dueAt = new Date(now.getTime() + dueDays * 24 * 60 * 60 * 1000);
-  const graceEndsAt = new Date(now.getTime() + graceDays * 24 * 60 * 60 * 1000);
+  const graceEndsAt = new Date(dueAt.getTime() + graceDays * 24 * 60 * 60 * 1000);
 
   const existing = await db.query.kycReverifications.findFirst({
     where: eq(kycReverifications.storeId, storeId),
@@ -74,7 +71,7 @@ async function openOrRefreshKycCycle(
   let cycleId: string;
   let seedDocs = false;
 
-  if (!existing || existing.status === 'approved' || existing.status === 'rejected') {
+  if (!existing || existing.status === 'approved') {
     cycleId = newId(IdPrefix.KycReverification);
     await db.insert(kycReverifications).values({
       id: cycleId,
@@ -82,27 +79,18 @@ async function openOrRefreshKycCycle(
       status: 'pending',
       dueAt,
       gracePeriodEndsAt: graceEndsAt,
-      lastVerifiedAt: existing?.decidedAt ?? null,
+      lastVerifiedAt: existing?.lastVerifiedAt ?? existing?.decidedAt ?? null,
     });
     seedDocs = true;
   } else {
+    // A live cycle (pending / submitted / rejected / overdue): extend the deadline and
+    // hand it back to the retailer. Their uploads and per-document review outcomes stay.
     cycleId = existing.id;
     await db
       .update(kycReverifications)
-      .set({
-        status: 'pending',
-        dueAt,
-        gracePeriodEndsAt: graceEndsAt,
-        submittedAt: null,
-        decidedAt: null,
-        decidedByAccountId: null,
-        decisionReason: null,
-      })
+      .set({ status: 'pending', dueAt, gracePeriodEndsAt: graceEndsAt })
       .where(eq(kycReverifications.id, existing.id));
-    const docCount = await db.$count(
-      kycDocuments,
-      eq(kycDocuments.reverificationId, existing.id),
-    );
+    const docCount = await db.$count(kycDocuments, eq(kycDocuments.reverificationId, existing.id));
     if (docCount === 0) seedDocs = true;
   }
 
@@ -120,35 +108,11 @@ async function openOrRefreshKycCycle(
   return cycleId;
 }
 
-function shapeCycle(
-  row: RawCycle,
-  store: { id: string; legalName: string } | null,
-) {
-  return {
-    id: row.id,
-    storeId: row.storeId,
-    storeName: store?.legalName ?? null,
-    status: row.status,
-    dueAt: row.dueAt.toISOString(),
-    gracePeriodEndsAt: row.gracePeriodEndsAt.toISOString(),
-    submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
-    decidedAt: row.decidedAt ? row.decidedAt.toISOString() : null,
-    decisionReason: row.decisionReason,
-    lastVerifiedAt: row.lastVerifiedAt ? row.lastVerifiedAt.toISOString() : null,
-    documents: row.documents.map((d) => ({
-      id: d.id,
-      kind: d.kind,
-      label: KYC_DOC_LABELS[d.kind] ?? d.kind.replace(/_/g, ' '),
-      status: d.status,
-      uploadedAt: d.uploadedAt ? d.uploadedAt.toISOString() : null,
-      fileUrl: d.url,
-    })),
-  };
-}
-
-export async function listKycCycles() {
+export async function listKycCycles(input: { query: z.infer<typeof KycStatusQuery> }) {
   const rows = await db.query.kycReverifications.findMany({
+    where: input.query.status ? eq(kycReverifications.status, input.query.status) : undefined,
     orderBy: asc(kycReverifications.dueAt),
+    limit: input.query.limit,
     with: { documents: true },
   });
   if (rows.length === 0) return ok([]);
@@ -158,7 +122,7 @@ export async function listKycCycles() {
     columns: { id: true, legalName: true },
   });
   const byId = new Map(stores.map((s) => [s.id, s]));
-  return ok(rows.map((r) => shapeCycle(r as RawCycle, byId.get(r.storeId) ?? null)));
+  return ok(rows.map((r) => shapeKycCycle(r as RawCycle, byId.get(r.storeId) ?? null)));
 }
 
 export async function getKycCycle(id: string) {
@@ -171,7 +135,62 @@ export async function getKycCycle(id: string) {
     where: eq(retailerStores.id, row.storeId),
     columns: { id: true, legalName: true },
   });
-  return ok(shapeCycle(row as RawCycle, store ?? null));
+  return ok(shapeKycCycle(row as RawCycle, store ?? null));
+}
+
+/**
+ * Review ONE document. This endpoint did not exist — which is why `decideKyc` had to
+ * blanket-stamp every document with the cycle-level reason, and why an admin could never
+ * say "PAN is fine, address proof is blurry".
+ */
+export async function decideKycDocument(input: {
+  id: string;
+  docId: string;
+  auth: Auth;
+  body: z.infer<typeof KycDocumentDecideBody>;
+  requestId: string;
+}) {
+  const { id, docId, auth, body, requestId } = input;
+  const kyc = await db.query.kycReverifications.findFirst({
+    where: eq(kycReverifications.id, id),
+  });
+  if (!kyc) throw new AppError(404, ErrorCode.NotFound, 'KYC reverification not found');
+  if (!isDecidableCycle(kyc.status)) {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      'Documents can only be reviewed while the cycle is submitted for review',
+    );
+  }
+  const doc = await db.query.kycDocuments.findFirst({
+    where: and(eq(kycDocuments.id, docId), eq(kycDocuments.reverificationId, kyc.id)),
+  });
+  if (!doc) throw new AppError(404, ErrorCode.NotFound, 'Document not found on this cycle');
+  if (doc.status === 'missing') {
+    throw new AppError(409, ErrorCode.InvalidState, 'Nothing was uploaded for this document');
+  }
+
+  const [updated] = await db
+    .update(kycDocuments)
+    .set({
+      status: body.decision,
+      reviewedAt: new Date(),
+      reviewerNote: body.note ?? null,
+    })
+    .where(eq(kycDocuments.id, doc.id))
+    .returning();
+
+  await recordAudit({
+    actor: auth,
+    action: `kyc.document.${body.decision}`,
+    resourceKind: 'kyc_document',
+    resourceId: doc.id,
+    before: { status: doc.status },
+    after: { status: body.decision, note: body.note ?? null },
+    requestId,
+  });
+
+  return ok(updated);
 }
 
 export async function decideKyc(input: {
@@ -183,8 +202,36 @@ export async function decideKyc(input: {
   const { id, auth, body, requestId } = input;
   const kyc = await db.query.kycReverifications.findFirst({
     where: eq(kycReverifications.id, id),
+    with: { documents: true },
   });
   if (!kyc) throw new AppError(404, ErrorCode.NotFound, 'KYC reverification not found');
+  if (!isDecidableCycle(kyc.status)) {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      kyc.status === 'approved' || kyc.status === 'rejected'
+        ? 'This KYC cycle has already been decided'
+        : 'This KYC cycle has not been submitted for review yet',
+    );
+  }
+
+  // The decision is DERIVED from the per-document review — it no longer blanket-stamps
+  // the documents (that would stomp the reviewer's individual verify/reject calls).
+  if (body.decision === 'approved' && !allRequiredVerified(kyc.documents, KYC_REQUIRED_DOC_KINDS)) {
+    throw new AppError(
+      422,
+      ErrorCode.ValidationError,
+      'Verify every required document before approving the cycle',
+    );
+  }
+  if (body.decision === 'rejected' && !kyc.documents.some((d) => d.status === 'rejected')) {
+    throw new AppError(
+      422,
+      ErrorCode.ValidationError,
+      'Reject at least one document so the retailer knows what to fix',
+    );
+  }
+
   const now = new Date();
   const [updated] = await db
     .update(kycReverifications)
@@ -193,10 +240,13 @@ export async function decideKyc(input: {
       decidedAt: now,
       decidedByAccountId: auth.sub,
       decisionReason: body.reason ?? null,
-      lastVerifiedAt: body.decision === 'approved' ? now : null,
+      // Only an approval advances lastVerifiedAt. A rejection used to NULL it, wiping
+      // the store's last known-good verification.
+      ...(body.decision === 'approved' && { lastVerifiedAt: now }),
     })
     .where(eq(kycReverifications.id, kyc.id))
     .returning();
+
   await recordAudit({
     actor: auth,
     action: `kyc.${body.decision}`,
@@ -205,6 +255,28 @@ export async function decideKyc(input: {
     after: { status: body.decision },
     requestId,
   });
+
+  // An approval lifts a KYC auto-pause (and only a KYC auto-pause).
+  if (body.decision === 'approved') {
+    await resumeStoreAfterKyc(db, kyc.storeId).catch(() => undefined);
+  }
+
+  // The KYC path notified nobody, ever. Best-effort, never blocks the decision.
+  const rejectedLabels = kyc.documents
+    .filter((d) => d.status === 'rejected')
+    .map((d) => kycDocLabel(d.kind))
+    .join(', ');
+  await notifyStoreAccounts({
+    storeId: kyc.storeId,
+    kind: 'kyc',
+    title: body.decision === 'approved' ? 'KYC approved' : 'KYC needs changes',
+    body:
+      body.decision === 'approved'
+        ? 'Your KYC re-verification was approved. Nothing further is needed.'
+        : `Re-upload and re-submit: ${rejectedLabels}.${body.reason ? ` Note: ${body.reason}` : ''}`,
+    deepLink: '/retailer/store/kyc',
+  }).catch(() => undefined);
+
   return ok(updated);
 }
 
@@ -643,9 +715,19 @@ export async function triggerReverify(input: {
     action: 'kyc.reverify_triggered',
     resourceKind: 'retailer_store',
     resourceId: store.id,
-    after: { cycleId, reason: body.reason, dueDays: body.dueDays ?? 14 },
+    after: { cycleId, reason: body.reason, dueDays: body.dueDays ?? null },
     requestId,
   });
+
+  // The retailer was never told KYC had been asked for — they only found out by
+  // happening to open the app and notice the banner.
+  await notifyStoreAccounts({
+    storeId: store.id,
+    kind: 'kyc',
+    title: 'KYC re-verification requested',
+    body: `ClosetX needs your KYC documents re-verified. Reason: ${body.reason}`,
+    deepLink: '/retailer/store/kyc',
+  }).catch(() => undefined);
 
   return ok({ cycleId, storeId: store.id });
 }

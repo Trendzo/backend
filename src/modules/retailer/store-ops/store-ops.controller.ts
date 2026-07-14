@@ -16,6 +16,7 @@ import {
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { recordAudit } from '@/shared/audit.js';
+import { assertCycleAcceptsUploads, upsertKycDocument } from '@/shared/kyc/upload.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
   HolidayCreateBody,
@@ -160,13 +161,12 @@ export async function uploadDocument(input: {
   if (!rev || rev.documents.length === 0) {
     throw new AppError(404, ErrorCode.NotFound, 'Document not found');
   }
-  const [updated] = await db
-    .update(kycDocuments)
-    .set({ url: input.body.url, status: 'pending_review', uploadedAt: new Date() })
-    .where(
-      and(eq(kycDocuments.id, input.id), eq(kycDocuments.reverificationId, rev.id)),
-    )
-    .returning();
+  // This path had NO cycle-status guard: a retailer could overwrite a document on an
+  // approved/submitted cycle and silently flip a `verified` doc back to pending_review.
+  // Same guard as /retailer/kyc/:id/documents — sourced from one place so it can't drift.
+  assertCycleAcceptsUploads(rev.status);
+  const doc = rev.documents[0]!;
+  const updated = await upsertKycDocument(db, rev.id, doc.kind, input.body.url);
   return ok(updated);
 }
 
