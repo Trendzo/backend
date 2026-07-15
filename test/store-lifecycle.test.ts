@@ -364,3 +364,50 @@ describe('middleware lock', () => {
     expect(reopen.statusCode).toBe(200);
   });
 });
+
+describe('appeals queue (admin Pending Requests desk)', () => {
+  it('a retailer appeal surfaces in the queue and an admin reply clears it', async () => {
+    const { storeId, retailerToken } = await makeStore();
+    await adminPost(`/stores/${storeId}/suspend`, { reason: 'queue test' });
+
+    // Terminated/suspended accounts may still write to the appeal path (allowlist).
+    const post = await app.inject({
+      method: 'POST',
+      url: '/api/v1/retailer/account/appeal',
+      headers: auth(retailerToken),
+      payload: { body: 'Please reconsider — the flagged listing was already removed.' },
+    });
+    expect(post.statusCode).toBe(200);
+
+    const queue = async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/admin/stores/appeals/pending',
+        headers: auth(adminToken),
+      });
+      expect(res.statusCode).toBe(200);
+      return data(res) as { storeId: string; storeStatus: string; lastMessagePreview: string }[];
+    };
+
+    const pending = (await queue()).find((r) => r.storeId === storeId);
+    expect(pending).toBeDefined();
+    expect(pending!.storeStatus).toBe('suspended');
+    expect(pending!.lastMessagePreview).toContain('Please reconsider');
+
+    // Admin replies → ball is back with the retailer → thread leaves the queue.
+    const reply = await adminPost(`/stores/${storeId}/appeal`, {
+      body: 'Reviewed — reinstating your store shortly.',
+    });
+    expect(reply.statusCode).toBe(200);
+    expect((await queue()).find((r) => r.storeId === storeId)).toBeUndefined();
+
+    // Retailer follows up → it re-enters the queue.
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/retailer/account/appeal',
+      headers: auth(retailerToken),
+      payload: { body: 'Thank you — waiting for the reinstate.' },
+    });
+    expect((await queue()).find((r) => r.storeId === storeId)).toBeDefined();
+  });
+});
