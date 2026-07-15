@@ -16,6 +16,10 @@ import { hashPassword } from '@/shared/auth/password.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { compact } from '@/shared/object.js';
 import { recordAudit } from '@/shared/audit.js';
+import {
+  reinstateRetailerCascade,
+  terminateRetailerCascade,
+} from '@/shared/lifecycle/retailer-cascade.js';
 import { notify } from '@/shared/notify.js';
 import { notifyStoreAccounts } from '@/shared/notify-store.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
@@ -288,34 +292,10 @@ export async function banRetailer(input: {
   requestId: string;
 }) {
   const retailer = await loadRetailerOr404(input.id);
-  if (retailer.permanentSuspend) {
-    throw new AppError(409, ErrorCode.InvalidState, 'Retailer is already banned');
-  }
-  const before = { status: retailer.status, permanentSuspend: retailer.permanentSuspend };
-  const now = new Date();
-  await db.transaction(async (tx) => {
-    await tx
-      .update(retailerAccounts)
-      .set({
-        status: 'terminated',
-        permanentSuspend: true,
-        suspendReason: input.body.reason,
-        suspendedAt: now,
-        suspendedByAccountId: input.auth.sub,
-      })
-      .where(eq(retailerAccounts.id, retailer.id));
-    // Cascade to EVERY store this retailer owns (a retailer can own multiple),
-    // matching them by the legalEntityId back-reference. Permanent kill → 'terminated'.
-    await tx
-      .update(retailerStores)
-      .set({
-        status: 'terminated',
-        permanentSuspend: true,
-        suspendReason: input.body.reason,
-        suspendedAt: now,
-        suspendedByAccountId: input.auth.sub,
-      })
-      .where(eq(retailerStores.legalEntityId, retailer.id));
+  const before = { status: retailer.status };
+  await terminateRetailerCascade(db, retailer.id, {
+    reason: input.body.reason,
+    actorId: input.auth.sub,
   });
   await recordAudit({
     actor: input.auth,
@@ -323,7 +303,7 @@ export async function banRetailer(input: {
     resourceKind: 'retailer_account',
     resourceId: retailer.id,
     before,
-    after: { status: 'terminated', permanentSuspend: true },
+    after: { status: 'terminated' },
     note: input.body.reason,
     requestId: input.requestId,
   });
@@ -344,40 +324,14 @@ export async function unbanRetailer(input: {
   requestId: string;
 }) {
   const retailer = await loadRetailerOr404(input.id);
-  if (!retailer.permanentSuspend) {
-    throw new AppError(409, ErrorCode.InvalidState, 'Retailer is not banned');
-  }
-  await db.transaction(async (tx) => {
-    await tx
-      .update(retailerAccounts)
-      .set({
-        status: 'active',
-        permanentSuspend: false,
-        suspendReason: null,
-        suspendedAt: null,
-        suspendedByAccountId: null,
-      })
-      .where(eq(retailerAccounts.id, retailer.id));
-    if (retailer.storeId) {
-      await tx
-        .update(retailerStores)
-        .set({
-          status: 'active',
-          permanentSuspend: false,
-          suspendReason: null,
-          suspendedAt: null,
-          suspendedByAccountId: null,
-        })
-        .where(eq(retailerStores.id, retailer.storeId));
-    }
-  });
+  await reinstateRetailerCascade(db, retailer.id);
   const body = input.body as { reason?: string };
   await recordAudit({
     actor: input.auth,
     action: 'retailer.unban',
     resourceKind: 'retailer_account',
     resourceId: retailer.id,
-    after: { status: 'active', permanentSuspend: false },
+    after: { status: 'active' },
     note: body.reason ?? null,
     requestId: input.requestId,
   });

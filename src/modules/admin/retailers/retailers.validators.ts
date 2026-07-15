@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+// Filter vocabulary, not the account enum: onboarding/paused/suspended filter by the
+// STORE's status (on active accounts); approved_no_store = active account, no store.
 export const RetailerStatusFilter = z.enum([
   'pending_approval',
   'approved_no_store',
@@ -8,6 +10,7 @@ export const RetailerStatusFilter = z.enum([
   'paused',
   'suspended',
   'terminated',
+  'closed',
 ]);
 
 export const IdParam = z.object({ id: z.string() });

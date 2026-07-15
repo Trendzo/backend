@@ -19,6 +19,7 @@ import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { recordAudit } from '@/shared/audit.js';
 import { notifyStoreAccounts } from '@/shared/notify-store.js';
+import { accountTransition, storeTransition } from '@/shared/lifecycle/transitions.js';
 import { loadKycConfig } from '@/shared/kyc/config.js';
 import { KYC_REQUIRED_DOC_KINDS, kycDocLabel } from '@/shared/kyc/doc-kinds.js';
 import { resumeStoreAfterKyc } from '@/shared/kyc/enforcement.js';
@@ -256,9 +257,15 @@ export async function decideKyc(input: {
     requestId,
   });
 
-  // An approval lifts a KYC auto-pause (and only a KYC auto-pause).
+  // An approval lifts a KYC auto-pause (and only a KYC auto-pause). Best-effort so a
+  // resume hiccup can't fail the recorded decision — but LOUD, because the retailer
+  // cannot self-resume a kyc_overdue pause and would otherwise be stuck silently.
   if (body.decision === 'approved') {
-    await resumeStoreAfterKyc(db, kyc.storeId).catch(() => undefined);
+    await resumeStoreAfterKyc(db, kyc.storeId).catch((err: unknown) => {
+      console.error(
+        `[kyc] approved cycle ${kyc.id} but auto-resume of store ${kyc.storeId} FAILED — lift the pause manually: ${(err as Error).message}`,
+      );
+    });
   }
 
   // The KYC path notified nobody, ever. Best-effort, never blocks the decision.
@@ -463,54 +470,68 @@ export async function decideChangeRequest(input: {
           .set({ posBillingEnabled: true })
           .where(eq(retailerStores.id, cr.storeId));
       } else if (cr.field === 'account_deletion') {
-        // Reversible closure: suspend the store (NOT terminate/permanentSuspend) and
-        // close every store account. Records are kept so the owner can reopen. The
-        // suspendReason is intentionally NOT 'account_deleted_by_user' so login is not
-        // blocked (assertRetailerNotDeleted) — a closed owner must still sign in to
-        // file a reopen request.
-        await tx
-          .update(retailerStores)
-          .set({
-            status: 'suspended',
-            permanentSuspend: false,
-            suspendReason: 'account_closed_by_owner',
-            suspendedAt: now,
-            suspendedByAccountId: auth.sub,
-          })
-          .where(eq(retailerStores.id, cr.storeId));
+        // Reversible closure: suspend the store (NOT terminate) and close every ACTIVE
+        // store account. Records are kept so the owner can reopen. The suspendReason is
+        // intentionally NOT 'account_deleted_by_user' so login is not blocked
+        // (assertRetailerNotDeleted) — a closed owner must still sign in to file a
+        // reopen request. Patches come from the central state machine, driven by the
+        // store's REAL status (a store terminated since the request was filed 409s
+        // here instead of being silently downgraded to suspended).
+        const closingStore = await tx.query.retailerStores.findFirst({
+          where: eq(retailerStores.id, cr.storeId),
+          columns: { status: true },
+        });
+        if (!closingStore) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
+        // Already suspended (admin action) or terminated? The store is already at
+        // least as locked as closure requires — keep the existing state + reason
+        // rather than 409ing the whole approval.
+        if (closingStore.status !== 'suspended' && closingStore.status !== 'terminated') {
+          await tx
+            .update(retailerStores)
+            .set(
+              storeTransition(closingStore.status, 'suspend', {
+                reason: 'account_closed_by_owner',
+                actorId: auth.sub,
+              }),
+            )
+            .where(eq(retailerStores.id, cr.storeId));
+        }
+        // Only ACTIVE accounts close — a previously terminated staff account must not
+        // be laundered into 'closed' (and later resurrected by a reopen).
         await tx
           .update(retailerAccounts)
-          .set({
-            status: 'closed',
-            permanentSuspend: false,
-            suspendReason: 'account_closed_by_owner',
-            suspendedAt: now,
-            suspendedByAccountId: auth.sub,
-          })
-          .where(eq(retailerAccounts.storeId, cr.storeId));
+          .set(
+            accountTransition('active', 'close', {
+              reason: 'account_closed_by_owner',
+              actorId: auth.sub,
+            }),
+          )
+          .where(
+            and(eq(retailerAccounts.storeId, cr.storeId), eq(retailerAccounts.status, 'active')),
+          );
       } else if (cr.field === 'account_reopen') {
-        // Restore the store + all its accounts to active, clearing the closure marks.
-        await tx
-          .update(retailerStores)
-          .set({
-            status: 'active',
-            permanentSuspend: false,
-            suspendReason: null,
-            suspendedAt: null,
-            suspendedByAccountId: null,
-            pauseReason: null,
-          })
-          .where(eq(retailerStores.id, cr.storeId));
+        // Mirror of closure: unsuspend the store, reopen only the CLOSED accounts.
+        const reopeningStore = await tx.query.retailerStores.findFirst({
+          where: eq(retailerStores.id, cr.storeId),
+          columns: { status: true },
+        });
+        if (!reopeningStore) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
+        // Only lift the closure suspension if it is still in place. An admin may have
+        // manually unsuspended the store already (→ skip, don't 409 the account out of
+        // its only exit path) or terminated it meanwhile (→ the account reopens but the
+        // store termination stands until an admin reinstates it explicitly).
+        if (reopeningStore.status === 'suspended') {
+          await tx
+            .update(retailerStores)
+            .set(storeTransition(reopeningStore.status, 'unsuspend'))
+            .where(eq(retailerStores.id, cr.storeId));
+        }
         await tx
           .update(retailerAccounts)
-          .set({
-            status: 'active',
-            permanentSuspend: false,
-            suspendReason: null,
-            suspendedAt: null,
-            suspendedByAccountId: null,
-          })
-          .where(eq(retailerAccounts.storeId, cr.storeId));
+          .set(accountTransition('closed', 'reopen'))
+          .where(
+            and(eq(retailerAccounts.storeId, cr.storeId), eq(retailerAccounts.status, 'closed')),
+          );
       }
     }
 
@@ -649,34 +670,44 @@ export async function createPolicyEnforcement(input: {
   });
   if (!store) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
 
-  const id = newId('enf');
-  await db.insert(policyEnforcementActions).values({
-    id,
-    storeId: store.id,
-    step: body.step,
-    breachKind: body.breachKind,
-    metric: body.metric ?? null,
-    actedByAccountId: auth.sub,
-    reason: body.reason ?? null,
-    liftsActionId: body.liftsActionId ?? null,
-  });
-
+  // Compute the status patch FIRST — an illegal transition must 409 before anything
+  // is written — then persist ledger row + status change atomically, so a failure
+  // can't leave an enforcement row whose status change never happened.
+  let statusPatch: Record<string, unknown> | null = null;
   if (body.step === 'suspension') {
-    await db
-      .update(retailerStores)
-      .set({ status: 'suspended' })
-      .where(eq(retailerStores.id, store.id));
+    statusPatch = storeTransition(store.status, 'suspend', {
+      reason: body.reason ?? `policy_enforcement:${body.breachKind}`,
+      actorId: auth.sub,
+    });
   } else if (body.step === 'termination') {
-    await db
-      .update(retailerStores)
-      .set({ status: 'terminated' })
-      .where(eq(retailerStores.id, store.id));
+    statusPatch = storeTransition(store.status, 'terminate', {
+      reason: body.reason ?? `policy_enforcement:${body.breachKind}`,
+      actorId: auth.sub,
+    });
   } else if (body.step === 'lifted') {
-    await db
-      .update(retailerStores)
-      .set({ status: 'active' })
-      .where(eq(retailerStores.id, store.id));
+    // Lifting a warning-step leaves an already-active store untouched; only a
+    // suspension/termination actually needs reversing.
+    if (store.status === 'suspended' || store.status === 'terminated') {
+      statusPatch = storeTransition(store.status, 'reinstate');
+    }
   }
+
+  const id = newId('enf');
+  await db.transaction(async (tx) => {
+    await tx.insert(policyEnforcementActions).values({
+      id,
+      storeId: store.id,
+      step: body.step,
+      breachKind: body.breachKind,
+      metric: body.metric ?? null,
+      actedByAccountId: auth.sub,
+      reason: body.reason ?? null,
+      liftsActionId: body.liftsActionId ?? null,
+    });
+    if (statusPatch) {
+      await tx.update(retailerStores).set(statusPatch).where(eq(retailerStores.id, store.id));
+    }
+  });
 
   // If the breach is kyc_overdue and the step isn't 'lifted', open or refresh
   // a KYC re-verification cycle so the retailer sees the banner + page.

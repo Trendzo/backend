@@ -34,6 +34,14 @@ const adminStoreMgmtRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => ctrl.getStore({ id: req.params.id }),
   );
 
+  // Appeal threads awaiting an admin reply — feeds the Pending Requests desk.
+  // Static segment, registered alongside '/:id' (find-my-way prefers static matches).
+  app.get(
+    '/appeals/pending',
+    { preHandler: requirePermission('store_management.view') },
+    async () => ctrl.listPendingAppeals(),
+  );
+
   // Suspend/terminate appeal thread (admin side).
   app.get(
     '/:id/appeal',

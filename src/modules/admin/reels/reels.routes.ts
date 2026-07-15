@@ -13,6 +13,12 @@ const adminReelsRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => ctrl.listReels({ query: req.query }),
   );
 
+  app.get(
+    '/:id',
+    { preHandler: requirePermission('community.moderate'), schema: { params: IdParam } },
+    async (req) => ctrl.getReelDetail({ id: req.params.id }),
+  );
+
   app.post(
     '/:id/takedown',
     {

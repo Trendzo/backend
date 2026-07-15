@@ -72,7 +72,6 @@ export async function getMe(input: { auth: Auth }) {
       phone: retailer.phone,
       gstin: retailer.gstin,
       status: retailer.status,
-      permanentSuspend: retailer.permanentSuspend,
       suspendReason: retailer.suspendReason,
     },
     store: store
@@ -89,7 +88,6 @@ export async function getMe(input: { auth: Auth }) {
           platformFeeBp: store.platformFeeBp,
           payoutCadenceDays: store.payoutCadenceDays,
           posBillingEnabled: store.posBillingEnabled,
-          permanentSuspend: store.permanentSuspend,
           suspendReason: store.suspendReason,
           pauseReason: store.pauseReason,
           contactPhone: store.contactPhone ?? null,

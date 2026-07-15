@@ -7,6 +7,7 @@ import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import { retailerAccounts, retailerStores } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
+import { storeTransition } from '@/shared/lifecycle/transitions.js';
 import { assertTermsAcceptedForGoLive } from '@/shared/terms.js';
 import { ok } from '@/shared/http/envelope.js';
 import type { ApproveBody, ListQuery, RejectBody } from './stores.validators.js';
@@ -30,7 +31,6 @@ export async function listStores(input: { query: z.infer<typeof ListQuery> }) {
       lat: retailerStores.lat,
       lng: retailerStores.lng,
       status: retailerStores.status,
-      permanentSuspend: retailerStores.permanentSuspend,
       suspendReason: retailerStores.suspendReason,
       pauseReason: retailerStores.pauseReason,
       pauseVisibility: retailerStores.pauseVisibility,
@@ -118,12 +118,11 @@ export async function rejectStore(input: {
     where: eq(retailerStores.id, input.id),
   });
   if (!store) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
-  if (store.status === 'terminated') {
-    throw new AppError(409, ErrorCode.InvalidState, 'Store is already terminated');
-  }
+  // Central state machine — also records the rejection reason, which this path dropped.
+  const patch = storeTransition(store.status, 'terminate', { reason: input.body.reason });
   const [updated] = await db
     .update(retailerStores)
-    .set({ status: 'terminated' })
+    .set(patch)
     .where(eq(retailerStores.id, store.id))
     .returning();
   input.log.info({ storeId: store.id, reason: input.body.reason }, 'store rejected');

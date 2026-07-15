@@ -14,6 +14,14 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 
 const MODEL = 'gemini-2.5-flash-image';
 
+/**
+ * All catalog mockups are generated 3:4 portrait (Instagram feed format).
+ * Must be set via the API's imageConfig — prompt-text hints alone are ignored
+ * when reference images are attached (the model then mirrors the reference
+ * photo's aspect ratio, e.g. 9:16 phone shots).
+ */
+export const CATALOG_IMAGE_ASPECT_RATIO = '3:4';
+
 let client: GoogleGenAI | null = null;
 function getClient(): GoogleGenAI {
   if (!env.GEMINI_API_KEY) {
@@ -104,6 +112,7 @@ export async function generateCatalogImage(input: GenerateInput): Promise<Genera
     response = await ai.models.generateContent({
       model: MODEL,
       contents: [{ role: 'user', parts }],
+      config: { imageConfig: { aspectRatio: CATALOG_IMAGE_ASPECT_RATIO } },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown Gemini error';

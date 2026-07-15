@@ -12,7 +12,7 @@ export const retailerAccountStatus = pgEnum('retailer_account_status', [
   'active',
   'terminated', // account permanently dead (rejection, admin termination, staff revoke)
   'closed', // owner-requested closure, admin-approved. REVERSIBLE: records kept, store
-  // suspended (not permanentSuspend); the owner/manager can submit a reopen request.
+  // suspended; the owner/manager can submit a reopen request.
 ]);
 export const retailerSubRole = pgEnum('retailer_sub_role', [
   'owner',

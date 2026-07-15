@@ -181,7 +181,7 @@ Body: `{ reason: 1–500, mustReuploadDocKinds?: <applicationDocumentKind>[] }`.
 - `POST /admin/retailers/:id/reject` — `{ reason: 1–500 }` → account `terminated`.
 - `POST /admin/retailers/:id/suspend` — `{ reason: 1–500 }` → store `suspended` (account must be `active`).
 - `POST /admin/retailers/:id/unsuspend` — `{ reason?: ≤500 }` → store `active`.
-- `POST /admin/retailers/:id/terminate` · perm `retailer.terminate` — `{ reason: 1–500 }` → account+store `terminated`, `permanentSuspend=true`.
+- `POST /admin/retailers/:id/terminate` · perm `retailer.terminate` — `{ reason: 1–500 }` → account+store `terminated` (status is the single source of truth; reversible via `/unban`).
 - `GET /admin/retailers?status=&search=&limit=&cursor=` — status filter incl. `approved_no_store` (active account, no store).
 
 Perms: `super_admin` = all; `ops_admin` = approve/reject/suspend but **not** terminate; `support` = read-only.
@@ -243,10 +243,10 @@ Admin (`/admin/compliance`, requireAuth('admin')):
 ## GET /retailer/me  · requireAuth('retailer')  — primary onboarding-state poll
 ```json
 { "success": true, "data": {
-  "retailer": { "id","email","legalName","phone","gstin","status","permanentSuspend","suspendReason" },
+  "retailer": { "id","email","legalName","phone","gstin","status","suspendReason" },
   "store": null | { "id","legalName","gstin","gstScheme","address","stateCode","lat","lng",
                     "status","platformFeeBp","payoutCadenceDays","posBillingEnabled",
-                    "permanentSuspend","suspendReason","pauseReason","contactPhone","managerName","galleryImageUrls" }
+                    "suspendReason","pauseReason","contactPhone","managerName","galleryImageUrls" }
 }}
 ```
 `store` is `null` until a store exists. Drive the onboarding UI off `retailer.status` + `store?.status`.

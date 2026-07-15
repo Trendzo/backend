@@ -83,7 +83,7 @@ export function requireAuth(...allowedKinds: TokenKind[]): preHandlerAsyncHookHa
       // individual controller needs its own terminated-check.
       const row = await db.query.retailerAccounts.findFirst({
         where: eq(retailerAccounts.id, payload.sub),
-        columns: { status: true, permanentSuspend: true, suspendReason: true },
+        columns: { status: true, suspendReason: true },
       });
       if (!row) {
         throw AppError.unauthorized('Account not found');
@@ -91,7 +91,9 @@ export function requireAuth(...allowedKinds: TokenKind[]): preHandlerAsyncHookHa
       if (row.suspendReason === 'account_deleted_by_user') {
         throw AppError.unauthorized('This account has been deleted');
       }
-      const locked = row.status === 'terminated' || row.permanentSuspend;
+      // `status` is the single source of truth — 'terminated' is the only locked state
+      // ('closed' keeps full access so the owner can file a reopen request).
+      const locked = row.status === 'terminated';
       // A terminated/locked retailer may still POST to their appeal thread — that's
       // their only in-band channel to contest the action. Everything else stays read-only.
       const path = req.url.split('?')[0] ?? '';

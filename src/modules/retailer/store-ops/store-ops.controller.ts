@@ -17,6 +17,7 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { recordAudit } from '@/shared/audit.js';
 import { assertCycleAcceptsUploads, upsertKycDocument } from '@/shared/kyc/upload.js';
+import { storeTransition } from '@/shared/lifecycle/transitions.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
   HolidayCreateBody,
@@ -216,18 +217,16 @@ export async function pauseStore(input: {
 }) {
   const { auth, body, requestId } = input;
   const store = await loadStore(auth.sub);
-  if (store.status !== 'active') {
-    throw new AppError(409, ErrorCode.InvalidState, 'Store is not active');
-  }
   const before = { status: store.status };
   await db
     .update(retailerStores)
-    .set({
-      status: 'paused',
-      pauseVisibility: body.visibility as 'visible' | 'hidden',
-      pauseReason: body.reason ?? null,
-      pauseUntil: body.pauseUntil ? new Date(body.pauseUntil) : null,
-    })
+    .set(
+      storeTransition(store.status, 'pause', {
+        reason: body.reason ?? null,
+        visibility: body.visibility as 'visible' | 'hidden',
+        until: body.pauseUntil ? new Date(body.pauseUntil) : null,
+      }),
+    )
     .where(eq(retailerStores.id, store.id));
   await recordAudit({
     actor: auth,
@@ -244,17 +243,19 @@ export async function pauseStore(input: {
 export async function resumeStore(input: { auth: Auth; requestId: string }) {
   const { auth, requestId } = input;
   const store = await loadStore(auth.sub);
-  if (store.status !== 'paused') {
-    throw new AppError(409, ErrorCode.InvalidState, 'Store is not paused');
+  // The central machine rejects resuming a non-paused store — including a KYC
+  // auto-pause? No: that IS a pause, and the retailer resuming it would dodge the
+  // enforcement, so keep the KYC pause admin-lifted only.
+  if (store.pauseReason === 'kyc_overdue') {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      'Your store was paused for overdue KYC — it resumes automatically once KYC is approved',
+    );
   }
   await db
     .update(retailerStores)
-    .set({
-      status: 'active',
-      pauseVisibility: null,
-      pauseReason: null,
-      pauseUntil: null,
-    })
+    .set(storeTransition(store.status, 'resume'))
     .where(eq(retailerStores.id, store.id));
   await recordAudit({
     actor: auth,

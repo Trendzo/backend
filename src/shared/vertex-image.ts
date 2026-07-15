@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { env } from '@/config/env.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import {
+  CATALOG_IMAGE_ASPECT_RATIO,
   composePrompt,
   fetchReferenceImage,
   type GenerateInput,
@@ -60,6 +61,7 @@ export async function generateCatalogImageViaVertex(input: GenerateInput): Promi
     response = await ai.models.generateContent({
       model: MODEL,
       contents: [{ role: 'user', parts }],
+      config: { imageConfig: { aspectRatio: CATALOG_IMAGE_ASPECT_RATIO } },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown Vertex error';

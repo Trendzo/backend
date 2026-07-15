@@ -92,13 +92,34 @@ export async function listBrands(input: { query: z.infer<typeof BrandsQuery> }) 
  * return byte-identical product card payloads (variants with availability, groups,
  * brand, category). Newest-first; callers needing membership order re-sort after.
  */
+/**
+ * A listing is only browsable while its STORE is: 'active', or 'paused' with
+ * visibility 'visible' (paused-visible stays listed; orders are still blocked at
+ * quote). Suspended, terminated, and paused-hidden stores' listings disappear from
+ * every consumer surface. Previously the catalog had NO store-status condition at
+ * all — a terminated store's products stayed fully browsable and shoppers only hit
+ * a 409 at checkout.
+ */
+// NOTE: the inner table is written as raw SQL (alias `rs`) on purpose — drizzle's
+// relational query builder only rewrites column refs belonging to the ROOT table
+// (productListings); interpolating another table's column objects here produces
+// broken bindings.
+const storeIsBrowsableSql = sql`EXISTS (
+  SELECT 1 FROM retailer_stores rs
+  WHERE rs.id = ${productListings.storeId}
+    AND (rs.status = 'active'
+      OR (rs.status = 'paused' AND rs.pause_visibility IS DISTINCT FROM 'hidden'))
+)`;
+
 function queryListings(opts: {
   where?: SQL | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
 }) {
   return db.query.productListings.findMany({
-    ...(opts.where && { where: opts.where }),
+    // Store browsability applies to EVERY consumer listing read — browse, product
+    // detail, collections, similar — so it is fused here, not at each call site.
+    where: opts.where ? and(opts.where, storeIsBrowsableSql) : storeIsBrowsableSql,
     orderBy: (t, { desc }) => [desc(t.createdAt)],
     ...(opts.limit !== undefined && { limit: opts.limit }),
     ...(opts.offset !== undefined && { offset: opts.offset }),
@@ -225,8 +246,14 @@ export async function listProductReviews(
   id: string,
   query: z.infer<typeof ProductReviewsQuery>,
 ) {
+  // Same browsability rule as the product itself — otherwise reviews stay publicly
+  // readable for a product whose detail endpoint 404s (suspended/terminated store).
   const listing = await db.query.productListings.findFirst({
-    where: and(eq(productListings.id, id), eq(productListings.status, 'active')),
+    where: and(
+      eq(productListings.id, id),
+      eq(productListings.status, 'active'),
+      storeIsBrowsableSql,
+    ),
     columns: { id: true },
   });
   if (!listing) {
@@ -269,8 +296,9 @@ export async function listProductReviews(
 export async function listFacets(input: { query: z.infer<typeof FacetsQuery> }) {
   const { query } = input;
 
-  // Base scope shared by every facet and the total.
-  const base: SQL[] = [eq(productListings.status, 'active' as const)];
+  // Base scope shared by every facet and the total. Includes store browsability so
+  // facet counts agree with what the browse grid actually shows.
+  const base: SQL[] = [eq(productListings.status, 'active' as const), storeIsBrowsableSql];
   if (query.storeId) base.push(eq(productListings.storeId, query.storeId));
   if (query.search) base.push(ilike(productListings.name, `%${query.search}%`));
 
@@ -367,6 +395,9 @@ export async function listCollections(input: { query: z.infer<typeof Collections
             and(
               eq(productListings.id, collectionListings.listingId),
               eq(productListings.status, 'active'),
+              // Card stats must agree with the detail page: listings from
+              // non-browsable stores are excluded from counts + prices too.
+              storeIsBrowsableSql,
             ),
           )
           .innerJoin(

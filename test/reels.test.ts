@@ -17,8 +17,21 @@ vi.mock('@/shared/cloudinary.js', () => ({
 }));
 
 import { db, pool } from '@/db/client.js';
-import { adminAccounts, consumerBans, consumers } from '@/db/schema/index.js';
+import {
+  adminAccounts,
+  categories,
+  consumerBans,
+  consumers,
+  orderGroups,
+  orderItems,
+  orders,
+  productListings,
+  retailerStores,
+  variantGroups,
+  variants,
+} from '@/db/schema/index.js';
 import { signAccessToken } from '@/shared/auth/jwt.js';
+import { uploadToCloudinary } from '@/shared/cloudinary.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { buildApp } from '@/app.js';
 
@@ -32,6 +45,9 @@ let adminId: string;
 let ctoken: string;
 let otherToken: string;
 let atoken: string;
+// A listing both test consumers have purchased (kept), and one nobody purchased.
+let purchasedListingId: string;
+let unpurchasedListingId: string;
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const json = (res: InjectRes) => JSON.parse(res.body);
@@ -44,8 +60,116 @@ const reelPayload = (over: Record<string, unknown> = {}) => ({
   thumbnailUrl: 'https://cdn.example/v.jpg',
   durationSec: 10,
   caption: 'test reel',
+  productId: purchasedListingId,
   ...over,
 });
+
+/** Insert a delivered+kept order line for `cid` covering `listingId`. */
+async function giveKeptOrder(cid: string, storeId: string, listingId: string, variantId: string) {
+  const groupId = newId(IdPrefix.OrderGroup);
+  await db.insert(orderGroups).values({ id: groupId, consumerId: cid });
+  const orderId = newId(IdPrefix.Order);
+  await db.insert(orders).values({
+    id: orderId,
+    groupId,
+    consumerId: cid,
+    storeId,
+    idempotencyKey: newId(IdPrefix.Order),
+    deliveryMethod: 'pickup',
+    paymentMethod: 'upi',
+    paymentMethodLabel: 'UPI',
+    status: 'delivered',
+    deliveredAt: new Date(),
+    consumerNameSnap: 'Test',
+    consumerEmailSnap: 't@test.local',
+    consumerPhoneSnap: '+910000000000',
+    storeNameSnap: 'Reel Test Store',
+    storeAddressSnap: '1 Test Rd',
+    storeGstinSnap: '27AAFCK1234M1Z5',
+    storeStateCodeSnap: 'MH',
+    itemsSubtotalPaise: 50000,
+    taxPaise: 0,
+    taxSplitKind: 'intra_state',
+    grandTotalPaise: 50000,
+    platformFeeBpSnap: 200,
+  });
+  await db.insert(orderItems).values({
+    id: newId(IdPrefix.OrderItem),
+    orderId,
+    listingId,
+    variantId,
+    listingNameSnap: 'Reel Tee',
+    brandSnap: 'Brand',
+    categorySnap: 'Reel Category',
+    attributesLabelSnap: 'One size',
+    listingPolicySnap: 'return',
+    qty: 1,
+    unitPricePaise: 50000,
+    lineSubtotalPaise: 50000,
+    gstRateBp: 0,
+    gstAllocPaise: 0,
+    netLinePaise: 50000,
+    outcome: 'delivered_kept',
+  });
+}
+
+/** Store → category → two listings (+variant); both consumers keep-purchase the first one. */
+async function seedCatalogAndPurchases() {
+  const storeId = newId(IdPrefix.Store);
+  await db.insert(retailerStores).values({
+    id: storeId,
+    legalEntityId: `LE_${storeId}`,
+    legalName: 'Reel Test Store',
+    gstin: '27AAFCK1234M1Z5',
+    address: '1 Test Rd, Mumbai, MH',
+    stateCode: 'MH',
+    lat: 19.06,
+    lng: 72.83,
+    status: 'active',
+    platformFeeBp: 200,
+  });
+  const categoryId = newId(IdPrefix.Category);
+  await db.insert(categories).values({
+    id: categoryId,
+    slug: `reel-cat-${categoryId.slice(-6)}`,
+    label: 'Reel Category',
+    gender: 'unisex',
+  });
+  const mkListing = async (name: string) => {
+    const listingId = newId(IdPrefix.Listing);
+    await db.insert(productListings).values({
+      id: listingId,
+      storeId,
+      categoryId,
+      name,
+      gender: 'unisex',
+      listingPolicy: 'return',
+      status: 'active',
+      variantMode: 'single',
+    });
+    const groupId = newId(IdPrefix.VariantGroup);
+    await db.insert(variantGroups).values({ id: groupId, listingId, storeId, name: 'Default', isDefault: true });
+    const variantId = newId(IdPrefix.Variant);
+    await db.insert(variants).values({
+      id: variantId,
+      listingId,
+      storeId,
+      groupId,
+      attributes: {},
+      attributesLabel: 'One size',
+      stock: 1000,
+      pricePaise: 50000,
+    });
+    return { listingId, variantId };
+  };
+
+  const purchased = await mkListing('Reel Tee');
+  const unpurchased = await mkListing('Unowned Tee');
+  await giveKeptOrder(consumerId, storeId, purchased.listingId, purchased.variantId);
+  await giveKeptOrder(otherConsumerId, storeId, purchased.listingId, purchased.variantId);
+  purchasedListingId = purchased.listingId;
+  unpurchasedListingId = unpurchased.listingId;
+}
 
 async function createReel(token = ctoken, over: Record<string, unknown> = {}): Promise<string> {
   const res = await app.inject({
@@ -87,6 +211,8 @@ beforeAll(async () => {
   ctoken = signAccessToken({ sub: consumerId, kind: 'consumer' });
   otherToken = signAccessToken({ sub: otherConsumerId, kind: 'consumer' });
   atoken = signAccessToken({ sub: adminId, kind: 'admin', subRole: 'super_admin' });
+
+  await seedCatalogAndPurchases();
 });
 
 afterAll(async () => {
@@ -109,6 +235,59 @@ describe('reels — auth & validation', () => {
       payload: { caption: 'no video url' },
     });
     expect(res.statusCode).toBe(422);
+  });
+
+  it('422s when productId is missing (a reel must tag a product)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/reels',
+      headers: auth(ctoken),
+      payload: reelPayload({ productId: undefined }),
+    });
+    expect(res.statusCode).toBe(422);
+  });
+
+  it('422s when durationSec exceeds the 30s cap', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/reels',
+      headers: auth(ctoken),
+      payload: reelPayload({ durationSec: 45 }),
+    });
+    expect(res.statusCode).toBe(422);
+  });
+});
+
+describe('reels — purchase gating', () => {
+  it('403s when the tagged product was not purchased', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/reels',
+      headers: auth(ctoken),
+      payload: reelPayload({ productId: unpurchasedListingId }),
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('404s when the tagged product does not exist', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/reels',
+      headers: auth(ctoken),
+      payload: reelPayload({ productId: 'lst_does_not_exist' }),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('creates a reel for a purchased product and echoes the product chip', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/reels',
+      headers: auth(ctoken),
+      payload: reelPayload(),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(data(res).product).toMatchObject({ id: purchasedListingId });
   });
 });
 
@@ -179,7 +358,7 @@ describe('reels — comments', () => {
       method: 'POST',
       url: `/api/v1/consumer/reels/${id}/comments`,
       headers: auth(ctoken),
-      payload: { body: 'nice fit 🔥' },
+      payload: { body: 'nice fit!' },
     });
     expect(add.statusCode).toBe(200);
     const commentId = data(add).id as string;
@@ -270,6 +449,27 @@ describe('reels — media upload (cloudinary mocked)', () => {
     });
     expect(res.statusCode).toBe(422);
   });
+
+  it('rejects a clip longer than 30s (Cloudinary duration authoritative)', async () => {
+    vi.mocked(uploadToCloudinary).mockResolvedValueOnce({
+      url: 'https://cdn.example/long.mp4',
+      publicId: 'closetx/reels/long',
+      bytes: 4096,
+      width: 720,
+      height: 1280,
+      format: 'mp4',
+      resourceType: 'video',
+      duration: 45,
+    });
+    const { body, contentType } = multipart('video/mp4');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/reels/media',
+      headers: { ...auth(ctoken), 'content-type': contentType },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(422);
+  });
 });
 
 describe('reels — moderation', () => {
@@ -296,6 +496,25 @@ describe('reels — moderation', () => {
 
     const feed2 = await app.inject({ method: 'GET', url: '/api/v1/consumer/reels?limit=50', headers: auth(ctoken) });
     expect(data(feed2).items.map((r: { id: string }) => r.id)).toContain(id);
+  });
+
+  it('admin reel detail returns the reel plus all comments', async () => {
+    const id = await createReel();
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/consumer/reels/${id}/comments`,
+      headers: auth(ctoken),
+      payload: { body: 'admin detail comment' },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/reels/${id}`,
+      headers: auth(atoken),
+    });
+    expect(res.statusCode).toBe(200);
+    const d = data(res);
+    expect(d.id).toBe(id);
+    expect(d.comments.map((c: { body: string }) => c.body)).toContain('admin detail comment');
   });
 
   it('requires admin auth for moderation routes', async () => {

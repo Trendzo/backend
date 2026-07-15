@@ -1,0 +1,21 @@
+-- Drop the redundant `permanent_suspend` boolean from retailer_stores + retailer_accounts.
+--
+-- `status` is now the single source of truth ('suspended' = reversible admin block,
+-- 'terminated' = relationship ended). The boolean duplicated that fact and the two
+-- drifted (reinstate checked status, button visibility checked the boolean; reject/
+-- policy/staff paths wrote 'terminated' without the boolean, making those accounts
+-- un-reinstatable). All transitions now flow through shared/lifecycle/transitions.ts.
+--
+-- DEPLOY ORDER (opposite of the usual add-column case): deploy the NEW backend code
+-- FIRST (it no longer references the column; the column sitting unused is harmless),
+-- THEN run this migration. Running this against a server still on the OLD build would
+-- break every query that selects the column.
+--
+-- Deliberately NO status reconcile before the drop. Prod was verified consistent
+-- (every permanent_suspend=true row is already status='terminated'), and a reconcile
+-- keyed on the stale boolean is actively DANGEROUS in the code-first deploy window:
+-- new code that reinstates a store cannot clear the (invisible) boolean, so a
+-- "defensive" UPDATE would re-terminate the freshly reinstated row. The column is
+-- dropped as-is; status already tells the truth.
+ALTER TABLE "retailer_stores" DROP COLUMN IF EXISTS "permanent_suspend";--> statement-breakpoint
+ALTER TABLE "retailer_accounts" DROP COLUMN IF EXISTS "permanent_suspend";

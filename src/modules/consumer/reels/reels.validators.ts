@@ -20,12 +20,15 @@ export const CreateReelBody = z.object({
   videoUrl: z.string().url(),
   videoPublicId: z.string().min(1),
   thumbnailUrl: z.string().url(),
-  durationSec: z.coerce.number().int().positive().max(180).optional(),
+  // 30s hard cap — the media upload already rejects longer clips against Cloudinary's
+  // measured duration; this is the matching guard on the client-reported value.
+  durationSec: z.coerce.number().int().positive().max(30).optional(),
   width: z.coerce.number().int().positive().optional(),
   height: z.coerce.number().int().positive().optional(),
   bytes: z.coerce.number().int().positive().optional(),
   caption: z.string().trim().max(2200).optional(),
-  productId: z.string().optional(),
+  // Required — a reel is always about a specific product the consumer purchased.
+  productId: z.string().min(1),
 });
 
 export const CreateCommentBody = z.object({

@@ -48,11 +48,10 @@ export const retailerStores = pgTable(
     pauseReason: text('pause_reason'),
     pauseUntil: timestamp('pause_until', { withTimezone: true, mode: 'date' }),
 
-    // Admin suspension fields. `permanentSuspend=true` means a permanent ban;
-    // unban clears it back to false. `suspendReason`/`suspendedAt`/`suspendedByAccountId`
-    // are populated whenever status flips to 'suspended' or 'terminated' by admin
-    // and cleared on unsuspend/unban.
-    permanentSuspend: boolean('permanent_suspend').notNull().default(false),
+    // Suspension attribution. `status` alone distinguishes 'suspended' (reversible
+    // admin block) from 'terminated' (relationship ended); these fields record why /
+    // when / by whom, and are cleared whenever the store returns to 'active'. All
+    // transitions flow through shared/lifecycle/transitions.ts.
     suspendReason: text('suspend_reason'),
     suspendedAt: timestamp('suspended_at', { withTimezone: true, mode: 'date' }),
     suspendedByAccountId: text('suspended_by_account_id'),
@@ -129,9 +128,10 @@ export const retailerAccounts = pgTable(
     gstin: text('gstin').notNull(), // captured at signup (KYC auto-accepted in MVP)
     subRole: retailerSubRole('sub_role').notNull().default('owner'),
     status: retailerAccountStatus('status').notNull().default('pending_approval'),
-    // Admin ban fields. Permanent ban = `permanentSuspend=true` + status='terminated'.
-    // Temporary suspension uses status='terminated' + permanentSuspend=false. Unban clears both.
-    permanentSuspend: boolean('permanent_suspend').notNull().default(false),
+    // Termination/closure attribution. Account lifecycle is carried entirely by
+    // `status` (pending_approval | active | terminated | closed); these fields record
+    // why / when / by whom and are cleared on reinstate/reopen. All transitions flow
+    // through shared/lifecycle/transitions.ts.
     suspendReason: text('suspend_reason'),
     suspendedAt: timestamp('suspended_at', { withTimezone: true, mode: 'date' }),
     suspendedByAccountId: text('suspended_by_account_id'),

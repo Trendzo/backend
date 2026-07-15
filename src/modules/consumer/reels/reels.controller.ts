@@ -11,6 +11,8 @@ import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
   consumers,
+  orderItems,
+  orders,
   productListings,
   reelComments,
   reelLikes,
@@ -38,6 +40,39 @@ type Auth = AccessTokenPayload;
 
 const REEL_MAX_BYTES = 100 * 1024 * 1024; // per-request override of the 25 MB global cap
 const REEL_VIDEO_MIMES = new Set(['video/mp4', 'video/quicktime', 'video/webm']);
+// Reels are "short" by product rule — hard-capped at 30s against Cloudinary's authoritative
+// duration (the client-reported durationSec is only advisory and can't be trusted).
+const REEL_MAX_DURATION_SEC = 30;
+
+// Order-item outcomes where the consumer ends up keeping the product — the "purchased"
+// signal that gates who may post a reel about a given listing. Excludes returned/refused/
+// refunded outcomes and the pre-delivery 'pending_delivery' state.
+const KEPT_OUTCOMES = [
+  'delivered_kept',
+  'at_door_kept',
+  'at_door_return_rejected',
+  'held_collected_at_counter',
+  'held_redelivered',
+  'dispute_resolved_no_refund',
+  'dispute_resolved_fresh_delivery',
+] as const;
+
+/** True if the consumer has an order line for this listing that they received and kept. */
+async function hasPurchasedProduct(consumerId: string, productId: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: orderItems.id })
+    .from(orderItems)
+    .innerJoin(orders, eq(orderItems.orderId, orders.id))
+    .where(
+      and(
+        eq(orders.consumerId, consumerId),
+        eq(orderItems.listingId, productId),
+        inArray(orderItems.outcome, [...KEPT_OUTCOMES]),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
 
 // ── shaping ──
 
@@ -175,6 +210,21 @@ export async function uploadReelMedia(req: FastifyRequest) {
     folder: 'closetx/reels',
     resourceType: 'video',
   });
+
+  // Enforce the 30s cap against Cloudinary's measured duration (authoritative). Reject and
+  // clean up the just-uploaded asset so an over-long clip never leaves an orphan behind.
+  if (result.duration != null && Math.round(result.duration) > REEL_MAX_DURATION_SEC) {
+    const measured = Math.round(result.duration);
+    try {
+      await deleteFromCloudinary(result.publicId, 'video');
+    } catch {
+      /* swallow — orphaned asset is acceptable, the validation error is what matters */
+    }
+    throw AppError.validation(
+      `Reel too long — max ${REEL_MAX_DURATION_SEC}s, got ${measured}s. Trim it and try again.`,
+    );
+  }
+
   const thumbnailUrl = buildVideoThumbnailUrl(result.publicId);
 
   return ok({
@@ -195,12 +245,19 @@ export async function createReel(input: { auth: Auth; body: z.infer<typeof Creat
   if (await isConsumerBannedFrom(auth.sub, 'reels')) {
     throw new AppError(403, ErrorCode.ConsumerBanned, 'You are banned from posting reels');
   }
-  if (body.productId) {
-    const listing = await db.query.productListings.findFirst({
-      where: eq(productListings.id, body.productId),
-      columns: { id: true },
-    });
-    if (!listing) throw new AppError(404, ErrorCode.NotFound, 'Tagged product not found');
+  // A reel is always tied to a product the consumer actually purchased — verify the listing
+  // exists and that this consumer has a kept order line for it.
+  const listing = await db.query.productListings.findFirst({
+    where: eq(productListings.id, body.productId),
+    columns: { id: true },
+  });
+  if (!listing) throw new AppError(404, ErrorCode.NotFound, 'Tagged product not found');
+  if (!(await hasPurchasedProduct(auth.sub, body.productId))) {
+    throw new AppError(
+      403,
+      ErrorCode.Forbidden,
+      'You can only post a reel for a product you have purchased',
+    );
   }
   const id = newId(IdPrefix.Reel);
   await db.insert(reels).values({

@@ -9,6 +9,8 @@ import { retailerAccounts, retailerStores } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { recordAudit } from '@/shared/audit.js';
+import { accountTransition, storeTransition } from '@/shared/lifecycle/transitions.js';
+import { terminateRetailerCascade } from '@/shared/lifecycle/retailer-cascade.js';
 import { notify } from '@/shared/notify.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
@@ -29,6 +31,8 @@ export async function listRetailers(input: { query: z.infer<typeof ListQuery> })
     conditions.push(eq(retailerAccounts.status, 'pending_approval'));
   } else if (status === 'terminated') {
     conditions.push(eq(retailerAccounts.status, 'terminated'));
+  } else if (status === 'closed') {
+    conditions.push(eq(retailerAccounts.status, 'closed'));
   } else if (status === 'approved_no_store') {
     conditions.push(eq(retailerAccounts.status, 'active'));
     conditions.push(isNull(retailerAccounts.storeId));
@@ -102,12 +106,12 @@ export async function rejectRetailer(input: {
     where: eq(retailerAccounts.id, input.id),
   });
   if (!retailer) throw new AppError(404, ErrorCode.NotFound, 'Retailer not found');
-  if (retailer.status === 'terminated') {
-    throw new AppError(409, ErrorCode.InvalidState, 'Retailer is already terminated');
-  }
+  // Central state machine: throws 409 when already terminated, and records WHY —
+  // rejected accounts used to carry a bare status with no reason attribution.
+  const patch = accountTransition(retailer.status, 'terminate', { reason: input.body.reason });
   const [updated] = await db
     .update(retailerAccounts)
-    .set({ status: 'terminated' })
+    .set(patch)
     .where(eq(retailerAccounts.id, retailer.id))
     .returning();
   const { passwordHash: _ph, ...safe } = updated!;
@@ -137,12 +141,12 @@ export async function suspendRetailer(input: {
   const currentStore = await db.query.retailerStores.findFirst({
     where: eq(retailerStores.id, retailer.storeId),
   });
-  if (currentStore?.status === 'suspended') {
-    throw new AppError(409, ErrorCode.InvalidState, 'Store is already suspended');
-  }
+  if (!currentStore) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
+  // Central state machine — also records reason/timestamp, which this path used to drop.
+  const patch = storeTransition(currentStore.status, 'suspend', { reason: input.body.reason });
   const [updatedStore] = await db
     .update(retailerStores)
-    .set({ status: 'suspended' })
+    .set(patch)
     .where(eq(retailerStores.id, retailer.storeId))
     .returning();
   input.log.info({ retailerId: retailer.id, reason: input.body.reason }, 'retailer store suspended');
@@ -165,12 +169,11 @@ export async function unsuspendRetailer(input: {
   const store = await db.query.retailerStores.findFirst({
     where: eq(retailerStores.id, retailer.storeId),
   });
-  if (store?.status !== 'suspended') {
-    throw new AppError(409, ErrorCode.InvalidState, 'Store is not currently suspended');
-  }
+  if (!store) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
+  const patch = storeTransition(store.status, 'unsuspend');
   const [updatedStore] = await db
     .update(retailerStores)
-    .set({ status: 'active' })
+    .set(patch)
     .where(eq(retailerStores.id, retailer.storeId))
     .returning();
   const body = input.body as { reason?: string } | undefined;
@@ -189,33 +192,11 @@ export async function terminateRetailer(input: {
     where: eq(retailerAccounts.id, input.id),
   });
   if (!retailer) throw new AppError(404, ErrorCode.NotFound, 'Retailer not found');
-  if (retailer.status === 'terminated') {
-    throw new AppError(409, ErrorCode.InvalidState, 'Retailer is already terminated');
-  }
-  const now = new Date();
-  await db.transaction(async (tx) => {
-    await tx
-      .update(retailerAccounts)
-      .set({
-        status: 'terminated',
-        permanentSuspend: true,
-        suspendReason: input.body.reason,
-        suspendedAt: now,
-        suspendedByAccountId: input.auth.sub,
-      })
-      .where(eq(retailerAccounts.id, retailer.id));
-    // Cascade to EVERY store this retailer owns (matched by legalEntityId), not
-    // just the single linked one — terminating the account kills all its stores.
-    await tx
-      .update(retailerStores)
-      .set({
-        status: 'terminated',
-        permanentSuspend: true,
-        suspendReason: input.body.reason,
-        suspendedAt: now,
-        suspendedByAccountId: input.auth.sub,
-      })
-      .where(eq(retailerStores.legalEntityId, retailer.id));
+  // Same implementation as /admin/retailers/:id/ban — the two endpoints used to carry
+  // duplicate copies of this transaction, which is how they drifted apart.
+  await terminateRetailerCascade(db, retailer.id, {
+    reason: input.body.reason,
+    actorId: input.auth.sub,
   });
   await recordAudit({
     actor: input.auth,
@@ -223,7 +204,7 @@ export async function terminateRetailer(input: {
     resourceKind: 'retailer_account',
     resourceId: retailer.id,
     before: { status: retailer.status },
-    after: { status: 'terminated', permanentSuspend: true },
+    after: { status: 'terminated' },
     note: input.body.reason,
     requestId: input.requestId,
   });

@@ -407,6 +407,20 @@
 			"when": 1784900000000,
 			"tag": "0057_clarification_and_appeals",
 			"breakpoints": true
+		},
+		{
+			"idx": 58,
+			"version": "7",
+			"when": 1785000000000,
+			"tag": "0058_reels",
+			"breakpoints": true
+		},
+		{
+			"idx": 59,
+			"version": "7",
+			"when": 1785100000000,
+			"tag": "0059_drop_permanent_suspend",
+			"breakpoints": true
 		}
 	]
 }

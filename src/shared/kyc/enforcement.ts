@@ -12,6 +12,7 @@ import { eq } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
 import { retailerStores } from '@/db/schema/index.js';
 import { recordAudit, type AuditParams } from '@/shared/audit.js';
+import { storeTransition } from '@/shared/lifecycle/transitions.js';
 import { notifyStoreAccounts } from '@/shared/notify-store.js';
 
 /** Marker written to `retailer_stores.pause_reason` by the KYC auto-pause. */
@@ -33,13 +34,13 @@ export async function pauseStoreForKyc(database: typeof Db, storeId: string): Pr
 
   await database
     .update(retailerStores)
-    .set({
-      status: 'paused',
-      pauseReason: KYC_PAUSE_REASON,
+    .set(
       // Stay listed, but un-buyable: the store can still fulfil what it already sold.
-      pauseVisibility: 'visible',
-      pauseUntil: null,
-    })
+      storeTransition(store.status, 'pause', {
+        reason: KYC_PAUSE_REASON,
+        visibility: 'visible',
+      }),
+    )
     .where(eq(retailerStores.id, store.id));
 
   await recordAudit({
@@ -81,7 +82,7 @@ export async function resumeStoreAfterKyc(database: typeof Db, storeId: string):
 
   await database
     .update(retailerStores)
-    .set({ status: 'active', pauseReason: null, pauseVisibility: null, pauseUntil: null })
+    .set(storeTransition(store.status, 'resume'))
     .where(eq(retailerStores.id, store.id));
 
   await recordAudit({

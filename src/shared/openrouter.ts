@@ -1,6 +1,10 @@
 import { env } from '@/config/env.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
-import type { GenerateInput, GenerateOutput } from '@/shared/gemini.js';
+import {
+  CATALOG_IMAGE_ASPECT_RATIO,
+  type GenerateInput,
+  type GenerateOutput,
+} from '@/shared/gemini.js';
 
 /**
  * OpenRouter image-generation provider. Uses the OpenAI-compatible
@@ -104,6 +108,10 @@ export async function generateCatalogImageViaOpenRouter(
         // model returns an empty message with content=null because OpenRouter
         // defaults to text-only modality.
         modalities: ['image', 'text'],
+        // Forwarded to the underlying Gemini image model. Without it the model
+        // mirrors the reference photo's aspect ratio (9:16 phone shots) instead
+        // of the 3:4 catalog format — prompt-text hints alone are ignored.
+        image_config: { aspect_ratio: CATALOG_IMAGE_ASPECT_RATIO },
         messages: [{ role: 'user', content }],
       }),
     });

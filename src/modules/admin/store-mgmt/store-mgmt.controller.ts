@@ -1,7 +1,7 @@
 /**
  * Admin store-management: direct create, edit, pause, resume, suspend, ban, unsuspend, unban.
  */
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, inArray } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import { accountAppealMessages, retailerAccounts, retailerStores } from '@/db/schema/index.js';
@@ -11,6 +11,12 @@ import { IdPrefix, newId } from '@/shared/ids.js';
 import { recordAudit } from '@/shared/audit.js';
 import { notify } from '@/shared/notify.js';
 import { notifyStoreAccounts } from '@/shared/notify-store.js';
+import {
+  storeTransition,
+  type PauseOpts,
+  type StoreAction,
+  type SuspendOpts,
+} from '@/shared/lifecycle/transitions.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
   AppealMessageBody,
@@ -178,41 +184,43 @@ export async function editStore(input: {
   return ok(updated);
 }
 
+/** Load the store, run the transition through the central state machine, persist. */
+async function applyStoreAction(
+  storeId: string,
+  action: StoreAction,
+  opts: SuspendOpts & PauseOpts = {},
+): Promise<typeof retailerStores.$inferSelect> {
+  const store = await loadStoreOr404(storeId);
+  const patch = storeTransition(store.status, action, opts);
+  const [updated] = await db
+    .update(retailerStores)
+    .set(patch)
+    .where(eq(retailerStores.id, store.id))
+    .returning();
+  return updated!;
+}
+
 export async function pauseStore(input: {
   auth: Auth;
   id: string;
   body: z.infer<typeof PauseBody>;
   requestId: string;
 }) {
-  const store = await loadStoreOr404(input.id);
-  if (store.status !== 'active') {
-    throw new AppError(
-      409,
-      ErrorCode.InvalidState,
-      `Cannot pause store in '${store.status}' status`,
-    );
-  }
-  const [updated] = await db
-    .update(retailerStores)
-    .set({
-      status: 'paused',
-      pauseReason: input.body.reason,
-      pauseVisibility: input.body.visibility,
-      pauseUntil: input.body.until ? new Date(input.body.until) : null,
-    })
-    .where(eq(retailerStores.id, store.id))
-    .returning();
+  const updated = await applyStoreAction(input.id, 'pause', {
+    reason: input.body.reason,
+    visibility: input.body.visibility,
+    until: input.body.until ? new Date(input.body.until) : null,
+  });
   await recordAudit({
     actor: input.auth,
     action: 'store.pause',
     resourceKind: 'retailer_store',
-    resourceId: store.id,
-    before: { status: store.status },
+    resourceId: updated.id,
     after: { status: 'paused', reason: input.body.reason },
-    impersonatedStoreId: store.id,
+    impersonatedStoreId: updated.id,
     requestId: input.requestId,
   });
-  await notifyOwners(store.id, {
+  await notifyOwners(updated.id, {
     title: 'Store paused by admin',
     body: `Reason: ${input.body.reason}`,
     deepLink: '/retailer/store',
@@ -226,58 +234,24 @@ export async function resumeStore(input: {
   body: z.infer<typeof OptionalReasonBody>;
   requestId: string;
 }) {
-  const store = await loadStoreOr404(input.id);
-  if (store.status !== 'paused') {
-    throw new AppError(409, ErrorCode.InvalidState, 'Store is not paused');
-  }
-  const [updated] = await db
-    .update(retailerStores)
-    .set({ status: 'active', pauseReason: null, pauseVisibility: null, pauseUntil: null })
-    .where(eq(retailerStores.id, store.id))
-    .returning();
+  const updated = await applyStoreAction(input.id, 'resume');
   const body = input.body as { reason?: string };
   await recordAudit({
     actor: input.auth,
     action: 'store.resume',
     resourceKind: 'retailer_store',
-    resourceId: store.id,
+    resourceId: updated.id,
     before: { status: 'paused' },
     after: { status: 'active' },
     note: body.reason ?? null,
-    impersonatedStoreId: store.id,
+    impersonatedStoreId: updated.id,
     requestId: input.requestId,
   });
-  await notifyOwners(store.id, {
+  await notifyOwners(updated.id, {
     title: 'Store resumed by admin',
     deepLink: '/retailer/store',
   });
   return ok(updated);
-}
-
-async function applySuspend(
-  storeId: string,
-  reason: string,
-  actorSub: string,
-  permanent: boolean,
-): Promise<typeof retailerStores.$inferSelect> {
-  const store = await loadStoreOr404(storeId);
-  // Permanent kill → 'terminated' (consistent with terminateRetailer); temporary → 'suspended'.
-  const targetStatus = permanent ? 'terminated' : 'suspended';
-  if (store.status === targetStatus && store.permanentSuspend === permanent) {
-    throw new AppError(409, ErrorCode.InvalidState, 'Store already in target state');
-  }
-  const [updated] = await db
-    .update(retailerStores)
-    .set({
-      status: targetStatus,
-      permanentSuspend: permanent,
-      suspendReason: reason,
-      suspendedAt: new Date(),
-      suspendedByAccountId: actorSub,
-    })
-    .where(eq(retailerStores.id, store.id))
-    .returning();
-  return updated!;
 }
 
 export async function suspendStore(input: {
@@ -286,13 +260,16 @@ export async function suspendStore(input: {
   body: z.infer<typeof ReasonBody>;
   requestId: string;
 }) {
-  const updated = await applySuspend(input.id, input.body.reason, input.auth.sub, false);
+  const updated = await applyStoreAction(input.id, 'suspend', {
+    reason: input.body.reason,
+    actorId: input.auth.sub,
+  });
   await recordAudit({
     actor: input.auth,
     action: 'store.suspend',
     resourceKind: 'retailer_store',
     resourceId: updated.id,
-    after: { status: 'suspended', permanentSuspend: false },
+    after: { status: 'suspended' },
     note: input.body.reason,
     impersonatedStoreId: updated.id,
     requestId: input.requestId,
@@ -311,13 +288,16 @@ export async function banStore(input: {
   body: z.infer<typeof ReasonBody>;
   requestId: string;
 }) {
-  const updated = await applySuspend(input.id, input.body.reason, input.auth.sub, true);
+  const updated = await applyStoreAction(input.id, 'terminate', {
+    reason: input.body.reason,
+    actorId: input.auth.sub,
+  });
   await recordAudit({
     actor: input.auth,
     action: 'store.ban',
     resourceKind: 'retailer_store',
     resourceId: updated.id,
-    after: { status: 'suspended', permanentSuspend: true },
+    after: { status: 'terminated' },
     note: input.body.reason,
     impersonatedStoreId: updated.id,
     requestId: input.requestId,
@@ -329,35 +309,13 @@ export async function banStore(input: {
   return ok(updated);
 }
 
-async function applyUnsuspend(
-  storeId: string,
-  actorSub: string,
-): Promise<typeof retailerStores.$inferSelect> {
-  const store = await loadStoreOr404(storeId);
-  if (store.status !== 'suspended') {
-    throw new AppError(409, ErrorCode.InvalidState, 'Store is not suspended');
-  }
-  const [updated] = await db
-    .update(retailerStores)
-    .set({
-      status: 'active',
-      permanentSuspend: false,
-      suspendReason: null,
-      suspendedAt: null,
-      suspendedByAccountId: actorSub,
-    })
-    .where(eq(retailerStores.id, store.id))
-    .returning();
-  return updated!;
-}
-
 export async function unsuspendStore(input: {
   auth: Auth;
   id: string;
   body: z.infer<typeof OptionalReasonBody>;
   requestId: string;
 }) {
-  const updated = await applyUnsuspend(input.id, input.auth.sub);
+  const updated = await applyStoreAction(input.id, 'unsuspend');
   const body = input.body as { reason?: string };
   await recordAudit({
     actor: input.auth,
@@ -382,14 +340,16 @@ export async function unbanStore(input: {
   body: z.infer<typeof OptionalReasonBody>;
   requestId: string;
 }) {
-  const updated = await applyUnsuspend(input.id, input.auth.sub);
+  // 'reinstate' accepts terminated OR suspended, so "Reinstate store" works whether
+  // the store was banned directly or suspended and never lifted.
+  const updated = await applyStoreAction(input.id, 'reinstate');
   const body = input.body as { reason?: string };
   await recordAudit({
     actor: input.auth,
     action: 'store.unban',
     resourceKind: 'retailer_store',
     resourceId: updated.id,
-    after: { status: 'active', permanentSuspend: false },
+    after: { status: 'active' },
     note: body.reason ?? null,
     impersonatedStoreId: updated.id,
     requestId: input.requestId,
@@ -419,6 +379,40 @@ function serializeAppealMessage(m: {
     attachments: m.attachmentUrls ?? [],
     createdAt: m.at.toISOString(),
   };
+}
+
+/**
+ * Appeal threads awaiting an ADMIN reply — the queue feed for the Pending Requests
+ * desk. A thread is "awaiting admin" when its most recent message was written by the
+ * retailer. Appeals used to surface only as notifications; if an admin missed one,
+ * it was invisible unless they happened to open that store's page.
+ */
+export async function listPendingAppeals() {
+  const messages = await db.query.accountAppealMessages.findMany({
+    orderBy: (t, { desc }) => [desc(t.at)],
+    limit: 500,
+    columns: { storeId: true, authorKind: true, body: true, at: true },
+  });
+  // Latest message per store (rows arrive newest-first).
+  const latest = new Map<string, (typeof messages)[number]>();
+  for (const m of messages) if (!latest.has(m.storeId)) latest.set(m.storeId, m);
+  const awaiting = [...latest.values()].filter((m) => m.authorKind === 'retailer');
+  if (awaiting.length === 0) return ok([]);
+
+  const stores = await db.query.retailerStores.findMany({
+    where: inArray(retailerStores.id, awaiting.map((m) => m.storeId)),
+    columns: { id: true, legalName: true, status: true },
+  });
+  const byId = new Map(stores.map((s) => [s.id, s]));
+  return ok(
+    awaiting.map((m) => ({
+      storeId: m.storeId,
+      storeName: byId.get(m.storeId)?.legalName ?? null,
+      storeStatus: byId.get(m.storeId)?.status ?? null,
+      lastMessageAt: m.at.toISOString(),
+      lastMessagePreview: m.body.slice(0, 140),
+    })),
+  );
 }
 
 /** Admin view of a store's suspend/terminate appeal thread. */

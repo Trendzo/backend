@@ -66,6 +66,60 @@ export async function listReels(input: { query: z.infer<typeof ListQuery> }) {
   );
 }
 
+// Cap on comments returned in one moderation view. High enough to cover any realistic reel;
+// bounds the payload so a pathological comment count can't blow up the request.
+const REEL_DETAIL_COMMENT_LIMIT = 200;
+
+/**
+ * Full reel view for the moderation surface: the reel plus its comments (all statuses,
+ * most-recent first, capped) with author names, so an admin can moderate individual
+ * comments. Unlike the consumer comment list this includes taken-down comments.
+ */
+export async function getReelDetail(input: { id: string }) {
+  const reel = await db.query.reels.findFirst({
+    where: eq(reels.id, input.id),
+    with: {
+      consumer: { columns: { id: true, name: true } },
+      product: { columns: { id: true, name: true } },
+    },
+  });
+  if (!reel) throw new AppError(404, ErrorCode.NotFound, 'Reel not found');
+
+  const comments = await db.query.reelComments.findMany({
+    where: eq(reelComments.reelId, input.id),
+    orderBy: [desc(reelComments.createdAt)],
+    limit: REEL_DETAIL_COMMENT_LIMIT,
+    with: { consumer: { columns: { id: true, name: true } } },
+  });
+
+  return ok({
+    id: reel.id,
+    consumerId: reel.consumerId,
+    authorName: reel.consumer?.name ?? null,
+    caption: reel.caption,
+    videoUrl: reel.videoUrl,
+    thumbnailUrl: reel.thumbnailUrl,
+    durationSec: reel.durationSec,
+    status: reel.status,
+    likeCount: reel.likeCount,
+    commentCount: reel.commentCount,
+    saveCount: reel.saveCount,
+    viewCount: reel.viewCount,
+    takedownReason: reel.takedownReason,
+    product: reel.product ? { id: reel.product.id, name: reel.product.name } : null,
+    createdAt: reel.createdAt.toISOString(),
+    comments: comments.map((c) => ({
+      id: c.id,
+      body: c.body,
+      status: c.status,
+      authorName: c.consumer?.name ?? null,
+      consumerId: c.consumerId,
+      takedownReason: c.takedownReason,
+      createdAt: c.createdAt.toISOString(),
+    })),
+  });
+}
+
 export async function takedownReel(input: {
   id: string;
   adminId: string;
