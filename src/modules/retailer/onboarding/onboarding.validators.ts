@@ -50,6 +50,10 @@ export const ApplicationContentSchema = z.object({
 
 export const SubmitApplicationBody = ApplicationContentSchema.extend({
   password: z.string().min(8).max(128).optional(),
+  // Signup-form consent to the T&C + Privacy Policy. Optional at the wire level so
+  // old app builds keep working (they fall back to the post-login gate); new clients
+  // always send true — the current doc versions are recorded on the application.
+  acceptLegal: z.boolean().optional(),
 });
 
 export const StatusQuery = z.object({ email: EmailSchema });
@@ -88,4 +92,6 @@ export const FetchForResubmitBody = z.object({
 export const ResubmitBody = ApplicationContentSchema.extend({
   email: EmailSchema,
   password: z.string().min(1).max(128),
+  // Same signup-form consent as SubmitApplicationBody — refreshed on resubmit.
+  acceptLegal: z.boolean().optional(),
 });

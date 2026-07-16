@@ -132,6 +132,25 @@ const adminStoreMgmtRoutes: FastifyPluginAsyncZod = async (app) => {
       }),
   );
 
+  // ONE restore entry point — "Resume store operations". Maps the store's real state
+  // to the correct lift (resume/unsuspend/reinstate/closure-reopen) server-side.
+  // Baseline perm covers paused→resume; the controller enforces retailer.reinstate
+  // for suspended/terminated lifts.
+  app.post(
+    '/:id/restore',
+    {
+      preHandler: requirePermission('store_management.edit'),
+      schema: { params: IdParam, body: OptionalReasonBody },
+    },
+    async (req) =>
+      ctrl.restoreStore({
+        auth: getAuth(req),
+        id: req.params.id,
+        body: req.body,
+        requestId: req.id,
+      }),
+  );
+
   app.post(
     '/:id/unsuspend',
     {

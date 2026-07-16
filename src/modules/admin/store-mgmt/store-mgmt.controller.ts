@@ -1,22 +1,30 @@
 /**
  * Admin store-management: direct create, edit, pause, resume, suspend, ban, unsuspend, unban.
  */
-import { asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
-import { accountAppealMessages, retailerAccounts, retailerStores } from '@/db/schema/index.js';
+import {
+  accountAppealMessages,
+  changeRequests,
+  retailerAccounts,
+  retailerStores,
+} from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { recordAudit } from '@/shared/audit.js';
+import { isAllowed } from '@/shared/permissions.js';
 import { notify } from '@/shared/notify.js';
 import { notifyStoreAccounts } from '@/shared/notify-store.js';
 import {
+  accountTransition,
   storeTransition,
   type PauseOpts,
   type StoreAction,
   type SuspendOpts,
 } from '@/shared/lifecycle/transitions.js';
+import { reinstateRetailerCascade } from '@/shared/lifecycle/retailer-cascade.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
   AppealMessageBody,
@@ -191,6 +199,20 @@ async function applyStoreAction(
   opts: SuspendOpts & PauseOpts = {},
 ): Promise<typeof retailerStores.$inferSelect> {
   const store = await loadStoreOr404(storeId);
+  // An owner-closure suspension is owned by the account-closure flow: lifting just the
+  // store would put an orderable storefront live with every account on it closed.
+  // The exit is approving the retailer's reopen request (which restores both sides).
+  if (
+    (action === 'unsuspend' || action === 'reinstate') &&
+    store.status === 'suspended' &&
+    store.suspendReason === 'account_closed_by_owner'
+  ) {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      'This store is suspended because the owner closed the account. Approve their reopen request instead of unsuspending the store.',
+    );
+  }
   const patch = storeTransition(store.status, action, opts);
   const [updated] = await db
     .update(retailerStores)
@@ -360,6 +382,135 @@ export async function unbanStore(input: {
     deepLink: '/retailer/store',
   });
   return ok(updated);
+}
+
+/**
+ * THE one admin restore entry point — "Resume store operations". Whatever is holding
+ * this store down (store state, account ban, owner closure — or a stack of them), one
+ * call lifts the full chain so the operator never hunts for the right lever:
+ *   owner account terminated → reinstate the account (cascade revives its marker stores)
+ *   accounts closed by owner → reopen them + approve any pending reopen request
+ *   then the store itself:     paused → resume · suspended → unsuspend ·
+ *                              terminated → reinstate (explicit intent, even if the
+ *                              store was independently banned)
+ * Everything is reported back in `restoreActions` (primary first) for the UI toast.
+ */
+export async function restoreStore(input: {
+  auth: Auth;
+  id: string;
+  body: z.infer<typeof OptionalReasonBody>;
+  requestId: string;
+}) {
+  const store = await loadStoreOr404(input.id);
+  const reason = (input.body as { reason?: string }).reason ?? null;
+
+  const accounts = await db.query.retailerAccounts.findMany({
+    where: eq(retailerAccounts.storeId, store.id),
+    columns: { id: true, status: true },
+  });
+  const owner = accounts.find((a) => a.id === store.legalEntityId);
+  const ownerTerminated = owner?.status === 'terminated';
+  const anyClosed = accounts.some((a) => a.status === 'closed');
+  const storeDown =
+    store.status === 'paused' || store.status === 'suspended' || store.status === 'terminated';
+
+  if (!storeDown && !ownerTerminated && !anyClosed) {
+    throw new AppError(409, ErrorCode.InvalidState, 'Store is already operating');
+  }
+
+  // Route baseline is store_management.edit — enough for a plain paused→resume (the
+  // old Resume button's permission). Anything touching suspensions, terminations or
+  // account state keeps the stricter reinstate permission.
+  const onlyPlainResume = store.status === 'paused' && !ownerTerminated && !anyClosed;
+  if (!onlyPlainResume) {
+    if (!(await isAllowed('admin', input.auth.subRole ?? '', 'retailer.reinstate'))) {
+      throw new AppError(403, ErrorCode.Forbidden, 'Missing permission: retailer.reinstate');
+    }
+  }
+
+  const actions: Array<
+    'account_reinstated' | 'account_reopened' | 'resumed' | 'unsuspended' | 'reinstated'
+  > = [];
+
+  // Account layer first, so a partial failure leaves a state where clicking the
+  // button again simply finishes the job.
+  if (ownerTerminated) {
+    await reinstateRetailerCascade(db, store.legalEntityId);
+    actions.push('account_reinstated');
+  }
+  if (anyClosed) {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(retailerAccounts)
+        .set(accountTransition('closed', 'reopen'))
+        .where(
+          and(eq(retailerAccounts.storeId, store.id), eq(retailerAccounts.status, 'closed')),
+        );
+      // A reopen request may be sitting on the desk — resolve it here so it doesn't
+      // linger (or double-apply if decided later).
+      await tx
+        .update(changeRequests)
+        .set({
+          status: 'approved',
+          decidedAt: new Date(),
+          decidedByAccountId: input.auth.sub,
+          decisionNote: 'Resolved by admin "Resume store operations"',
+        })
+        .where(
+          and(
+            eq(changeRequests.storeId, store.id),
+            eq(changeRequests.field, 'account_reopen'),
+            eq(changeRequests.status, 'pending'),
+          ),
+        );
+    });
+    actions.push('account_reopened');
+  }
+
+  // Store layer — reload first: the account cascade may already have revived it.
+  // Direct transitions (not applyStoreAction): its closure guard exists to stop a
+  // store-only lift, and this path has just handled the account side.
+  const current = await loadStoreOr404(store.id);
+  const storeLift =
+    current.status === 'paused'
+      ? ({ action: 'resume', mode: 'resumed' } as const)
+      : current.status === 'suspended'
+        ? ({ action: 'unsuspend', mode: 'unsuspended' } as const)
+        : current.status === 'terminated'
+          ? ({ action: 'reinstate', mode: 'reinstated' } as const)
+          : null;
+  if (storeLift) {
+    await db
+      .update(retailerStores)
+      .set(storeTransition(current.status, storeLift.action))
+      .where(eq(retailerStores.id, store.id));
+    actions.push(storeLift.mode);
+  }
+
+  const updated = await loadStoreOr404(store.id);
+  await recordAudit({
+    actor: input.auth,
+    action: 'store.restore',
+    resourceKind: 'retailer_store',
+    resourceId: updated.id,
+    before: { status: store.status },
+    after: { status: updated.status, actions },
+    note: reason,
+    impersonatedStoreId: updated.id,
+    requestId: input.requestId,
+  });
+  const accountRestored = actions[0] === 'account_reinstated' || actions[0] === 'account_reopened';
+  await notifyStoreAccounts({
+    storeId: updated.id,
+    kind: 'system',
+    title: accountRestored ? 'Account restored — welcome back' : 'Store operations resumed',
+    body: accountRestored
+      ? 'ClosetX restored your account and store. You have full access again.'
+      : 'ClosetX restored your store. You can fulfil orders again.',
+    deepLink: '/retailer/store/status',
+  }).catch(() => undefined);
+
+  return ok({ ...updated, restoreMode: actions[0], restoreActions: actions });
 }
 
 /** Canonical wire shape for one appeal-thread message (admin ↔ retailer). */

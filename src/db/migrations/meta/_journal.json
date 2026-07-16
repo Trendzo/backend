@@ -1,426 +1,440 @@
 {
-	"version": "7",
-	"dialect": "postgresql",
-	"entries": [
-		{
-			"idx": 0,
-			"version": "7",
-			"when": 1777995442568,
-			"tag": "0000_tough_the_executioner",
-			"breakpoints": true
-		},
-		{
-			"idx": 1,
-			"version": "7",
-			"when": 1778010144917,
-			"tag": "0001_faithful_chimera",
-			"breakpoints": true
-		},
-		{
-			"idx": 2,
-			"version": "7",
-			"when": 1778016623989,
-			"tag": "0002_reflective_skin",
-			"breakpoints": true
-		},
-		{
-			"idx": 3,
-			"version": "7",
-			"when": 1778337491907,
-			"tag": "0003_flaky_black_knight",
-			"breakpoints": true
-		},
-		{
-			"idx": 4,
-			"version": "7",
-			"when": 1778355613674,
-			"tag": "0004_faithful_nova",
-			"breakpoints": true
-		},
-		{
-			"idx": 5,
-			"version": "7",
-			"when": 1778563357552,
-			"tag": "0005_freezing_strong_guy",
-			"breakpoints": true
-		},
-		{
-			"idx": 6,
-			"version": "7",
-			"when": 1778575569144,
-			"tag": "0006_sudden_roulette",
-			"breakpoints": true
-		},
-		{
-			"idx": 7,
-			"version": "7",
-			"when": 1778582709123,
-			"tag": "0007_powerful_overlord",
-			"breakpoints": true
-		},
-		{
-			"idx": 8,
-			"version": "7",
-			"when": 1778914610464,
-			"tag": "0008_ambiguous_captain_britain",
-			"breakpoints": true
-		},
-		{
-			"idx": 9,
-			"version": "7",
-			"when": 1779000000000,
-			"tag": "0009_consolidate_retailer_statuses",
-			"breakpoints": true
-		},
-		{
-			"idx": 10,
-			"version": "7",
-			"when": 1778922182283,
-			"tag": "0010_luxuriant_thing",
-			"breakpoints": true
-		},
-		{
-			"idx": 11,
-			"version": "7",
-			"when": 1778932197647,
-			"tag": "0011_broad_trauma",
-			"breakpoints": true
-		},
-		{
-			"idx": 12,
-			"version": "7",
-			"when": 1779009820602,
-			"tag": "0012_store_contact_images",
-			"breakpoints": true
-		},
-		{
-			"idx": 13,
-			"version": "7",
-			"when": 1779108617519,
-			"tag": "0013_stiff_lethal_legion",
-			"breakpoints": true
-		},
-		{
-			"idx": 14,
-			"version": "7",
-			"when": 1747612800000,
-			"tag": "0014_listing_updated_at",
-			"breakpoints": true
-		},
-		{
-			"idx": 15,
-			"version": "7",
-			"when": 1747699200000,
-			"tag": "0015_variant_orphan_flag",
-			"breakpoints": true
-		},
-		{
-			"idx": 16,
-			"version": "7",
-			"when": 1747785600000,
-			"tag": "0016_taken_down_status",
-			"breakpoints": true
-		},
-		{
-			"idx": 17,
-			"version": "7",
-			"when": 1747872000000,
-			"tag": "0017_collection_brand_occasion",
-			"breakpoints": true
-		},
-		{
-			"idx": 18,
-			"version": "7",
-			"when": 1747958400000,
-			"tag": "0018_low_stock_threshold",
-			"breakpoints": true
-		},
-		{
-			"idx": 19,
-			"version": "7",
-			"when": 1748044800000,
-			"tag": "0019_pickup_door_window",
-			"breakpoints": true
-		},
-		{
-			"idx": 20,
-			"version": "7",
-			"when": 1779187961586,
-			"tag": "0020_windy_garia",
-			"breakpoints": true
-		},
-		{
-			"idx": 21,
-			"version": "7",
-			"when": 1779194337061,
-			"tag": "0021_chubby_payback",
-			"breakpoints": true
-		},
-		{
-			"idx": 22,
-			"version": "7",
-			"when": 1779271952169,
-			"tag": "0022_warm_sunspot",
-			"breakpoints": true
-		},
-		{
-			"idx": 23,
-			"version": "7",
-			"when": 1779273254925,
-			"tag": "0023_harsh_hiroim",
-			"breakpoints": true
-		},
-		{
-			"idx": 24,
-			"version": "7",
-			"when": 1779275505488,
-			"tag": "0024_fine_invisible_woman",
-			"breakpoints": true
-		},
-		{
-			"idx": 25,
-			"version": "7",
-			"when": 1779279653280,
-			"tag": "0025_late_thing",
-			"breakpoints": true
-		},
-		{
-			"idx": 26,
-			"version": "7",
-			"when": 1779281516236,
-			"tag": "0026_modern_sage",
-			"breakpoints": true
-		},
-		{
-			"idx": 27,
-			"version": "7",
-			"when": 1781098198309,
-			"tag": "0027_fine_vindicator",
-			"breakpoints": true
-		},
-		{
-			"idx": 28,
-			"version": "7",
-			"when": 1781105729133,
-			"tag": "0028_curvy_maginty",
-			"breakpoints": true
-		},
-		{
-			"idx": 29,
-			"version": "7",
-			"when": 1781168528965,
-			"tag": "0029_shocking_blackheart",
-			"breakpoints": true
-		},
-		{
-			"idx": 30,
-			"version": "7",
-			"when": 1781185035584,
-			"tag": "0030_previous_hawkeye",
-			"breakpoints": true
-		},
-		{
-			"idx": 31,
-			"version": "7",
-			"when": 1781241238087,
-			"tag": "0031_puzzling_mephistopheles",
-			"breakpoints": true
-		},
-		{
-			"idx": 32,
-			"version": "7",
-			"when": 1781241262640,
-			"tag": "0032_high_black_knight",
-			"breakpoints": true
-		},
-		{
-			"idx": 33,
-			"version": "7",
-			"when": 1781265750594,
-			"tag": "0033_far_black_queen",
-			"breakpoints": true
-		},
-		{
-			"idx": 34,
-			"version": "7",
-			"when": 1781311870353,
-			"tag": "0034_warm_doctor_spectrum",
-			"breakpoints": true
-		},
-		{
-			"idx": 35,
-			"version": "7",
-			"when": 1781325926687,
-			"tag": "0035_gst_scheme",
-			"breakpoints": true
-		},
-		{
-			"idx": 36,
-			"version": "7",
-			"when": 1782971026134,
-			"tag": "0036_hard_captain_flint",
-			"breakpoints": true
-		},
-		{
-			"idx": 37,
-			"version": "7",
-			"when": 1783067609949,
-			"tag": "0037_pos_billing_activation",
-			"breakpoints": true
-		},
-		{
-			"idx": 38,
-			"version": "7",
-			"when": 1783094845580,
-			"tag": "0038_retailer_phone_e164",
-			"breakpoints": true
-		},
-		{
-			"idx": 39,
-			"version": "7",
-			"when": 1783200000000,
-			"tag": "0039_backfill_store_contact_phone",
-			"breakpoints": true
-		},
-		{
-			"idx": 40,
-			"version": "7",
-			"when": 1783300000000,
-			"tag": "0040_retailer_terms_acceptances",
-			"breakpoints": true
-		},
-		{
-			"idx": 41,
-			"version": "7",
-			"when": 1783400000000,
-			"tag": "0041_pos_day_sessions",
-			"breakpoints": true
-		},
-		{
-			"idx": 42,
-			"version": "7",
-			"when": 1783500000000,
-			"tag": "0042_admin_terms_versions",
-			"breakpoints": true
-		},
-		{
-			"idx": 43,
-			"version": "7",
-			"when": 1783600000000,
-			"tag": "0043_consumer_avatar_url",
-			"breakpoints": true
-		},
-		{
-			"idx": 44,
-			"version": "7",
-			"when": 1783650000000,
-			"tag": "0044_order_agent_handoff_code",
-			"breakpoints": true
-		},
-		{
-			"idx": 45,
-			"version": "7",
-			"when": 1783700000000,
-			"tag": "0045_driver_identity",
-			"breakpoints": true
-		},
-		{
-			"idx": 46,
-			"version": "7",
-			"when": 1783800000000,
-			"tag": "0046_order_agent_fk_to_driver",
-			"breakpoints": true
-		},
-		{
-			"idx": 47,
-			"version": "7",
-			"when": 1783900000000,
-			"tag": "0047_drop_stale_agent_fk",
-			"breakpoints": true
-		},
-		{
-			"idx": 48,
-			"version": "7",
-			"when": 1784000000000,
-			"tag": "0048_driver_cod_pod",
-			"breakpoints": true
-		},
-		{
-			"idx": 49,
-			"version": "7",
-			"when": 1784100000000,
-			"tag": "0049_driver_earnings",
-			"breakpoints": true
-		},
-		{
-			"idx": 50,
-			"version": "7",
-			"when": 1784200000000,
-			"tag": "0050_driver_offer_rejections",
-			"breakpoints": true
-		},
-		{
-			"idx": 51,
-			"version": "7",
-			"when": 1784300000000,
-			"tag": "0051_order_lifecycle_columns",
-			"breakpoints": true
-		},
-		{
-			"idx": 52,
-			"version": "7",
-			"when": 1784400000000,
-			"tag": "0052_reverse_pickups",
-			"breakpoints": true
-		},
-		{
-			"idx": 53,
-			"version": "7",
-			"when": 1784500000000,
-			"tag": "0053_driver_earnings_reverse_pickup",
-			"breakpoints": true
-		},
-		{
-			"idx": 54,
-			"version": "7",
-			"when": 1784600000000,
-			"tag": "0054_driver_cash",
-			"breakpoints": true
-		},
-		{
-			"idx": 55,
-			"version": "7",
-			"when": 1784700000000,
-			"tag": "0055_payment_gateway_order",
-			"breakpoints": true
-		},
-		{
-			"idx": 56,
-			"version": "7",
-			"when": 1784800000000,
-			"tag": "0056_retailer_account_closure",
-			"breakpoints": true
-		},
-		{
-			"idx": 57,
-			"version": "7",
-			"when": 1784900000000,
-			"tag": "0057_clarification_and_appeals",
-			"breakpoints": true
-		},
-		{
-			"idx": 58,
-			"version": "7",
-			"when": 1785000000000,
-			"tag": "0058_reels",
-			"breakpoints": true
-		},
-		{
-			"idx": 59,
-			"version": "7",
-			"when": 1785100000000,
-			"tag": "0059_drop_permanent_suspend",
-			"breakpoints": true
-		}
-	]
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1777995442568,
+      "tag": "0000_tough_the_executioner",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778010144917,
+      "tag": "0001_faithful_chimera",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778016623989,
+      "tag": "0002_reflective_skin",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778337491907,
+      "tag": "0003_flaky_black_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778355613674,
+      "tag": "0004_faithful_nova",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778563357552,
+      "tag": "0005_freezing_strong_guy",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778575569144,
+      "tag": "0006_sudden_roulette",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778582709123,
+      "tag": "0007_powerful_overlord",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1778914610464,
+      "tag": "0008_ambiguous_captain_britain",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1779000000000,
+      "tag": "0009_consolidate_retailer_statuses",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1778922182283,
+      "tag": "0010_luxuriant_thing",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1778932197647,
+      "tag": "0011_broad_trauma",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1779009820602,
+      "tag": "0012_store_contact_images",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1779108617519,
+      "tag": "0013_stiff_lethal_legion",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1747612800000,
+      "tag": "0014_listing_updated_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1747699200000,
+      "tag": "0015_variant_orphan_flag",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1747785600000,
+      "tag": "0016_taken_down_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1747872000000,
+      "tag": "0017_collection_brand_occasion",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1747958400000,
+      "tag": "0018_low_stock_threshold",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1748044800000,
+      "tag": "0019_pickup_door_window",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1779187961586,
+      "tag": "0020_windy_garia",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1779194337061,
+      "tag": "0021_chubby_payback",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1779271952169,
+      "tag": "0022_warm_sunspot",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1779273254925,
+      "tag": "0023_harsh_hiroim",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1779275505488,
+      "tag": "0024_fine_invisible_woman",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1779279653280,
+      "tag": "0025_late_thing",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1779281516236,
+      "tag": "0026_modern_sage",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1781098198309,
+      "tag": "0027_fine_vindicator",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1781105729133,
+      "tag": "0028_curvy_maginty",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1781168528965,
+      "tag": "0029_shocking_blackheart",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1781185035584,
+      "tag": "0030_previous_hawkeye",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1781241238087,
+      "tag": "0031_puzzling_mephistopheles",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1781241262640,
+      "tag": "0032_high_black_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1781265750594,
+      "tag": "0033_far_black_queen",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1781311870353,
+      "tag": "0034_warm_doctor_spectrum",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1781325926687,
+      "tag": "0035_gst_scheme",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1782971026134,
+      "tag": "0036_hard_captain_flint",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1783067609949,
+      "tag": "0037_pos_billing_activation",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1783094845580,
+      "tag": "0038_retailer_phone_e164",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1783200000000,
+      "tag": "0039_backfill_store_contact_phone",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1783300000000,
+      "tag": "0040_retailer_terms_acceptances",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1783400000000,
+      "tag": "0041_pos_day_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1783500000000,
+      "tag": "0042_admin_terms_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1783600000000,
+      "tag": "0043_consumer_avatar_url",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1783650000000,
+      "tag": "0044_order_agent_handoff_code",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1783700000000,
+      "tag": "0045_driver_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1783800000000,
+      "tag": "0046_order_agent_fk_to_driver",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1783900000000,
+      "tag": "0047_drop_stale_agent_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1784000000000,
+      "tag": "0048_driver_cod_pod",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1784100000000,
+      "tag": "0049_driver_earnings",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1784200000000,
+      "tag": "0050_driver_offer_rejections",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1784300000000,
+      "tag": "0051_order_lifecycle_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1784400000000,
+      "tag": "0052_reverse_pickups",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1784500000000,
+      "tag": "0053_driver_earnings_reverse_pickup",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1784600000000,
+      "tag": "0054_driver_cash",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1784700000000,
+      "tag": "0055_payment_gateway_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1784800000000,
+      "tag": "0056_retailer_account_closure",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1784900000000,
+      "tag": "0057_clarification_and_appeals",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1785000000000,
+      "tag": "0058_reels",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1785100000000,
+      "tag": "0059_drop_permanent_suspend",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1785200000000,
+      "tag": "0060_privacy_policy_pipeline",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1785300000000,
+      "tag": "0061_application_legal_consent",
+      "breakpoints": true
+    }
+  ]
 }

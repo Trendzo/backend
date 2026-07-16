@@ -14,6 +14,7 @@ import { hashPassword, verifyPassword } from '@/shared/auth/password.js';
 import { notifyAllAdmins } from '@/shared/notify-admins.js';
 import { recordAudit } from '@/shared/audit.js';
 import { serializeApplicationMessage } from '@/shared/onboarding/messages.js';
+import { currentLegalDoc } from '@/shared/terms.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
   CheckIdentityQuery,
@@ -74,8 +75,18 @@ export async function submitApplication(input: {
 
   const id = newId('app');
   const passwordHash = body.password ? await hashPassword(body.password) : null;
+  // Consent given on the signup form — pin the doc versions current right now, so
+  // approval can seed acceptances and first login is not gated on the same versions.
+  const consent = body.acceptLegal
+    ? {
+        legalConsentAt: new Date(),
+        consentTermsVersion: (await currentLegalDoc(db, 'terms')).version,
+        consentPrivacyVersion: (await currentLegalDoc(db, 'privacy')).version,
+      }
+    : {};
   await db.insert(retailerApplications).values({
     id,
+    ...consent,
     legalName: body.legalName,
     storeName: body.storeName ?? null,
     gstin: body.gstin,
@@ -449,6 +460,15 @@ export async function resubmitApplication(input: {
   const priorDecisionReason = application.decisionReason;
   const priorDecidedBy = application.decidedByAccountId;
 
+  // Refresh legal consent to the versions current at RESUBMIT time (if given).
+  const consent = body.acceptLegal
+    ? {
+        legalConsentAt: new Date(),
+        consentTermsVersion: (await currentLegalDoc(db, 'terms')).version,
+        consentPrivacyVersion: (await currentLegalDoc(db, 'privacy')).version,
+      }
+    : {};
+
   await db.transaction(async (tx) => {
     // Archive the rejection into the message thread.
     if (priorDecisionReason) {
@@ -487,6 +507,7 @@ export async function resubmitApplication(input: {
     await tx
       .update(retailerApplications)
       .set({
+        ...consent,
         legalName: body.legalName,
         storeName: body.storeName ?? null,
         gstin: body.gstin,

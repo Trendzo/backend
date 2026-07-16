@@ -14,7 +14,12 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
-import { currentTerms, hasAcceptedCurrentTerms } from '@/shared/terms.js';
+import {
+  currentLegalDoc,
+  hasAcceptedCurrentLegalDoc,
+  LEGAL_DOC_LABELS,
+  type LegalDocKind,
+} from '@/shared/terms.js';
 import type {
   CreateStoreBody,
   PatchProfileBody,
@@ -35,12 +40,16 @@ export async function getMe(input: { auth: Auth }) {
   const store = retailer.storeId
     ? await db.query.retailerStores.findFirst({ where: eq(retailerStores.id, retailer.storeId) })
     : null;
-  // Terms acceptance is INDEPENDENT of the store lifecycle: any store that hasn't
-  // accepted the current terms version is `pending`, whatever its status. A version
-  // bump therefore re-flags every store until it re-accepts.
-  const termsAccepted = store ? await hasAcceptedCurrentTerms(db, store.id) : true;
+  // Legal acceptance is INDEPENDENT of the store lifecycle: any store that hasn't
+  // accepted the current version of a document is `pending`, whatever its status.
+  // A version bump therefore re-flags every store until it re-accepts. Same rule
+  // for both documents (T&C and Privacy Policy).
+  const termsAccepted = store ? await hasAcceptedCurrentLegalDoc(db, store.id, 'terms') : true;
   const termsAcceptanceRequired = store ? !termsAccepted : false;
-  const ct = await currentTerms(db);
+  const ct = await currentLegalDoc(db, 'terms');
+  const privacyAccepted = store ? await hasAcceptedCurrentLegalDoc(db, store.id, 'privacy') : true;
+  const privacyAcceptanceRequired = store ? !privacyAccepted : false;
+  const cp = await currentLegalDoc(db, 'privacy');
 
   // Surface any in-flight account-lifecycle request so the app can show
   // "closure pending" / "reopen pending" instead of a stale action button.
@@ -60,11 +69,16 @@ export async function getMe(input: { auth: Auth }) {
 
   return ok({
     termsAcceptanceRequired,
+    privacyAcceptanceRequired,
     pendingAccountRequest,
     termsStatus: (store ? (termsAccepted ? 'accepted' : 'pending') : 'accepted') as
       | 'accepted'
       | 'pending',
+    privacyStatus: (store ? (privacyAccepted ? 'accepted' : 'pending') : 'accepted') as
+      | 'accepted'
+      | 'pending',
     currentTermsVersion: ct.version,
+    currentPrivacyVersion: cp.version,
     retailer: {
       id: retailer.id,
       email: retailer.email,
@@ -186,14 +200,16 @@ export async function patchStoreProfile(input: {
 // modules/retailer/compliance and modules/admin/compliance.
 
 /** Current Retailer T&C (current admin version + short text) + whether this store accepted it. */
-export async function getTerms(input: { auth: Auth }) {
+export async function getTerms(input: { auth: Auth; kind?: LegalDocKind }) {
+  const kind: LegalDocKind = input.kind ?? 'terms';
   const retailer = await loadRetailer(input.auth.sub);
-  const ct = await currentTerms(db);
+  const ct = await currentLegalDoc(db, kind);
   let acceptedAt: Date | null = null;
   if (retailer.storeId) {
     const row = await db.query.retailerTermsAcceptances.findFirst({
       where: and(
         eq(retailerTermsAcceptances.storeId, retailer.storeId),
+        eq(retailerTermsAcceptances.docKind, kind),
         eq(retailerTermsAcceptances.termsVersion, ct.version),
         eq(retailerTermsAcceptances.decision, 'accepted'),
       ),
@@ -209,9 +225,10 @@ export async function getTerms(input: { auth: Auth }) {
   });
 }
 
-/** Record a decision (accept/decline) on the current terms for this store (audited with IP + UA). */
+/** Record a decision (accept/decline) on the current version of one legal document (audited with IP + UA). */
 async function recordTermsDecision(
   auth: Auth,
+  kind: LegalDocKind,
   version: string,
   decision: 'accepted' | 'declined',
   ip: string | null,
@@ -221,12 +238,12 @@ async function recordTermsDecision(
   if (!retailer.storeId) {
     throw new AppError(404, ErrorCode.NotFound, 'No store found for this account');
   }
-  const ct = await currentTerms(db);
+  const ct = await currentLegalDoc(db, kind);
   if (version !== ct.version) {
     throw new AppError(
       409,
       ErrorCode.InvalidState,
-      'Terms have changed — reload and review the current version.',
+      `The ${LEGAL_DOC_LABELS[kind]} has changed — reload and review the current version.`,
     );
   }
   await db
@@ -235,6 +252,7 @@ async function recordTermsDecision(
       id: newId(IdPrefix.TermsAcceptance),
       storeId: retailer.storeId,
       acceptedByAccountId: retailer.id,
+      docKind: kind,
       termsVersion: ct.version,
       decision,
       ipAddress: ip,
@@ -250,18 +268,34 @@ export async function acceptTerms(input: {
   body: { version: string };
   ip: string | null;
   userAgent: string | null;
+  kind?: LegalDocKind;
 }) {
-  const version = await recordTermsDecision(input.auth, input.body.version, 'accepted', input.ip, input.userAgent);
+  const version = await recordTermsDecision(
+    input.auth,
+    input.kind ?? 'terms',
+    input.body.version,
+    'accepted',
+    input.ip,
+    input.userAgent,
+  );
   return ok({ version, decision: 'accepted' });
 }
 
-/** Retailer declines the terms — recorded for audit. The client then logs the user out. */
+/** Retailer declines the document — recorded for audit. The client then logs the user out. */
 export async function declineTerms(input: {
   auth: Auth;
   body: { version: string };
   ip: string | null;
   userAgent: string | null;
+  kind?: LegalDocKind;
 }) {
-  const version = await recordTermsDecision(input.auth, input.body.version, 'declined', input.ip, input.userAgent);
+  const version = await recordTermsDecision(
+    input.auth,
+    input.kind ?? 'terms',
+    input.body.version,
+    'declined',
+    input.ip,
+    input.userAgent,
+  );
   return ok({ version, decision: 'declined' });
 }

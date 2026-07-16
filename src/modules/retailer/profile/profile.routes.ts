@@ -38,6 +38,33 @@ const retailerProfileRoutes: FastifyPluginAsyncZod = async (app) => {
       }),
   );
 
+  // Privacy Policy — exact mirror of the T&C flow (same table, kind='privacy').
+  app.get('/privacy', async (req) => ctrl.getTerms({ auth: getAuth(req), kind: 'privacy' }));
+  app.post(
+    '/privacy/accept',
+    { schema: { body: AcceptTermsBody } },
+    async (req) =>
+      ctrl.acceptTerms({
+        auth: getAuth(req),
+        body: req.body,
+        ip: req.ip ?? null,
+        userAgent: req.headers['user-agent'] ?? null,
+        kind: 'privacy',
+      }),
+  );
+  app.post(
+    '/privacy/decline',
+    { schema: { body: AcceptTermsBody } },
+    async (req) =>
+      ctrl.declineTerms({
+        auth: getAuth(req),
+        body: req.body,
+        ip: req.ip ?? null,
+        userAgent: req.headers['user-agent'] ?? null,
+        kind: 'privacy',
+      }),
+  );
+
   app.post(
     '/store',
     {

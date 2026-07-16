@@ -9,6 +9,7 @@ import {
   retailerAccounts,
   retailerApplications,
   retailerStores,
+  retailerTermsAcceptances,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
@@ -262,6 +263,32 @@ export async function approveApplication(input: {
     status: 'active',
   });
   log.info('approve: retailerAccounts inserted');
+
+  // Seed the legal acceptances the applicant gave ON THE SIGNUP FORM (now that a
+  // store exists to key them on). Version-pinned: if a newer T&C/privacy version
+  // shipped since they applied, the post-login gate still re-prompts — correctly.
+  const signupConsents = [
+    { kind: 'terms' as const, version: application.consentTermsVersion },
+    { kind: 'privacy' as const, version: application.consentPrivacyVersion },
+  ].filter((c): c is { kind: 'terms' | 'privacy'; version: string } => Boolean(c.version));
+  if (application.legalConsentAt && signupConsents.length > 0) {
+    await db
+      .insert(retailerTermsAcceptances)
+      .values(
+        signupConsents.map((c) => ({
+          id: newId('term'),
+          storeId,
+          acceptedByAccountId: retailerId,
+          docKind: c.kind,
+          termsVersion: c.version,
+          decision: 'accepted',
+          acceptedAt: application.legalConsentAt!,
+          userAgent: 'application-signup',
+        })),
+      )
+      .onConflictDoNothing();
+    log.info('approve: signup legal consents seeded');
+  }
 
   await db
     .update(retailerApplications)

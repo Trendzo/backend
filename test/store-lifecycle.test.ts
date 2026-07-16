@@ -17,6 +17,7 @@ import { db, pool } from '@/db/client.js';
 import {
   adminAccounts,
   categories,
+  changeRequests,
   productListings,
   retailerAccounts,
   retailerStores,
@@ -362,6 +363,134 @@ describe('middleware lock', () => {
       payload: {},
     });
     expect(reopen.statusCode).toBe(200);
+  });
+});
+
+describe('unified restore — POST /admin/stores/:id/restore', () => {
+  const restore = (storeId: string) => adminPost(`/stores/${storeId}/restore`);
+
+  it('paused → resumed', async () => {
+    const { storeId } = await makeStore();
+    await adminPost(`/stores/${storeId}/pause`, { reason: 'renovation', visibility: 'hidden' });
+    const res = await restore(storeId);
+    expect(res.statusCode).toBe(200);
+    expect(data(res).restoreMode).toBe('resumed');
+    expect((await storeRow(storeId))!.status).toBe('active');
+  });
+
+  it('admin-suspended → unsuspended', async () => {
+    const { storeId } = await makeStore();
+    await adminPost(`/stores/${storeId}/suspend`, { reason: 'policy review' });
+    const res = await restore(storeId);
+    expect(data(res).restoreMode).toBe('unsuspended');
+    expect((await storeRow(storeId))!.status).toBe('active');
+  });
+
+  it('closure-suspended → reopens account + store and clears the pending reopen request', async () => {
+    const { storeId, retailerId, retailerToken } = await makeStore();
+    const closeReq = await app.inject({
+      method: 'POST',
+      url: '/api/v1/retailer/account/close-request',
+      headers: auth(retailerToken),
+      payload: {},
+    });
+    await adminPost(`/compliance/change-requests/${data(closeReq).id}/decide`, {
+      decision: 'approved',
+    });
+    const reopenReq = await app.inject({
+      method: 'POST',
+      url: '/api/v1/retailer/account/reopen-request',
+      headers: auth(retailerToken),
+      payload: {},
+    });
+
+    const res = await restore(storeId);
+    expect(data(res).restoreMode).toBe('account_reopened');
+    expect((await storeRow(storeId))!.status).toBe('active');
+    expect((await accountRow(retailerId))!.status).toBe('active');
+    // The in-flight reopen request must not linger on the desk.
+    const cr = await db.query.changeRequests.findFirst({
+      where: eq(changeRequests.id, data(reopenReq).id as string),
+    });
+    expect(cr!.status).toBe('approved');
+  });
+
+  it('directly-banned store → reinstated', async () => {
+    const { storeId } = await makeStore();
+    await adminPost(`/stores/${storeId}/ban`, { reason: 'counterfeit goods' });
+    const res = await restore(storeId);
+    expect(data(res).restoreMode).toBe('reinstated');
+    expect((await storeRow(storeId))!.status).toBe('active');
+  });
+
+  it('cascade-banned store → one call lifts the account ban AND restores the store', async () => {
+    const { storeId, retailerId } = await makeStore();
+    await adminPost(`/retailers/${retailerId}/ban`, { reason: 'fraud' });
+    const res = await restore(storeId);
+    expect(res.statusCode).toBe(200);
+    expect(data(res).restoreMode).toBe('account_reinstated');
+    expect((await accountRow(retailerId))!.status).toBe('active');
+    expect((await storeRow(storeId))!.status).toBe('active');
+
+    // Fully operating → nothing left to restore.
+    const noop = await restore(storeId);
+    expect(noop.statusCode).toBe(409);
+  });
+
+  it('stacked lock — account ban over an earlier store suspension — clears in one call', async () => {
+    const { storeId, retailerId } = await makeStore();
+    await adminPost(`/stores/${storeId}/suspend`, { reason: 'quality issues' });
+    await adminPost(`/retailers/${retailerId}/ban`, { reason: 'fraud' });
+
+    const res = await restore(storeId);
+    expect(res.statusCode).toBe(200);
+    // Cascade reinstates the account but leaves the for-cause suspension; the
+    // store layer then lifts it too — admin intent on THIS store is explicit.
+    expect(data(res).restoreActions).toEqual(['account_reinstated', 'unsuspended']);
+    expect((await accountRow(retailerId))!.status).toBe('active');
+    expect((await storeRow(storeId))!.status).toBe('active');
+  });
+});
+
+describe('owner-closure suspension is not manually liftable', () => {
+  it('unsuspend/reinstate 409 on a closure-suspended store; reopen approval is the exit', async () => {
+    const { storeId, retailerId, retailerToken } = await makeStore();
+
+    // Owner files closure; admin approves → store suspended, account closed.
+    const closeReq = await app.inject({
+      method: 'POST',
+      url: '/api/v1/retailer/account/close-request',
+      headers: auth(retailerToken),
+      payload: {},
+    });
+    expect(closeReq.statusCode).toBe(200);
+    await adminPost(`/compliance/change-requests/${data(closeReq).id}/decide`, {
+      decision: 'approved',
+    });
+    expect((await storeRow(storeId))!.status).toBe('suspended');
+    expect((await accountRow(retailerId))!.status).toBe('closed');
+
+    // The prod incident: admin lifting just the store strands a live storefront
+    // with every account closed. Both lift paths must refuse.
+    const unsuspend = await adminPost(`/stores/${storeId}/unsuspend`);
+    expect(unsuspend.statusCode).toBe(409);
+    const unban = await adminPost(`/stores/${storeId}/unban`);
+    expect(unban.statusCode).toBe(409);
+    expect((await storeRow(storeId))!.status).toBe('suspended');
+
+    // The real exit: reopen request → approval restores store AND account together.
+    const reopenReq = await app.inject({
+      method: 'POST',
+      url: '/api/v1/retailer/account/reopen-request',
+      headers: auth(retailerToken),
+      payload: {},
+    });
+    expect(reopenReq.statusCode).toBe(200);
+    await adminPost(`/compliance/change-requests/${data(reopenReq).id}/decide`, {
+      decision: 'approved',
+    });
+    expect((await storeRow(storeId))!.status).toBe('active');
+    expect((await accountRow(retailerId))!.status).toBe('active');
   });
 });
 

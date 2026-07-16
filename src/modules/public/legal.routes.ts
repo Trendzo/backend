@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { env } from '@/config/env.js';
-
-const updated = '7 July 2026';
+import { db } from '@/db/client.js';
+import { currentLegalDoc, LEGAL_DOC_LABELS, type LegalDocKind } from '@/shared/terms.js';
 
 function escapeHtml(value: string): string {
   return value
@@ -24,6 +24,23 @@ header,main,footer{max-width:820px;margin:auto;padding:24px}header{display:flex;
 .brand{font-weight:800;font-size:19px}nav a{margin-left:14px}main{padding-top:48px;padding-bottom:56px}h1{font-size:clamp(34px,7vw,58px);line-height:1.05;margin:0 0 12px}h2{font-size:22px;margin-top:34px}h3{font-size:17px;margin-top:24px}p,li{color:var(--muted)}a{color:var(--ink);font-weight:650}.meta{font-size:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;margin:22px 0}.button{display:inline-block;background:var(--accent);padding:11px 17px;border-radius:999px;text-decoration:none}footer{border-top:1px solid var(--line);font-size:14px;color:var(--muted)}
 @media(max-width:620px){header{display:block}.brand{display:block;margin-bottom:10px}nav a{margin:0 12px 0 0}main{padding-top:36px}}
 </style></head><body><header><span class="brand">${app}</span><nav><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a></nav></header><main>${content}</main><footer>© 2026 ${escapeHtml(env.PUBLIC_COMPANY_NAME)} · <a href="/account-deletion">Account deletion</a></footer></body></html>`;
+}
+
+/**
+ * Render the CURRENT admin-published document (same source the in-app gates show)
+ * as the public page body. Plain text → paragraphs; numbered lines keep their breaks.
+ */
+async function legalDocContent(kind: LegalDocKind): Promise<string> {
+  const doc = await currentLegalDoc(db, kind);
+  const paragraphs = doc.shortText
+    .split(/\r?\n\r?\n/)
+    .map((block) => `<p>${escapeHtml(block).replaceAll(/\r?\n/g, '<br>')}</p>`)
+    .join('');
+  return `
+      <h1>${escapeHtml(LEGAL_DOC_LABELS[kind])}</h1>
+      <p class="meta">Version: ${escapeHtml(doc.label)}</p>
+      <div class="card">${paragraphs}</div>
+      ${contactBlock()}`;
 }
 
 function contactBlock(): string {
@@ -49,50 +66,18 @@ const publicLegalRoutes: FastifyPluginAsync = async (app) => {
       );
   });
 
-  app.get('/privacy', (_req, reply) => {
-    void reply.type('text/html; charset=utf-8').send(
-      layout(
-        'Privacy Policy',
-        `
-      <h1>Privacy Policy</h1><p class="meta">Effective and last updated: ${updated}</p>
-      <p>This policy explains how ${escapeHtml(env.PUBLIC_COMPANY_NAME)} processes information when retailers use ${escapeHtml(env.PUBLIC_APP_NAME)}.</p>
-      <h2>Information we collect</h2><ul>
-        <li>Account and contact details, including name, email address, phone number and user identifier.</li>
-        <li>Business onboarding and compliance details, including store address, GSTIN, PAN, bank and KYC information.</li>
-        <li>Garment, model and storefront photos, generated images, catalog content, support messages and other content you submit.</li>
-        <li>Approximate or precise store location coordinates, device identifiers needed for notifications, and basic security/diagnostic records.</li>
-        <li>Orders, invoices, inventory, POS, settlement and payout records created through the service.</li>
-      </ul>
-      <h2>How we use information</h2><p>We use it to authenticate users, review retailer applications, provide AI catalog generation, publish and manage catalogs, operate inventory and POS features, send service messages, provide support, prevent abuse, comply with tax and legal duties, and maintain service security.</p>
-      <h2>Service providers</h2><p>Information is shared only as needed with hosting and database providers, cloud media storage, OTP delivery/verification providers, AI image-generation providers, and authorities where legally required. We do not sell personal information and do not use it for cross-app tracking.</p>
-      <h2>Retention</h2><p>Account profile data is kept while the account is active. After deletion, credentials and personal profile data are revoked or anonymized and uploaded media is removed from active access. GST, invoice, order, payout, accounting, fraud-prevention and audit records may be retained for the period required by Indian tax and other applicable laws.</p>
-      <h2>Security and international processing</h2><p>We use access controls, encrypted HTTPS transport and restricted service credentials. Providers may process data in other countries subject to contractual and legal safeguards. No system can guarantee absolute security.</p>
-      <h2>Your choices</h2><p>You may access and export available account data in the app, request corrections, or delete your account from Profile → Delete account. You may also use the <a href="/account-deletion">account deletion instructions</a>.</p>
-      <h2>Children</h2><p>This business service is not directed to children under 18.</p>
-      <h2>Changes</h2><p>We may update this policy and will publish the revised effective date here.</p>
-      ${contactBlock()}`,
-      ),
-    );
+  // Both legal pages render the CURRENT admin-published document (retailer_terms
+  // table via currentLegalDoc) — publishing from /admin/terms updates these too.
+  app.get('/privacy', async (_req, reply) => {
+    void reply
+      .type('text/html; charset=utf-8')
+      .send(layout('Privacy Policy', await legalDocContent('privacy')));
   });
 
-  app.get('/terms', (_req, reply) => {
-    void reply.type('text/html; charset=utf-8').send(
-      layout(
-        'Terms of Service',
-        `
-      <h1>Terms of Service</h1><p class="meta">Effective and last updated: ${updated}</p>
-      <p>These terms govern retailer use of ${escapeHtml(env.PUBLIC_APP_NAME)}. By creating an account or using the service, you agree to them.</p>
-      <h2>Eligibility and accounts</h2><p>You must be at least 18, be authorized to act for the retailer, provide accurate information, protect account credentials, and maintain required business and tax registrations.</p>
-      <h2>Permitted use</h2><p>You may use the service for lawful retail catalog, inventory and point-of-sale operations. You must have the rights and permissions needed for every garment, person, logo, trademark, photo and other item you upload.</p>
-      <h2>AI-generated content</h2><p>AI output may be inaccurate or unsuitable. You are responsible for reviewing output before publication and for ensuring product listings accurately represent the goods offered.</p>
-      <h2>Prohibited use</h2><p>Do not upload unlawful, infringing, deceptive, abusive or non-consensual content; attempt unauthorized access; interfere with the service; or use generated material to mislead customers.</p>
-      <h2>Retail operations</h2><p>You remain responsible for product quality, pricing, inventory accuracy, receipts, taxes, refunds, customer obligations and compliance with applicable laws.</p>
-      <h2>Suspension and termination</h2><p>We may restrict or terminate access for abuse, security risk, legal non-compliance or material breach. You may delete your account in the app. Legally required transaction and tax records may be retained.</p>
-      <h2>Availability and liability</h2><p>The service is provided on an “as available” basis. To the extent permitted by law, we are not liable for indirect or consequential loss, and total liability will not exceed amounts paid for the service during the preceding six months.</p>
-      <h2>Changes and governing law</h2><p>We may update these terms with notice through the service or this page. Indian law applies, subject to mandatory consumer and commercial protections.</p>
-      ${contactBlock()}`,
-      ),
-    );
+  app.get('/terms', async (_req, reply) => {
+    void reply
+      .type('text/html; charset=utf-8')
+      .send(layout('Terms of Service', await legalDocContent('terms')));
   });
 
   app.get('/support', (_req, reply) => {

@@ -123,6 +123,7 @@ import retailerBannersRoutes from '@/modules/retailer/banners/banners.routes.js'
 import adminDigestRoutes from '@/modules/admin/digest/digest.routes.js';
 import pincodeRoutes from '@/modules/_shared/pincode/pincode.routes.js';
 import publicLegalRoutes from '@/modules/public/legal.routes.js';
+import publicLegalApiRoutes from '@/modules/public/legal-api.routes.js';
 
 /**
  * Build a Fastify app with strict TypeScript routing via the Zod type provider.
@@ -267,6 +268,8 @@ export function buildApp() {
       // §2 Retailer Onboarding
       await api.register(adminOnboardingRoutes, { prefix: '/admin' });
       await api.register(retailerOnboardingRoutes, { prefix: '' });
+      // Public read-only legal content (latest published T&C / privacy) — no auth.
+      await api.register(publicLegalApiRoutes, { prefix: '/legal' });
       // §3 KYC & Compliance
       await api.register(adminComplianceRoutes, { prefix: '/admin' });
       await api.register(retailerComplianceRoutes, { prefix: '/retailer' });

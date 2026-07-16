@@ -9,16 +9,18 @@ import {
 } from '@/db/schema/index.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
-import { currentTerms } from '@/shared/terms.js';
+import { currentLegalDoc, type LegalDocKind } from '@/shared/terms.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
-import type { PublishTermsBody, VersionParam } from './terms.validators.js';
+import type { ListTermsQuery, PublishTermsBody, VersionParam } from './terms.validators.js';
 
 type Auth = AccessTokenPayload;
 
-/** Current terms + full version history with accept/decline counts. */
-export async function listTerms() {
-  const ct = await currentTerms(db);
+/** Current version of one legal document (+ its history with accept/decline counts). */
+export async function listTerms(input: { query: z.infer<typeof ListTermsQuery> }) {
+  const kind: LegalDocKind = input.query.kind;
+  const ct = await currentLegalDoc(db, kind);
   const versions = await db.query.retailerTerms.findMany({
+    where: eq(retailerTerms.kind, kind),
     orderBy: [desc(retailerTerms.createdAt)],
   });
   const counts = await db
@@ -47,14 +49,19 @@ export async function listTerms() {
   });
 }
 
-/** Publish a new terms version — becomes current, re-flagging every retailer to re-accept. */
+/** Publish a new version of one document — becomes current, re-flagging every retailer to re-accept it. */
 export async function publishTerms(input: { auth: Auth; body: z.infer<typeof PublishTermsBody> }) {
-  const countRows = await db.select({ n: sql<number>`count(*)::int` }).from(retailerTerms);
+  const kind: LegalDocKind = input.body.kind;
+  const countRows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(retailerTerms)
+    .where(eq(retailerTerms.kind, kind));
   const label = input.body.label?.trim() || `v${(countRows[0]?.n ?? 0) + 1}`;
   const [row] = await db
     .insert(retailerTerms)
     .values({
       id: newId(IdPrefix.TermsVersion),
+      kind,
       label,
       shortText: input.body.shortText,
       createdByAdminId: input.auth.sub,

@@ -59,6 +59,12 @@ export const retailerApplications = pgTable(
     bankIfsc: text('bank_ifsc'),
     // Password set by applicant during signup; used when admin provisions the account.
     passwordHash: text('password_hash'),
+    // Legal consent given ON THE SIGNUP FORM (T&C + Privacy Policy) — the versions that
+    // were current at submit time. Approval seeds retailer_terms_acceptances from these,
+    // so the retailer is only re-prompted post-login if a NEWER version shipped since.
+    legalConsentAt: timestamp('legal_consent_at', { withTimezone: true, mode: 'date' }),
+    consentTermsVersion: text('consent_terms_version'),
+    consentPrivacyVersion: text('consent_privacy_version'),
     submittedAt: timestamp('submitted_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
