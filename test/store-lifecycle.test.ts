@@ -538,5 +538,11 @@ describe('appeals queue (admin Pending Requests desk)', () => {
       payload: { body: 'Thank you — waiting for the reinstate.' },
     });
     expect((await queue()).find((r) => r.storeId === storeId)).toBeDefined();
+
+    // Restoring the store resolves the appeal de facto — even with the retailer as
+    // the last author, the thread must leave the desk (stale-card edge case).
+    await adminPost(`/stores/${storeId}/restore`);
+    expect((await storeRow(storeId))!.status).toBe('active');
+    expect((await queue()).find((r) => r.storeId === storeId)).toBeUndefined();
   });
 });

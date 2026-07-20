@@ -435,6 +435,13 @@
       "when": 1785300000000,
       "tag": "0061_application_legal_consent",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1785400000000,
+      "tag": "0062_acceptance_kind_index",
+      "breakpoints": true
     }
   ]
 }

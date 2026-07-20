@@ -46,9 +46,11 @@ export const retailerTermsAcceptances = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    // One ACCEPT per (store, version); declines are unconstrained (append-only log).
-    acceptedIdx: uniqueIndex('retailer_terms_acceptances_store_version_idx')
-      .on(t.storeId, t.termsVersion)
+    // One ACCEPT per (store, document, version); declines are unconstrained (append-only
+    // log). doc_kind is part of the key: a legacy pre-kind row pointing at the other
+    // document's version id must not swallow a genuine accept via onConflictDoNothing.
+    acceptedIdx: uniqueIndex('retailer_terms_acceptances_store_kind_version_idx')
+      .on(t.storeId, t.docKind, t.termsVersion)
       .where(sql`${t.decision} = 'accepted'`),
   }),
 );

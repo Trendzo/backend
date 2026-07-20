@@ -556,13 +556,21 @@ export async function listPendingAppeals() {
   });
   const byId = new Map(stores.map((s) => [s.id, s]));
   return ok(
-    awaiting.map((m) => ({
-      storeId: m.storeId,
-      storeName: byId.get(m.storeId)?.legalName ?? null,
-      storeStatus: byId.get(m.storeId)?.status ?? null,
-      lastMessageAt: m.at.toISOString(),
-      lastMessagePreview: m.body.slice(0, 140),
-    })),
+    awaiting
+      // An appeal is only actionable while the store is actually down. Once it's
+      // restored (by any path), a trailing retailer message is moot — the thread
+      // stays readable on the store page but must not sit on the desk forever.
+      .filter((m) => {
+        const status = byId.get(m.storeId)?.status;
+        return status === 'suspended' || status === 'terminated';
+      })
+      .map((m) => ({
+        storeId: m.storeId,
+        storeName: byId.get(m.storeId)?.legalName ?? null,
+        storeStatus: byId.get(m.storeId)?.status ?? null,
+        lastMessageAt: m.at.toISOString(),
+        lastMessagePreview: m.body.slice(0, 140),
+      })),
   );
 }
 

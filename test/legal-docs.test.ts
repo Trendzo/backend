@@ -9,7 +9,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { db, pool } from '@/db/client.js';
-import { adminAccounts, retailerAccounts, retailerStores } from '@/db/schema/index.js';
+import {
+  adminAccounts,
+  retailerAccounts,
+  retailerStores,
+  retailerTermsAcceptances,
+} from '@/db/schema/index.js';
 import { signAccessToken } from '@/shared/auth/jwt.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { assertTermsAcceptedForGoLive } from '@/shared/terms.js';
@@ -233,6 +238,28 @@ describe('privacy policy pipeline (mirror of the T&C)', () => {
     const termsHtml = await app.inject({ method: 'GET', url: '/terms' });
     expect(termsHtml.body).not.toContain('Public-view marker');
     expect(termsHtml.body).toContain('Retailer Terms');
+  });
+
+  it('a legacy cross-kind acceptance row does not swallow a genuine accept (prod incident)', async () => {
+    const { storeId, retailerToken } = await makeStore();
+    const privacy = data(await retailerGet('/privacy', retailerToken));
+
+    // Legacy row written by the pre-kind backend: doc_kind 'terms' pointing at the
+    // PRIVACY version id. The old (store, version) unique index made the real
+    // privacy accept below a silent no-op.
+    await db.insert(retailerTermsAcceptances).values({
+      id: newId('term'),
+      storeId,
+      acceptedByAccountId: 'ret_legacy',
+      docKind: 'terms',
+      termsVersion: privacy.version,
+      decision: 'accepted',
+    });
+
+    const accept = await retailerPost('/privacy/accept', retailerToken, { version: privacy.version });
+    expect(accept.statusCode).toBe(200);
+    const me = data(await retailerGet('/me', retailerToken));
+    expect(me.privacyAcceptanceRequired).toBe(false);
   });
 
   it('declining the privacy policy is recorded but leaves it required', async () => {
