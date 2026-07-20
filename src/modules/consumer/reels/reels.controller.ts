@@ -211,17 +211,23 @@ export async function uploadReelMedia(req: FastifyRequest) {
   });
 
   // Enforce the 30s cap against the server-measured duration (authoritative — the client
-  // value is not trusted). Reject and clean up the just-uploaded asset so an over-long clip
+  // value is not trusted). Reject and clean up the just-uploaded asset so a rejected clip
   // never leaves an orphan behind.
-  if (result.duration != null && Math.round(result.duration) > REEL_MAX_DURATION_SEC) {
-    const measured = Math.round(result.duration);
+  //
+  // An UNMEASURABLE duration is also fatal. Cloudinary always reported one, so the old
+  // `duration != null &&` guard never fired; with ffprobe a failed probe is a realistic
+  // outcome, and treating it as "fine" would let a clip of any length through.
+  const measured = result.duration != null ? Math.round(result.duration) : null;
+  if (measured === null || measured > REEL_MAX_DURATION_SEC) {
     try {
       await deleteObject(result.publicId, 'video');
     } catch {
       /* swallow — orphaned asset is acceptable, the validation error is what matters */
     }
     throw AppError.validation(
-      `Reel too long — max ${REEL_MAX_DURATION_SEC}s, got ${measured}s. Trim it and try again.`,
+      measured === null
+        ? "Couldn't read this video — re-export it and try again."
+        : `Reel too long — max ${REEL_MAX_DURATION_SEC}s, got ${measured}s. Trim it and try again.`,
     );
   }
 
@@ -229,7 +235,8 @@ export async function uploadReelMedia(req: FastifyRequest) {
     videoUrl: result.url,
     videoPublicId: result.publicId,
     thumbnailUrl: result.thumbnailUrl ?? null,
-    durationSec: result.duration != null ? Math.round(result.duration) : null,
+    // Non-null past the guard above.
+    durationSec: measured,
     width: result.width ?? null,
     height: result.height ?? null,
     bytes: result.bytes,

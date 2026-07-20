@@ -1,6 +1,8 @@
 import type { Readable } from 'node:stream';
 import { env } from '@/config/env.js';
 import { cloudinaryDriver } from './drivers/cloudinary.driver.js';
+import { memoryDriver } from './drivers/memory.driver.js';
+import { s3Driver } from './drivers/s3.driver.js';
 import type { ResourceKind, StorageDriver, UploadOptions, UploadResult } from './types.js';
 
 /**
@@ -18,10 +20,9 @@ function resolveDriver(): StorageDriver {
     case 'cloudinary':
       return cloudinaryDriver;
     case 's3':
+      return s3Driver;
     case 'memory':
-      // Implementations land in a later step; until then the enum value is accepted but
-      // still resolves to the legacy driver, so nothing can silently run half-migrated.
-      return cloudinaryDriver;
+      return memoryDriver;
   }
 }
 

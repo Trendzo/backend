@@ -60,6 +60,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/ffprobe-static": "^2.0.3",
     "@types/pdfkit": "^0.17.6",
     "@typescript-eslint/eslint-plugin": "^8.16.0",
     "@typescript-eslint/parser": "^8.16.0",

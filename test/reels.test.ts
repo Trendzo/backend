@@ -475,6 +475,31 @@ describe('reels — media upload (storage mocked)', () => {
     });
     expect(res.statusCode).toBe(422);
   });
+
+  it('rejects a clip whose duration cannot be measured', async () => {
+    // Cloudinary always reported a duration, so the old `duration != null &&` guard meant
+    // an unmeasurable clip silently bypassed the 30s cap. ffprobe can genuinely fail, so
+    // an unknown duration has to be fatal rather than permissive.
+    vi.mocked(uploadObject).mockResolvedValueOnce({
+      url: 'https://cdn.example/unknown.mp4',
+      publicId: 'reels/unknown',
+      bytes: 4096,
+      width: 720,
+      height: 1280,
+      format: 'mp4',
+      resourceType: 'video',
+      // no duration
+    });
+    const { body, contentType } = multipart('video/mp4');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/reels/media',
+      headers: { ...auth(ctoken), 'content-type': contentType },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(422);
+    expect(json(res).error.message).toContain("Couldn't read this video");
+  });
 });
 
 describe('reels — moderation', () => {

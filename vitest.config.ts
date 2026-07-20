@@ -23,6 +23,9 @@ export default defineConfig({
       RAZORPAY_KEY_ID: '',
       RAZORPAY_KEY_SECRET: '',
       RAZORPAY_WEBHOOK_SECRET: '',
+      // In-process storage: uploads exercise the real key derivation, sniffing and guards
+      // without touching Cloudinary or S3. A developer's .env may carry live credentials.
+      STORAGE_DRIVER: 'memory',
     },
     pool: 'forks',
     poolOptions: { forks: { singleFork: true } },
