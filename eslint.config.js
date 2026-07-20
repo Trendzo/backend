@@ -38,7 +38,27 @@ export default [
       'no-console': ['warn', { allow: ['warn', 'error'] }],
       'prefer-const': 'error',
       eqeqeq: ['error', 'always'],
+      // One upload service, enforced. Storage vendor SDKs may only be imported by the
+      // drivers; everything else goes through `@/shared/storage/index.js`. Without this
+      // the rule is a convention people drift from.
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@aws-sdk/*', 'cloudinary'],
+              message:
+                'Import storage through @/shared/storage/index.js — vendor SDKs belong in src/shared/storage/drivers/ only.',
+            },
+          ],
+        },
+      ],
     },
+  },
+  {
+    // The drivers are the one place a vendor SDK is allowed.
+    files: ['src/shared/storage/drivers/**/*.ts'],
+    rules: { 'no-restricted-imports': 'off' },
   },
   {
     ignores: ['dist/**', 'node_modules/**', 'src/db/migrations/**'],

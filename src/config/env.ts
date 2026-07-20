@@ -66,11 +66,37 @@ const EnvSchema = z
 
     TCS_RATE_BP: z.coerce.number().int().nonnegative().default(100),
 
-    // Cloudinary — single media-upload provider for the platform. Optional at boot
-    // so dev environments without media work, but `POST /uploads` will 503 until set.
+    // Cloudinary — the legacy media provider, kept while the S3 migration runs.
+    // Optional at boot so dev environments without media work, but uploads 503 until
+    // set (when STORAGE_DRIVER=cloudinary).
     CLOUDINARY_CLOUD_NAME: z.string().min(1).optional(),
     CLOUDINARY_API_KEY: z.string().min(1).optional(),
     CLOUDINARY_API_SECRET: z.string().min(1).optional(),
+
+    // Storage driver — the migration switch. 'cloudinary' keeps the legacy provider,
+    // 's3' sends every upload to our own bucket, 'memory' is the in-process fake the
+    // test suite runs on. Flipping this needs no code change, so a bad rollout is one
+    // env var and a restart away from reverted.
+    STORAGE_DRIVER: z.enum(['cloudinary', 's3', 'memory']).default('cloudinary'),
+
+    // Bucket + region. Optional at boot so dev environments without AWS still start;
+    // uploads 503 until set (same stance as Cloudinary above).
+    S3_BUCKET: z.string().min(3).optional(),
+    AWS_REGION: z.string().min(1).default('ap-south-1'),
+
+    // Public read hostname — the CloudFront distribution in front of the bucket. The
+    // bucket itself blocks all public access, so this is the ONLY way an asset is
+    // world-readable, and it is what Google Vertex fetches for AI try-on inputs.
+    S3_PUBLIC_BASE_URL: z.string().url().optional(),
+
+    // Static credentials. Leave unset in AWS-hosted environments — the SDK's default
+    // provider chain picks up the task/instance role, which beats long-lived keys.
+    AWS_ACCESS_KEY_ID: optionalSecret(16),
+    AWS_SECRET_ACCESS_KEY: optionalSecret(32),
+
+    // Key namespace so one bucket can serve dev/staging/prod without collision.
+    // Empty in production for clean URLs.
+    S3_KEY_PREFIX: z.string().default(''),
 
     // AI image generation provider switch — selects which backend the AI catalog
     // module calls. Both providers ultimately run Gemini's image model; OpenRouter

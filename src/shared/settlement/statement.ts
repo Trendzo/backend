@@ -7,7 +7,6 @@
  */
 import { and, eq, gte, lt } from 'drizzle-orm';
 import { db } from '@/db/client.js';
-import { env } from '@/config/env.js';
 import {
   billingStatements,
   invoices,
@@ -18,7 +17,7 @@ import {
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { newId } from '@/shared/ids.js';
-import { uploadToCloudinary } from '@/shared/cloudinary.js';
+import { isStorageConfigured, uploadObject } from '@/shared/storage/index.js';
 import { renderInvoicePdf } from '@/shared/invoicing/pdf.js';
 
 export type CloseResult = {
@@ -230,7 +229,7 @@ async function renderAndUploadStatementPdf(input: {
   netPayoutPaise: bigint;
   orderCount: number;
 }): Promise<void> {
-  if (!env.CLOUDINARY_CLOUD_NAME || !env.CLOUDINARY_API_KEY || !env.CLOUDINARY_API_SECRET) return;
+  if (!isStorageConfigured()) return;
   const n = (b: bigint) => Number(b);
   const buffer = await renderInvoicePdf({
     title: 'MONTHLY BILLING STATEMENT',
@@ -273,9 +272,10 @@ async function renderAndUploadStatementPdf(input: {
     },
     footer: `Net payout: ₹${(n(input.netPayoutPaise) / 100).toFixed(2)}. Dispute holds: ₹${(n(input.disputeLiabilitiesPaise) / 100).toFixed(2)}. Adjustments: ₹${(n(input.adjustmentsPaise) / 100).toFixed(2)}.`,
   });
-  const up = await uploadToCloudinary(buffer, {
+  const up = await uploadObject(buffer, {
     folder: 'closetx/billing-statements',
     resourceType: 'raw',
+    contentType: 'application/pdf',
     publicId: `STMT-${input.period}-${input.store.id.slice(-8)}`,
   });
   await db.update(billingStatements).set({ pdfUrl: up.url }).where(eq(billingStatements.id, input.statementId));

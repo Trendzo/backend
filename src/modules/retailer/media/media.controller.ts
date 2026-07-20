@@ -12,16 +12,14 @@ import { db } from '@/db/client.js';
 import { retailerAccounts, storeMedia } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
-import { uploadToCloudinary } from '@/shared/cloudinary.js';
+import { uploadObject } from '@/shared/storage/index.js';
+import { assertListingMedia, assertNotTruncated } from '@/shared/uploads/limits.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { getAuth } from '@/shared/auth/middleware.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import { ListMediaQuery, UploadMediaQuery } from './media.validators.js';
 
 type Auth = AccessTokenPayload;
-
-const LISTING_GALLERY_MAX_BYTES = 5 * 1024 * 1024;
-const LISTING_GALLERY_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 async function getStoreId(retailerId: string): Promise<string> {
   const retailer = await db.query.retailerAccounts.findFirst({
@@ -50,26 +48,17 @@ export async function uploadMedia(req: FastifyRequest) {
   }
 
   const buffer = await file.toBuffer();
-  if (file.file.truncated) {
-    throw AppError.validation('File too large — limit is 25 MB');
-  }
-
-  const purpose = parsedQuery.data.purpose;
-  if (purpose === 'listing-gallery' || purpose === 'listing-description') {
-    if (buffer.length > LISTING_GALLERY_MAX_BYTES) {
-      throw AppError.validation('File too large — listing images are capped at 5 MB');
-    }
-    if (!LISTING_GALLERY_MIMES.has(file.mimetype)) {
-      throw AppError.validation(
-        `Unsupported format '${file.mimetype}' — listing images must be JPEG, PNG, or WebP`,
-      );
-    }
-  }
+  assertNotTruncated(file.file.truncated);
+  assertListingMedia(parsedQuery.data.purpose, buffer.length, file.mimetype);
 
   const folderSuffix = parsedQuery.data.folder ?? 'uploads';
   const folder = `closetx/${folderSuffix.replace(/^\/+|\/+$/g, '')}`;
 
-  const result = await uploadToCloudinary(buffer, { folder });
+  const result = await uploadObject(buffer, {
+    folder,
+    contentType: file.mimetype,
+    filename: file.filename,
+  });
 
   const [row] = await db
     .insert(storeMedia)

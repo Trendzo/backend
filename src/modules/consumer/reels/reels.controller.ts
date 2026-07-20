@@ -1,6 +1,6 @@
 /**
  * Consumer reels — short fashion videos with a social layer. Two-step create: the client
- * first uploads the video to /media (backend → Cloudinary), then POSTs the returned URLs
+ * first uploads the video to /media (backend → object storage), then POSTs the returned URLs
  * here. Counters on `reels` are denormalised and updated inside the like/save/comment
  * transactions. Mirrors the moodboards/community controller style (Drizzle inline, no
  * service layer, ok()/AppError envelope).
@@ -20,11 +20,7 @@ import {
   reels,
 } from '@/db/schema/index.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
-import {
-  buildVideoThumbnailUrl,
-  deleteFromCloudinary,
-  uploadToCloudinary,
-} from '@/shared/cloudinary.js';
+import { deleteObject, uploadObject } from '@/shared/storage/index.js';
 import { isConsumerBannedFrom } from '@/shared/consumers/ban-surface.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
@@ -40,7 +36,7 @@ type Auth = AccessTokenPayload;
 
 const REEL_MAX_BYTES = 100 * 1024 * 1024; // per-request override of the 25 MB global cap
 const REEL_VIDEO_MIMES = new Set(['video/mp4', 'video/quicktime', 'video/webm']);
-// Reels are "short" by product rule — hard-capped at 30s against Cloudinary's authoritative
+// Reels are "short" by product rule — hard-capped at 30s against the server-measured
 // duration (the client-reported durationSec is only advisory and can't be trusted).
 const REEL_MAX_DURATION_SEC = 30;
 
@@ -185,9 +181,9 @@ async function viewerFlags(consumerId: string, reelIds: string[]) {
 // ── media upload (step 1) ──
 
 /**
- * Upload one reel video to Cloudinary and return its URLs + metadata. Takes `req`
- * directly because multipart access is Fastify-specific. Overrides the global 25 MB
- * multipart cap to 100 MB for this route only.
+ * Upload one reel video and return its URLs + metadata. Takes `req` directly because
+ * multipart access is Fastify-specific. Overrides the global 25 MB multipart cap to
+ * 100 MB for this route only.
  */
 export async function uploadReelMedia(req: FastifyRequest) {
   const file = await req.file({ limits: { fileSize: REEL_MAX_BYTES } });
@@ -206,17 +202,21 @@ export async function uploadReelMedia(req: FastifyRequest) {
     throw AppError.validation('File too large — reels are capped at 100 MB');
   }
 
-  const result = await uploadToCloudinary(buffer, {
+  const result = await uploadObject(buffer, {
     folder: 'closetx/reels',
     resourceType: 'video',
+    contentType: file.mimetype,
+    filename: file.filename,
+    videoThumbnail: true,
   });
 
-  // Enforce the 30s cap against Cloudinary's measured duration (authoritative). Reject and
-  // clean up the just-uploaded asset so an over-long clip never leaves an orphan behind.
+  // Enforce the 30s cap against the server-measured duration (authoritative — the client
+  // value is not trusted). Reject and clean up the just-uploaded asset so an over-long clip
+  // never leaves an orphan behind.
   if (result.duration != null && Math.round(result.duration) > REEL_MAX_DURATION_SEC) {
     const measured = Math.round(result.duration);
     try {
-      await deleteFromCloudinary(result.publicId, 'video');
+      await deleteObject(result.publicId, 'video');
     } catch {
       /* swallow — orphaned asset is acceptable, the validation error is what matters */
     }
@@ -225,12 +225,10 @@ export async function uploadReelMedia(req: FastifyRequest) {
     );
   }
 
-  const thumbnailUrl = buildVideoThumbnailUrl(result.publicId);
-
   return ok({
     videoUrl: result.url,
     videoPublicId: result.publicId,
-    thumbnailUrl,
+    thumbnailUrl: result.thumbnailUrl ?? null,
     durationSec: result.duration != null ? Math.round(result.duration) : null,
     width: result.width ?? null,
     height: result.height ?? null,
@@ -368,9 +366,9 @@ export async function deleteReel(input: { auth: Auth; id: string }) {
   if (!row) throw new AppError(404, ErrorCode.NotFound, 'Reel not found');
   // FK cascade clears likes/saves/comments.
   await db.delete(reels).where(eq(reels.id, input.id));
-  // Best-effort Cloudinary cleanup — DB is the source of truth, don't fail the request.
+  // Best-effort storage cleanup — DB is the source of truth, don't fail the request.
   try {
-    await deleteFromCloudinary(row.videoPublicId, 'video');
+    await deleteObject(row.videoPublicId, 'video');
   } catch {
     /* swallow — orphaned asset is acceptable */
   }

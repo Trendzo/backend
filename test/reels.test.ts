@@ -1,19 +1,24 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-// Mock Cloudinary so /media and reel-delete never touch the network. Hoisted above imports.
-vi.mock('@/shared/cloudinary.js', () => ({
-  uploadToCloudinary: vi.fn(async () => ({
+// Mock the storage service so /media and reel-delete never touch the network. Hoisted
+// above imports. The thumbnail now comes back on the upload result rather than from a
+// separate URL-builder — under S3 it is a real stored object, not a derived URL.
+vi.mock('@/shared/storage/index.js', () => ({
+  uploadObject: vi.fn(async () => ({
     url: 'https://cdn.example/test.mp4',
-    publicId: 'closetx/reels/testpub',
+    publicId: 'reels/testpub',
     bytes: 2048,
     width: 720,
     height: 1280,
     format: 'mp4',
     resourceType: 'video',
     duration: 12.7,
+    contentType: 'video/mp4',
+    thumbnailUrl: 'https://cdn.example/reels/thumbs/testpub.jpg',
+    thumbnailPublicId: 'reels/thumbs/testpub.jpg',
   })),
-  buildVideoThumbnailUrl: vi.fn((publicId: string) => `https://cdn.example/${publicId}.jpg`),
-  deleteFromCloudinary: vi.fn(async () => undefined),
+  deleteObject: vi.fn(async () => undefined),
+  isStorageConfigured: vi.fn(() => true),
 }));
 
 import { db, pool } from '@/db/client.js';
@@ -31,7 +36,7 @@ import {
   variants,
 } from '@/db/schema/index.js';
 import { signAccessToken } from '@/shared/auth/jwt.js';
-import { uploadToCloudinary } from '@/shared/cloudinary.js';
+import { uploadObject } from '@/shared/storage/index.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { buildApp } from '@/app.js';
 
@@ -423,7 +428,7 @@ describe('reels — saves & views', () => {
   });
 });
 
-describe('reels — media upload (cloudinary mocked)', () => {
+describe('reels — media upload (storage mocked)', () => {
   it('accepts a video and returns URLs + duration', async () => {
     const { body, contentType } = multipart('video/mp4');
     const res = await app.inject({
@@ -450,10 +455,10 @@ describe('reels — media upload (cloudinary mocked)', () => {
     expect(res.statusCode).toBe(422);
   });
 
-  it('rejects a clip longer than 30s (Cloudinary duration authoritative)', async () => {
-    vi.mocked(uploadToCloudinary).mockResolvedValueOnce({
+  it('rejects a clip longer than 30s (server-measured duration authoritative)', async () => {
+    vi.mocked(uploadObject).mockResolvedValueOnce({
       url: 'https://cdn.example/long.mp4',
-      publicId: 'closetx/reels/long',
+      publicId: 'reels/long',
       bytes: 4096,
       width: 720,
       height: 1280,

@@ -11,7 +11,7 @@ import {
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { newId } from '@/shared/ids.js';
-import { uploadToCloudinary } from '@/shared/cloudinary.js';
+import { uploadObject } from '@/shared/storage/index.js';
 import { generateCatalogImage } from '@/shared/ai-image.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
@@ -94,9 +94,10 @@ async function runGeneration(
   try {
     const gen = await generateCatalogImage(input);
     const buffer = Buffer.from(gen.base64, 'base64');
-    const upload = await uploadToCloudinary(buffer, {
+    const upload = await uploadObject(buffer, {
       folder: 'closetx/ai-catalog',
       resourceType: 'image',
+      contentType: 'image/png',
     });
     await db
       .update(aiCatalogSubmissions)

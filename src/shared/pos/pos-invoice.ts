@@ -13,9 +13,9 @@
 import { eq } from 'drizzle-orm';
 import { db } from '@/db/client.js';
 import { invoices, retailerStores as retailerStoresTable } from '@/db/schema/index.js';
-import { env } from '@/config/env.js';
 import { newId } from '@/shared/ids.js';
-import { uploadToCloudinary } from '@/shared/cloudinary.js';
+import { isStorageConfigured, uploadObject } from '@/shared/storage/index.js';
+import { sanitizeKeySegment } from '@/shared/storage/keys.js';
 import {
   composeNumber,
   currentFiscalYear,
@@ -127,7 +127,7 @@ async function renderAndUploadPosInvoicePdf(input: {
   invoiceNumber: string;
   data: PosInvoiceData;
 }): Promise<void> {
-  if (!isCloudinaryConfigured()) return;
+  if (!isStorageConfigured()) return;
   const { data } = input;
   const inter = data.taxSplitKind === 'inter_state';
   const lines: InvoiceLine[] = data.lines.map((l) => {
@@ -183,14 +183,11 @@ async function renderAndUploadPosInvoicePdf(input: {
     },
   });
 
-  const up = await uploadToCloudinary(buffer, {
+  const up = await uploadObject(buffer, {
     folder: 'closetx/pos-invoices',
     resourceType: 'raw',
-    publicId: input.invoiceNumber.replace(/[^a-zA-Z0-9._-]/g, '_'),
+    contentType: 'application/pdf',
+    publicId: sanitizeKeySegment(input.invoiceNumber),
   });
   await db.update(invoices).set({ pdfUrl: up.url }).where(eq(invoices.id, input.invoiceId));
-}
-
-function isCloudinaryConfigured(): boolean {
-  return Boolean(env.CLOUDINARY_CLOUD_NAME && env.CLOUDINARY_API_KEY && env.CLOUDINARY_API_SECRET);
 }

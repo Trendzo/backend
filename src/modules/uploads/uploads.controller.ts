@@ -1,18 +1,16 @@
 import type { FastifyRequest } from 'fastify';
 import { AppError } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
-import { uploadToCloudinary } from '@/shared/cloudinary.js';
+import { uploadObject } from '@/shared/storage/index.js';
+import { assertListingMedia, assertNotTruncated } from '@/shared/uploads/limits.js';
 import { UploadQuery } from './uploads.validators.js';
-
-const LISTING_GALLERY_MAX_BYTES = 5 * 1024 * 1024;
-const LISTING_GALLERY_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 /**
  * Single media-upload endpoint for the platform. Accepts one file in a multipart body,
- * pushes it to Cloudinary, and returns the public URL plus a bit of metadata. Any
- * authenticated user (admin / retailer / consumer) can call it; the uploaded asset's
- * public URL is returned for the caller to wire into whatever record they're building
- * (product gallery, store photo, support attachment, etc.).
+ * stores it, and returns the public URL plus a bit of metadata. Any authenticated user
+ * (admin / retailer / consumer) can call it; the uploaded asset's public URL is returned
+ * for the caller to wire into whatever record they're building (product gallery, store
+ * photo, support attachment, etc.).
  *
  * Takes `req` directly — multipart body access (`req.file()`) is Fastify-specific.
  */
@@ -33,29 +31,16 @@ export async function uploadMedia(req: FastifyRequest) {
 
   // The plugin truncates if the limit is hit; check after reading.
   const buffer = await file.toBuffer();
-  if (file.file.truncated) {
-    throw AppError.validation('File too large — limit is 25 MB');
-  }
-
-  // Listing media (gallery + rich-description images) share a tighter 5 MB cap
-  // + format filter per US-5.2.4.
-  const purpose = parsedQuery.data.purpose;
-  if (purpose === 'listing-gallery' || purpose === 'listing-description') {
-    if (buffer.length > LISTING_GALLERY_MAX_BYTES) {
-      throw AppError.validation('File too large — listing images are capped at 5 MB');
-    }
-    if (!LISTING_GALLERY_MIMES.has(file.mimetype)) {
-      throw AppError.validation(
-        `Unsupported format '${file.mimetype}' — listing images must be JPEG, PNG, or WebP`,
-      );
-    }
-  }
+  assertNotTruncated(file.file.truncated);
+  assertListingMedia(parsedQuery.data.purpose, buffer.length, file.mimetype);
 
   const folderSuffix = parsedQuery.data.folder ?? 'uploads';
   const folder = `closetx/${folderSuffix.replace(/^\/+|\/+$/g, '')}`;
 
-  const result = await uploadToCloudinary(buffer, {
+  const result = await uploadObject(buffer, {
     folder,
+    contentType: file.mimetype,
+    filename: file.filename,
     ...(parsedQuery.data.resourceType !== undefined && {
       resourceType: parsedQuery.data.resourceType,
     }),

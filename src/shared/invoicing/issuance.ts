@@ -24,8 +24,8 @@ import {
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { newId } from '@/shared/ids.js';
-import { uploadToCloudinary } from '@/shared/cloudinary.js';
-import { env } from '@/config/env.js';
+import { isStorageConfigured, uploadObject } from '@/shared/storage/index.js';
+import { sanitizeKeySegment } from '@/shared/storage/keys.js';
 import { composeNumber, currentFiscalYear, resolveNumberingRule, reserveNextSequence } from './numbering.js';
 import { renderInvoicePdf, type InvoiceLine } from './pdf.js';
 
@@ -279,7 +279,7 @@ async function renderAndUploadInvoicePdf(input: {
   consumerName: string;
   billingAddress: string;
 }): Promise<void> {
-  if (!isCloudinaryConfigured()) {
+  if (!isStorageConfigured()) {
     return; // skip in environments without media uploads
   }
   const lines: InvoiceLine[] = input.lineRows.map((li) => {
@@ -340,10 +340,11 @@ async function renderAndUploadInvoicePdf(input: {
     },
   });
 
-  const up = await uploadToCloudinary(buffer, {
+  const up = await uploadObject(buffer, {
     folder: 'closetx/invoices',
     resourceType: 'raw',
-    publicId: sanitizePublicId(input.invoiceNumber),
+    contentType: 'application/pdf',
+    publicId: sanitizeKeySegment(input.invoiceNumber),
   });
   await db.update(invoices).set({ pdfUrl: up.url }).where(eq(invoices.id, input.invoiceId));
 }
@@ -483,7 +484,7 @@ async function renderAndUploadCreditNotePdf(input: {
   tcsReversedPaise: number;
   grandTotalReversedPaise: number;
 }): Promise<void> {
-  if (!isCloudinaryConfigured()) return;
+  if (!isStorageConfigured()) return;
 
   const taxSplit = input.parent.taxSplitKind;
   const cgst = taxSplit === 'intra_state' ? Math.floor(input.taxReversedPaise / 2) : 0;
@@ -532,10 +533,11 @@ async function renderAndUploadCreditNotePdf(input: {
       grandTotalPaise: input.grandTotalReversedPaise,
     },
   });
-  const up = await uploadToCloudinary(buffer, {
+  const up = await uploadObject(buffer, {
     folder: 'closetx/credit-notes',
     resourceType: 'raw',
-    publicId: sanitizePublicId(input.creditNoteNumber),
+    contentType: 'application/pdf',
+    publicId: sanitizeKeySegment(input.creditNoteNumber),
   });
   await db.update(creditNotes).set({ pdfUrl: up.url }).where(eq(creditNotes.id, input.creditNoteId));
 }
@@ -555,11 +557,4 @@ function buildBillingAddress(order: typeof ordersTable.$inferSelect): string {
   return parts.join(', ');
 }
 
-function isCloudinaryConfigured(): boolean {
-  return Boolean(env.CLOUDINARY_CLOUD_NAME && env.CLOUDINARY_API_KEY && env.CLOUDINARY_API_SECRET);
-}
-
-function sanitizePublicId(id: string): string {
-  return id.replace(/[^a-zA-Z0-9._-]/g, '_');
-}
 

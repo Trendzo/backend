@@ -1,7 +1,6 @@
 import { desc, eq } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
-import { env } from '@/config/env.js';
 import {
   gstReturnFiles,
   invoiceNumberingRules,
@@ -10,7 +9,7 @@ import {
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { newId } from '@/shared/ids.js';
-import { uploadToCloudinary } from '@/shared/cloudinary.js';
+import { isStorageConfigured, uploadObject } from '@/shared/storage/index.js';
 import {
   issueCreditNoteForRefund,
   issueInvoiceForOrder,
@@ -124,10 +123,11 @@ export async function generateGstReturn(input: {
         ? await generateGstr1B2cCsv({ period: body.period })
         : await generateTcsReconciliationCsv({ period: body.period });
     let downloadUrl: string | null = null;
-    if (env.CLOUDINARY_CLOUD_NAME && env.CLOUDINARY_API_KEY && env.CLOUDINARY_API_SECRET) {
-      const up = await uploadToCloudinary(generated.buffer, {
+    if (isStorageConfigured()) {
+      const up = await uploadObject(generated.buffer, {
         folder: 'closetx/gst-returns',
         resourceType: 'raw',
+        contentType: 'text/csv',
         publicId: `${body.kind}-${body.period}-${id.slice(-8)}`,
       });
       downloadUrl = up.url;

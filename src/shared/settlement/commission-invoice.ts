@@ -10,7 +10,6 @@
  */
 import { and, eq } from 'drizzle-orm';
 import { db } from '@/db/client.js';
-import { env } from '@/config/env.js';
 import {
   invoices,
   orders as ordersTable,
@@ -18,7 +17,8 @@ import {
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { newId } from '@/shared/ids.js';
-import { uploadToCloudinary } from '@/shared/cloudinary.js';
+import { isStorageConfigured, uploadObject } from '@/shared/storage/index.js';
+import { sanitizeKeySegment } from '@/shared/storage/keys.js';
 import { composeNumber, currentFiscalYear, resolveNumberingRule, reserveNextSequence } from '@/shared/invoicing/numbering.js';
 import { renderInvoicePdf } from '@/shared/invoicing/pdf.js';
 
@@ -157,9 +157,7 @@ async function renderAndUploadCommissionPdf(input: {
   store: typeof retailerStoresTable.$inferSelect;
   orderId: string;
 }): Promise<void> {
-  if (!env.CLOUDINARY_CLOUD_NAME || !env.CLOUDINARY_API_KEY || !env.CLOUDINARY_API_SECRET) {
-    return;
-  }
+  if (!isStorageConfigured()) return;
   const buffer = await renderInvoicePdf({
     title: 'COMMISSION INVOICE',
     number: input.invoiceNumber,
@@ -201,14 +199,11 @@ async function renderAndUploadCommissionPdf(input: {
     },
     footer: `Commission invoice issued by ClosetX to ${input.store.legalName} (${input.store.gstin}). Eligible for input tax credit.`,
   });
-  const up = await uploadToCloudinary(buffer, {
+  const up = await uploadObject(buffer, {
     folder: 'closetx/commission-invoices',
     resourceType: 'raw',
-    publicId: sanitizePublicId(input.invoiceNumber),
+    contentType: 'application/pdf',
+    publicId: sanitizeKeySegment(input.invoiceNumber),
   });
   await db.update(invoices).set({ pdfUrl: up.url }).where(eq(invoices.id, input.invoiceId));
-}
-
-function sanitizePublicId(id: string): string {
-  return id.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
