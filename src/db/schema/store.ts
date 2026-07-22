@@ -70,6 +70,13 @@ export const retailerStores = pgTable(
     // value (and > 0). Default 5 matches the legacy hardcoded constant.
     lowStockThreshold: integer('low_stock_threshold').notNull().default(5),
 
+    // Retailer self-serve "stop accepting orders" toggle. NULL = accepting.
+    // A future timestamp = closed until that instant, then auto-reopens (lazy at
+    // order time + a sweep flips it back). Set to the START of the store's next
+    // opening window when the retailer goes offline; cleared to reopen early.
+    // Orthogonal to `status`/`pause` (admin) — this is the retailer's own switch.
+    orderPauseUntil: timestamp('order_pause_until', { withTimezone: true, mode: 'date' }),
+
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),

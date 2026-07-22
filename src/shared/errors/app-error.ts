@@ -9,6 +9,11 @@ export const ErrorCode = {
   NotFound: 'not_found',
   InvalidCredentials: 'invalid_credentials',
   EmailAlreadyTaken: 'email_already_taken',
+  // Signup collision that names exactly which identifier(s) are taken. `details`
+  // carries { emailTaken, phoneTaken, accountEmailTaken, accountPhoneTaken,
+  // accountExists } so the UI can say precisely which field, and offer the right
+  // login method(s) when an existing account owns them.
+  SignupIdentifierTaken: 'signup_identifier_taken',
 
   // Validation
   ValidationError: 'validation_error',

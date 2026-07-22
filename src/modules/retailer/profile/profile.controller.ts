@@ -102,6 +102,12 @@ export async function getMe(input: { auth: Auth }) {
           platformFeeBp: store.platformFeeBp,
           payoutCadenceDays: store.payoutCadenceDays,
           posBillingEnabled: store.posBillingEnabled,
+          // Retailer self-serve online/offline toggle. `orderPauseUntil` in the
+          // future = offline (auto-reopens at that instant); null/past = online.
+          orderPauseUntil:
+            store.orderPauseUntil && store.orderPauseUntil > new Date()
+              ? store.orderPauseUntil.toISOString()
+              : null,
           suspendReason: store.suspendReason,
           pauseReason: store.pauseReason,
           contactPhone: store.contactPhone ?? null,

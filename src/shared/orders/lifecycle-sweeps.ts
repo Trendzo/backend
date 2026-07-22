@@ -29,6 +29,7 @@ import {
   orders,
   payments,
   platformConfig,
+  retailerStores,
   returns,
 } from '@/db/schema/index.js';
 import { markExpired } from '@/shared/held-items/dispositions.js';
@@ -518,6 +519,36 @@ export async function sweepPickupNoShows(database: typeof Db): Promise<number> {
 
 /* ── Orchestrator ────────────────────────────────────────────────────────── */
 
+/**
+ * Auto-reopen stores whose retailer-set "stop accepting orders" window has
+ * elapsed: `order_pause_until <= now` → clear it back to NULL and ping the store
+ * accounts. Order acceptance is already correct lazily (compute-quote treats a
+ * past `orderPauseUntil` as accepting); this just makes the persisted state and
+ * the retailer/consumer UI reflect reality without waiting for an order attempt.
+ */
+export async function sweepAutoReopenStores(database: typeof Db): Promise<number> {
+  const now = new Date();
+  const due = await database
+    .update(retailerStores)
+    .set({ orderPauseUntil: null })
+    .where(and(isNotNull(retailerStores.orderPauseUntil), lt(retailerStores.orderPauseUntil, now)))
+    .returning({ id: retailerStores.id });
+
+  for (const s of due) {
+    try {
+      await notifyStoreAccounts({
+        storeId: s.id,
+        kind: 'system',
+        title: "You're back online",
+        body: 'Your store is accepting orders again.',
+      });
+    } catch (e) {
+      console.error(`[lifecycle-sweep] auto-reopen notify failed for ${s.id}: ${(e as Error).message}`);
+    }
+  }
+  return due.length;
+}
+
 export type SweepCounts = {
   autoClosed: number;
   pendingCancelled: number;
@@ -530,6 +561,7 @@ export type SweepCounts = {
   pickupNoShowCancelled: number;
   kycMarkedOverdue: number;
   kycStoresPaused: number;
+  storesAutoReopened: number;
 };
 
 const ZERO_COUNTS: SweepCounts = {
@@ -544,6 +576,7 @@ const ZERO_COUNTS: SweepCounts = {
   pickupNoShowCancelled: 0,
   kycMarkedOverdue: 0,
   kycStoresPaused: 0,
+  storesAutoReopened: 0,
 };
 
 let running = false;
@@ -599,6 +632,11 @@ export async function runLifecycleSweeps(database: typeof Db): Promise<SweepCoun
       counts.kycStoresPaused = r.storesPaused;
     } catch (e) {
       console.error(`[lifecycle-sweep] kyc-deadlines failed: ${(e as Error).message}`);
+    }
+    try {
+      counts.storesAutoReopened = await sweepAutoReopenStores(database);
+    } catch (e) {
+      console.error(`[lifecycle-sweep] auto-reopen failed: ${(e as Error).message}`);
     }
   } finally {
     running = false;

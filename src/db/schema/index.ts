@@ -9,6 +9,7 @@ export * from './brands.js';
 export * from './categories.js';
 export * from './products.js';
 export * from './catalog.js';
+export * from './bulk-mockups.js';
 export * from './collections.js';
 export * from './cart.js';
 export * from './orders.js';

@@ -237,6 +237,16 @@ export const aiCatalogStatus = pgEnum('ai_catalog_status', [
   'regenerating',
   'failed',
 ]);
+// Bulk-mockup queue job lifecycle (beta). queued → processing → ready | failed;
+// cancelled (only from queued) and dismissed (user-cleared) are terminal.
+export const bulkMockupStatus = pgEnum('bulk_mockup_status', [
+  'queued',
+  'processing',
+  'ready',
+  'failed',
+  'cancelled',
+  'dismissed',
+]);
 export const collectionKind = pgEnum('collection_kind', [
   'outfit', // curated multi-listing look (frontend's "GET THE LOOK" bundles)
   'occasion', // contextual grouping ("Brunch", "Party", "Beach")

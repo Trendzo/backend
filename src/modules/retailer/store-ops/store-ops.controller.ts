@@ -18,11 +18,13 @@ import { ok } from '@/shared/http/envelope.js';
 import { recordAudit } from '@/shared/audit.js';
 import { assertCycleAcceptsUploads, upsertKycDocument } from '@/shared/kyc/upload.js';
 import { storeTransition } from '@/shared/lifecycle/transitions.js';
+import { isAcceptingOrders, nextStoreOpenAt } from '@/shared/store/order-acceptance.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
   HolidayCreateBody,
   InboxQuery,
   NotificationPrefsBody,
+  OrderAcceptanceBody,
   PickupSlotCreateBody,
   PickupSlotPatchBody,
   StoreHoursBody,
@@ -267,6 +269,62 @@ export async function resumeStore(input: { auth: Auth; requestId: string }) {
     requestId,
   });
   return ok({ storeId: store.id, status: 'active' });
+}
+
+/**
+ * Retailer self-serve "accepting orders" state. Distinct from the admin pause:
+ * this is the retailer's own online/offline switch. Going offline stops order
+ * placement until the store's next opening window (auto-reopen); the retailer
+ * can reopen early. `orderPauseUntil` is treated lazily — a past value already
+ * means "accepting".
+ */
+export async function getOrderAcceptance(input: { auth: Auth }) {
+  const store = await loadStore(input.auth.sub);
+  const accepting = isAcceptingOrders(store);
+  return ok({
+    accepting,
+    orderPauseUntil: accepting ? null : (store.orderPauseUntil?.toISOString() ?? null),
+  });
+}
+
+export async function setOrderAcceptance(input: {
+  auth: Auth;
+  body: z.infer<typeof OrderAcceptanceBody>;
+  requestId: string;
+}) {
+  const { auth, body, requestId } = input;
+  const store = await loadStore(auth.sub);
+  const before = { orderPauseUntil: store.orderPauseUntil?.toISOString() ?? null };
+
+  let orderPauseUntil: Date | null = null;
+  if (!body.accepting) {
+    const closures = await db.query.storeHolidayClosures.findMany({
+      where: eq(storeHolidayClosures.storeId, store.id),
+      columns: { date: true },
+    });
+    const holidays = new Set(closures.map((c) => c.date));
+    orderPauseUntil = nextStoreOpenAt(store.openingHours, holidays, new Date());
+  }
+
+  await db
+    .update(retailerStores)
+    .set({ orderPauseUntil })
+    .where(eq(retailerStores.id, store.id));
+
+  await recordAudit({
+    actor: auth,
+    action: body.accepting ? 'store.orders_resume' : 'store.orders_pause',
+    resourceKind: 'retailer_store',
+    resourceId: store.id,
+    before,
+    after: { orderPauseUntil: orderPauseUntil?.toISOString() ?? null },
+    requestId,
+  });
+
+  return ok({
+    accepting: body.accepting,
+    orderPauseUntil: orderPauseUntil?.toISOString() ?? null,
+  });
 }
 
 export async function getNotificationPrefs(input: { auth: Auth }) {

@@ -8,6 +8,7 @@ import {
   IdParam,
   InboxQuery,
   NotificationPrefsBody,
+  OrderAcceptanceBody,
   PickupSlotCreateBody,
   PickupSlotPatchBody,
   StoreHoursBody,
@@ -83,6 +84,26 @@ const retailerStoreOpsRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (req) =>
       ctrl.deleteHolidayClosure({ auth: getAuth(req), date: req.params.date }),
+  );
+
+  app.get(
+    '/store/order-acceptance',
+    { preHandler: requirePermission('store.view_profile') },
+    async (req) => ctrl.getOrderAcceptance({ auth: getAuth(req) }),
+  );
+
+  app.put(
+    '/store/order-acceptance',
+    {
+      preHandler: requirePermission('store.edit_profile'),
+      schema: { body: OrderAcceptanceBody },
+    },
+    async (req) =>
+      ctrl.setOrderAcceptance({
+        auth: getAuth(req),
+        body: req.body,
+        requestId: req.id,
+      }),
   );
 
   app.post(

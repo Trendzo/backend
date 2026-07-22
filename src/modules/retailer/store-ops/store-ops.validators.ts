@@ -34,6 +34,11 @@ export const StorePauseBody = z.object({
   pauseUntil: z.string().datetime().optional(),
 });
 
+export const OrderAcceptanceBody = z.object({
+  /** true = start accepting orders (reopen early); false = stop accepting now. */
+  accepting: z.boolean(),
+});
+
 export const NotificationPrefsBody = z.object({
   pushEnabled: z.boolean().optional(),
   emailEnabled: z.boolean().optional(),

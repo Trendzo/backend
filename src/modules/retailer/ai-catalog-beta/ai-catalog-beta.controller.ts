@@ -6,12 +6,10 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { newId } from '@/shared/ids.js';
 import { uploadObject } from '@/shared/storage/index.js';
-import { generateCatalogImage } from '@/shared/ai-image.js';
 import { virtualTryOn } from '@/shared/vertex-tryon.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import { createListing, createVariant } from '@/modules/retailer/listings/listings.controller.js';
-import { MODEL_POSES, PRODUCT_ANGLES } from './ai-catalog-beta.angles.js';
-import { mapLimit } from '@/shared/concurrency.js';
+import { generateMockupViews } from '@/shared/ai-catalog/generate-views.js';
 import type {
   DecisionBody,
   ListQuery,
@@ -38,112 +36,6 @@ async function loadStore(retailerId: string) {
   });
   if (!store) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
   return store;
-}
-
-// Max image-gen calls in flight per submission. Vertex Dynamic Shared Quota
-// 429s on bursts, so cap the angle fan-out instead of firing every view at once.
-const IMAGE_GEN_CONCURRENCY = 2;
-
-// Generate one image and store it on Cloudinary; returns the URL.
-async function genAndUpload(input: {
-  prompt: string;
-  mode: 'with_model' | 'without_model';
-  referenceImageUrls: string[];
-  posePreferences?: string[];
-}): Promise<string> {
-  const gen = await generateCatalogImage(input);
-  const buffer = Buffer.from(gen.base64, 'base64');
-  const uploaded = await uploadObject(buffer, {
-    folder: BETA_FOLDER,
-    resourceType: 'image',
-    contentType: 'image/png',
-  });
-  return uploaded.url;
-}
-
-/**
- * Shared multi-angle generation: optional design-print phase, then one shot per
- * angle preset (with real-back-photo handling). Stateless — used by both the
- * persisted submission flow and the stateless quick-mockups endpoint.
- */
-async function generateMockupViews(body: z.infer<typeof SubmissionBody>): Promise<{
-  printedUrl: string | null;
-  views: { name: string; url: string }[];
-}> {
-  const basePrompt = body.prompt?.trim() ?? '';
-
-  // Optional close-up references (fabric pattern, logo, brand tag). Appended to
-  // every view's reference set so the model reproduces those exact details.
-  const detailRefs: string[] = [];
-  const detailWhat: string[] = [];
-  if (body.patternCloseupUrl) {
-    detailRefs.push(body.patternCloseupUrl);
-    detailWhat.push('fabric pattern/texture');
-  }
-  if (body.logoCloseupUrl) {
-    detailRefs.push(body.logoCloseupUrl);
-    detailWhat.push('logo/monogram');
-  }
-  if (body.tagLabelUrl) {
-    detailRefs.push(body.tagLabelUrl);
-    detailWhat.push('brand tag/label');
-  }
-  const detailNote = detailWhat.length
-    ? ` The additional close-up reference image(s) show the garment's ${detailWhat.join(', ')} — reproduce those details faithfully; the FIRST reference is the whole garment.`
-    : '';
-
-  // Model gender note — only meaningful for on-model shots.
-  const modelNote =
-    body.mode === 'with_model' && body.modelGender
-      ? ` The model is a ${body.modelGender === 'him' ? 'man' : 'woman'}.`
-      : '';
-
-  // Optional design-print phase: composite the design onto the plain apparel,
-  // then shoot every angle off that printed product for consistency.
-  let printedUrl: string | null = null;
-  let baseRefs = body.apparelImageUrls;
-  if (body.designImageUrl) {
-    printedUrl = await genAndUpload({
-      prompt: [
-        'Print the graphic in the LAST reference image realistically onto the front of',
-        'the plain garment in the FIRST reference image, following the fabric folds and',
-        'lighting so it looks physically applied. Keep the garment colour, shape and',
-        `fabric unchanged. ${basePrompt}`,
-      ]
-        .join(' ')
-        .trim(),
-      mode: body.mode,
-      referenceImageUrls: [...body.apparelImageUrls, body.designImageUrl],
-    });
-    baseRefs = [printedUrl];
-  }
-
-  const angles = (body.mode === 'without_model' ? PRODUCT_ANGLES : MODEL_POSES).filter(
-    (a) => !body.only || body.only.length === 0 || body.only.includes(a.name),
-  );
-  // Back views render from the real back photo when one was supplied and no
-  // design was printed — otherwise the model just echoes the front image. The
-  // preset back poses assume "the back is blank" (right for the front-only
-  // design case); when a real back photo IS the reference, override that pose.
-  const backPose = (name: string) =>
-    name === 'model-back'
-      ? 'full-body view from BEHIND showing the back of the garment, neutral seamless studio backdrop, professional fashion lighting; reproduce the garment back exactly as in the reference image — colour, fabric, cut, seams, and any back graphic'
-      : 'back view, ghost-mannequin / invisible-mannequin, centered, clean seamless white background, soft even studio lighting; reproduce the garment back exactly as in the reference image — colour, fabric, cut, seams, and any back graphic';
-
-  const views = await mapLimit(angles, IMAGE_GEN_CONCURRENCY, async (a) => {
-    const isBackView = a.name === 'back' || a.name === 'model-back';
-    const useBack = isBackView && !!body.apparelBackImageUrl && !body.designImageUrl;
-    const mainRef = useBack ? [body.apparelBackImageUrl as string] : baseRefs;
-    const url = await genAndUpload({
-      prompt: `${basePrompt || 'Polished, listing-ready product photograph.'}${detailNote}${modelNote}`.trim(),
-      mode: body.mode,
-      referenceImageUrls: [...mainRef, ...detailRefs],
-      posePreferences: [useBack ? backPose(a.name) : a.pose],
-    });
-    return { name: a.name, url };
-  });
-
-  return { printedUrl, views };
 }
 
 /**
@@ -198,7 +90,7 @@ export async function createSubmission(input: {
   });
 
   try {
-    const { printedUrl, views } = await generateMockupViews(body);
+    const { printedUrl, views } = await generateMockupViews(body, BETA_FOLDER);
     const outputUrls = [...(printedUrl ? [printedUrl] : []), ...views.map((v) => v.url)];
 
     const [row] = await db
@@ -354,7 +246,7 @@ export async function getSubmission(input: { auth: Auth; id: string }) {
  */
 export async function quickMockups(input: { auth: Auth; body: z.infer<typeof MockupsBody> }) {
   await loadStore(input.auth.sub);
-  const { printedUrl, views } = await generateMockupViews(input.body);
+  const { printedUrl, views } = await generateMockupViews(input.body, BETA_FOLDER);
   return ok({ printed: printedUrl, images: views });
 }
 

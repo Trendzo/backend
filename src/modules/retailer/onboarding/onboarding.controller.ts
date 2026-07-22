@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, or } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
@@ -30,46 +30,116 @@ import type {
 
 type Auth = AccessTokenPayload;
 
+type IdentityCollision = {
+  accountEmailTaken: boolean;
+  accountPhoneTaken: boolean;
+  appEmail: { id: string; status: string } | null;
+  appPhone: { id: string; status: string } | null;
+};
+
+/**
+ * Resolve which identifier(s) collide, per field, across both approved accounts
+ * and existing applications. Kept field-granular (not a single OR) so the caller
+ * can tell the user EXACTLY which of email/phone is taken and offer the matching
+ * login method.
+ */
+async function resolveIdentityCollision(
+  email: string | undefined,
+  phone: string | undefined,
+): Promise<IdentityCollision> {
+  const [acctEmail, acctPhone, appEmail, appPhone] = await Promise.all([
+    email
+      ? db.query.retailerAccounts.findFirst({
+          where: eq(retailerAccounts.email, email),
+          columns: { id: true },
+        })
+      : Promise.resolve(undefined),
+    phone
+      ? db.query.retailerAccounts.findFirst({
+          where: eq(retailerAccounts.phone, phone),
+          columns: { id: true },
+        })
+      : Promise.resolve(undefined),
+    email
+      ? db.query.retailerApplications.findFirst({
+          where: eq(retailerApplications.ownerEmail, email),
+          columns: { id: true, status: true },
+        })
+      : Promise.resolve(undefined),
+    phone
+      ? db.query.retailerApplications.findFirst({
+          where: eq(retailerApplications.ownerPhone, phone),
+          columns: { id: true, status: true },
+        })
+      : Promise.resolve(undefined),
+  ]);
+  return {
+    accountEmailTaken: !!acctEmail,
+    accountPhoneTaken: !!acctPhone,
+    appEmail: appEmail ?? null,
+    appPhone: appPhone ?? null,
+  };
+}
+
+/** Human message naming exactly which identifier(s) are already registered. */
+function identifierTakenMessage(emailTaken: boolean, phoneTaken: boolean): string {
+  if (emailTaken && phoneTaken) return 'This email and phone number are both already registered.';
+  if (emailTaken) return 'This email is already registered.';
+  if (phoneTaken) return 'This phone number is already registered.';
+  return 'These details are already registered.';
+}
+
 export async function submitApplication(input: {
   body: z.infer<typeof SubmitApplicationBody>;
 }) {
   const { body } = input;
-  // Block duplicate submissions by email or phone.
-  const accountCollision = await db.query.retailerAccounts.findFirst({
-    where: or(
-      eq(retailerAccounts.email, body.ownerEmail),
-      eq(retailerAccounts.phone, body.ownerPhone),
-    ),
-    columns: { id: true, email: true },
-  });
-  if (accountCollision) {
+  // Block duplicate submissions — but say EXACTLY which identifier collides so the
+  // UI can point the user at the right recovery (log in / status page / re-apply).
+  const col = await resolveIdentityCollision(body.ownerEmail, body.ownerPhone);
+  const appEmailActive = col.appEmail != null && col.appEmail.status !== 'rejected';
+  const appPhoneActive = col.appPhone != null && col.appPhone.status !== 'rejected';
+
+  // 1) An approved/active ACCOUNT owns one or both identifiers → they must sign in.
+  if (col.accountEmailTaken || col.accountPhoneTaken) {
     throw new AppError(
       409,
-      ErrorCode.EmailAlreadyTaken,
-      'A retailer account with this email or phone already exists',
+      ErrorCode.SignupIdentifierTaken,
+      identifierTakenMessage(col.accountEmailTaken, col.accountPhoneTaken),
+      {
+        emailTaken: col.accountEmailTaken,
+        phoneTaken: col.accountPhoneTaken,
+        accountEmailTaken: col.accountEmailTaken,
+        accountPhoneTaken: col.accountPhoneTaken,
+        accountExists: true,
+      },
     );
   }
-  const applicationCollision = await db.query.retailerApplications.findFirst({
-    where: or(
-      eq(retailerApplications.ownerEmail, body.ownerEmail),
-      eq(retailerApplications.ownerPhone, body.ownerPhone),
-    ),
-    columns: { id: true, status: true },
-  });
-  if (applicationCollision) {
-    if (applicationCollision.status === 'rejected') {
-      throw new AppError(
-        409,
-        ErrorCode.ApplicationRejected,
-        'A previous application with this email or phone was rejected. Sign in on the status page to re-apply on the same record.',
-        { applicationId: applicationCollision.id },
-      );
-    }
+
+  // 2) An application under review (pending/approved-but-not-yet-account) is on file.
+  if (appEmailActive || appPhoneActive) {
+    const hit = (appEmailActive ? col.appEmail : col.appPhone)!;
     throw new AppError(
       409,
       ErrorCode.ApplicationPending,
-      'An application with this email or phone is already on file.',
-      { applicationId: applicationCollision.id },
+      `${identifierTakenMessage(appEmailActive, appPhoneActive)} An application is already on file — check its status.`,
+      {
+        emailTaken: appEmailActive,
+        phoneTaken: appPhoneActive,
+        accountExists: false,
+        applicationId: hit.id,
+        applicationStatus: hit.status,
+      },
+    );
+  }
+
+  // 3) Only a REJECTED application matches → sign in on the status page to re-apply.
+  if (col.appEmail?.status === 'rejected' || col.appPhone?.status === 'rejected') {
+    const hit = (col.appEmail?.status === 'rejected' ? col.appEmail : col.appPhone)!;
+    throw new AppError(
+      409,
+      ErrorCode.ApplicationRejected,
+      'A previous application with this email or phone was rejected. Sign in on the status page to re-apply on the same record.',
+      { applicationId: hit.id },
     );
   }
 
@@ -157,51 +227,28 @@ export async function checkIdentity(input: {
 }) {
   const { email, phone } = input.query;
   if (!email && !phone) {
-    return ok({ emailTaken: false, phoneTaken: false });
+    return ok({
+      emailTaken: false,
+      phoneTaken: false,
+      accountExists: false,
+      accountEmailTaken: false,
+      accountPhoneTaken: false,
+      applicationStatus: null,
+      applicationId: null,
+    });
   }
 
-  // Account-level collisions (already approved retailer) → must sign in, no reapply.
-  let accountEmailTaken = false;
-  let accountPhoneTaken = false;
-  if (email) {
-    const acct = await db.query.retailerAccounts.findFirst({
-      where: eq(retailerAccounts.email, email),
-      columns: { id: true },
-    });
-    accountEmailTaken = !!acct;
-  }
-  if (phone) {
-    const acct = await db.query.retailerAccounts.findFirst({
-      where: eq(retailerAccounts.phone, phone),
-      columns: { id: true },
-    });
-    accountPhoneTaken = !!acct;
-  }
-
-  // Application-level collisions — return status so UI can offer the reapply route
-  // (rejected) or status-page route (pending/approved).
-  let appEmailHit: { id: string; status: string } | null = null;
-  let appPhoneHit: { id: string; status: string } | null = null;
-  if (email) {
-    const a = await db.query.retailerApplications.findFirst({
-      where: eq(retailerApplications.ownerEmail, email),
-      columns: { id: true, status: true },
-    });
-    if (a) appEmailHit = a;
-  }
-  if (phone) {
-    const a = await db.query.retailerApplications.findFirst({
-      where: eq(retailerApplications.ownerPhone, phone),
-      columns: { id: true, status: true },
-    });
-    if (a) appPhoneHit = a;
-  }
-
-  const appHit = appEmailHit ?? appPhoneHit;
+  const col = await resolveIdentityCollision(email, phone);
+  // Prefer the email hit for the reapply/status route, else the phone hit.
+  const appHit = col.appEmail ?? col.appPhone;
   return ok({
-    emailTaken: accountEmailTaken || !!appEmailHit,
-    phoneTaken: accountPhoneTaken || !!appPhoneHit,
-    accountExists: accountEmailTaken || accountPhoneTaken,
+    // Union (account OR any application, incl. rejected) — the gate the UI checks.
+    emailTaken: col.accountEmailTaken || !!col.appEmail,
+    phoneTaken: col.accountPhoneTaken || !!col.appPhone,
+    accountExists: col.accountEmailTaken || col.accountPhoneTaken,
+    // Field-granular account flags so the UI can offer the exact login method(s).
+    accountEmailTaken: col.accountEmailTaken,
+    accountPhoneTaken: col.accountPhoneTaken,
     applicationStatus: appHit?.status ?? null,
     applicationId: appHit?.id ?? null,
   });

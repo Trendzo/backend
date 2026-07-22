@@ -442,6 +442,20 @@
       "when": 1785400000000,
       "tag": "0062_acceptance_kind_index",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1785500000000,
+      "tag": "0063_store_order_pause",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1785600000000,
+      "tag": "0064_bulk_mockup_jobs",
+      "breakpoints": true
     }
   ]
 }

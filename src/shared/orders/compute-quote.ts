@@ -29,6 +29,7 @@ import {
   voucherCodes,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
+import { isAcceptingOrders } from '@/shared/store/order-acceptance.js';
 import { compute } from '@/shared/discounts/compute.js';
 import { resolveGstRateBp } from '@/shared/pos/gst-rates.js';
 import type {
@@ -331,6 +332,15 @@ export async function computeQuote(database: typeof Db, input: QuoteInput) {
       409,
       ErrorCode.OrderStoreUnavailable,
       `Store ${input.storeId} is not active (status='${store.status}')`,
+    );
+  }
+  // Retailer self-serve "stop accepting orders" toggle. Store stays browsable;
+  // only placement is rejected until it auto-reopens (or the retailer reopens).
+  if (!isAcceptingOrders(store)) {
+    throw new AppError(
+      409,
+      ErrorCode.OrderStoreUnavailable,
+      'This store is not accepting orders right now — please try again later.',
     );
   }
 
