@@ -7,26 +7,41 @@ const rate = (hsn: string | null, categorySlug: string | null, mrpRupees: number
 describe('resolveGstRateBp — GST 2.0 (eff 22-Sep-2025)', () => {
   describe('apparel price slab (≤ ₹2,500 → 5%, > ₹2,500 → 18%)', () => {
     it('cheap apparel is 5%', () => {
-      expect(rate(null, 'apparel', 999)).toBe(GstRateBp.reduced);
-      expect(rate(null, 'him-tshirts', 2500)).toBe(GstRateBp.reduced); // boundary inclusive
+      expect(rate(null, 'tops-tshirts', 999)).toBe(GstRateBp.reduced);
+      expect(rate(null, 'tops-tshirts', 2500)).toBe(GstRateBp.reduced); // boundary inclusive
     });
     it('premium apparel is 18%', () => {
-      expect(rate(null, 'apparel', 2501)).toBe(GstRateBp.standard);
-      expect(rate(null, 'her-dresses', 5000)).toBe(GstRateBp.standard);
+      expect(rate(null, 'bottoms-trousers', 2501)).toBe(GstRateBp.standard);
+      expect(rate(null, 'her-dresses-maxi', 5000)).toBe(GstRateBp.standard);
     });
     it('the old ₹1,000/12% slab is gone — a ₹1,500 tee is 5%, not 12%', () => {
-      expect(rate(null, 'apparel', 1500)).toBe(GstRateBp.reduced);
-      expect(rate(null, 'apparel', 1500)).not.toBe(GstRateBp.imitation_jewellery);
+      expect(rate(null, 'tops-tshirts', 1500)).toBe(GstRateBp.reduced);
+      expect(rate(null, 'tops-tshirts', 1500)).not.toBe(GstRateBp.imitation_jewellery);
+    });
+    it('classifies an unknown leaf by its parent, not by substring luck', () => {
+      // `denim-jeans` contains none of the old shirt/dress/bottom/top probes.
+      expect(rate(null, 'denim-jeans', 1200)).toBe(GstRateBp.reduced);
+      expect(rate(null, 'denim-jeans', 4000)).toBe(GstRateBp.standard);
     });
   });
 
   describe('footwear price slab (same ₹2,500 cutoff, HSN 6403)', () => {
     it('cheap footwear is 5%', () => {
-      expect(rate(null, 'footwear', 2000)).toBe(GstRateBp.reduced);
+      expect(rate(null, 'shoes-sneakers', 2000)).toBe(GstRateBp.reduced);
       expect(rate('6403', null, 2000)).toBe(GstRateBp.reduced);
     });
     it('premium footwear is 18%', () => {
-      expect(rate(null, 'footwear', 4000)).toBe(GstRateBp.standard);
+      expect(rate(null, 'shoes-heels', 4000)).toBe(GstRateBp.standard);
+    });
+    it('still resolves the retired flat slug from an old order snapshot', () => {
+      expect(rate(null, 'footwear', 2000)).toBe(GstRateBp.reduced);
+    });
+  });
+
+  describe('cosmetics — flat 18%, no price slab', () => {
+    it('a cheap lipstick is 18%, not 5%', () => {
+      expect(rate(null, 'beauty-makeup', 800)).toBe(GstRateBp.standard);
+      expect(rate('3304', null, 800)).toBe(GstRateBp.standard);
     });
   });
 
@@ -45,7 +60,17 @@ describe('resolveGstRateBp — GST 2.0 (eff 22-Sep-2025)', () => {
       expect(rate('7113', 'accessories', 50000)).toBe(GstRateBp.fine_jewellery);
     });
     it('accessory with no HSN defaults to 18%', () => {
-      expect(rate(null, 'accessories', 1200)).toBe(GstRateBp.standard);
+      expect(rate(null, 'accessories-belts', 1200)).toBe(GstRateBp.standard);
+      expect(rate(null, 'bags-totes', 1200)).toBe(GstRateBp.standard);
+    });
+    it('socks / tights / scarves are textiles, so they price-slab despite sitting under Accessories', () => {
+      expect(rate(null, 'accessories-socks', 400)).toBe(GstRateBp.reduced);
+      expect(rate(null, 'accessories-scarves', 400)).toBe(GstRateBp.reduced);
+    });
+    it('imitation jewellery leaves resolve to 12% without an explicit HSN', () => {
+      expect(rate(categoryDefaultHsn('her-jewelry-earrings'), 'her-jewelry-earrings', 800)).toBe(
+        GstRateBp.imitation_jewellery,
+      );
     });
   });
 
@@ -61,16 +86,29 @@ describe('resolveGstRateBp — GST 2.0 (eff 22-Sep-2025)', () => {
 });
 
 describe('categoryDefaultHsn', () => {
-  it('maps the core categories', () => {
-    expect(categoryDefaultHsn('footwear')).toBe('6403');
+  it('maps taxonomy parents', () => {
+    expect(categoryDefaultHsn('shoes')).toBe('6403');
     expect(categoryDefaultHsn('accessories')).toBe('4202');
-    expect(categoryDefaultHsn('apparel')).toBe('6109');
-  });
-  it('maps garment sub-categories', () => {
+    expect(categoryDefaultHsn('tops')).toBe('6109');
     expect(categoryDefaultHsn('her-dresses')).toBe('6204');
-    expect(categoryDefaultHsn('him-bottoms')).toBe('6203');
-    expect(categoryDefaultHsn('him-shirts')).toBe('6205');
-    expect(categoryDefaultHsn('him-tshirts')).toBe('6109');
+  });
+  it('inherits the parent default for leaves that have no override', () => {
+    expect(categoryDefaultHsn('tops-tshirts')).toBe('6109');
+    expect(categoryDefaultHsn('bottoms-chinos')).toBe('6203');
+    expect(categoryDefaultHsn('denim-jeans')).toBe('6203');
+    expect(categoryDefaultHsn('her-dresses-maxi')).toBe('6204');
+    expect(categoryDefaultHsn('shoes-sneakers')).toBe('6403');
+  });
+  it('applies leaf overrides where the parent default is wrong', () => {
+    expect(categoryDefaultHsn('tops-shirts')).toBe('6205'); // woven, not knitted
+    expect(categoryDefaultHsn('accessories-sunglasses')).toBe('9004');
+    expect(categoryDefaultHsn('accessories-watches')).toBe('9102');
+    expect(categoryDefaultHsn('bottoms-skirts')).toBe('6204');
+    expect(categoryDefaultHsn('beauty-fragrance')).toBe('3303');
+  });
+  it('still resolves retired flat slugs from pre-taxonomy snapshots', () => {
+    expect(categoryDefaultHsn('footwear')).toBe('6403');
+    expect(categoryDefaultHsn('apparel')).toBe('6109');
   });
   it('returns null for no category', () => {
     expect(categoryDefaultHsn(null)).toBeNull();

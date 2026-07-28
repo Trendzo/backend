@@ -1,4 +1,6 @@
 import Fastify, { type FastifyError } from 'fastify';
+import compress from '@fastify/compress';
+import etag from '@fastify/etag';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import {
@@ -123,8 +125,10 @@ import adminBannersRoutes from '@/modules/admin/banners/banners.routes.js';
 import retailerBannersRoutes from '@/modules/retailer/banners/banners.routes.js';
 import adminDigestRoutes from '@/modules/admin/digest/digest.routes.js';
 import pincodeRoutes from '@/modules/_shared/pincode/pincode.routes.js';
+import appConfigRoutes from '@/modules/public/app-config.routes.js';
 import publicLegalRoutes from '@/modules/public/legal.routes.js';
 import publicLegalApiRoutes from '@/modules/public/legal-api.routes.js';
+import mcpRoutes from '@/modules/mcp/mcp.routes.js';
 
 /**
  * Build a Fastify app with strict TypeScript routing via the Zod type provider.
@@ -189,6 +193,22 @@ export function buildApp() {
     : true;
   void app.register(cors, { origin: corsOrigin, credentials: true });
 
+  // Gzip every JSON response above ~1 KB. Catalog list payloads are highly
+  // repetitive JSON and compress roughly 8:1, which matters most on the mobile
+  // clients — nothing was compressed at all before this. Below the threshold the
+  // header overhead costs more than it saves, so small responses pass through.
+  void app.register(compress, {
+    global: true,
+    threshold: 1024,
+    encodings: ['gzip', 'deflate'],
+  });
+
+  // ETag + If-None-Match. Registered AFTER compress so the hash is computed over
+  // the uncompressed body and stays stable regardless of the client's encoding.
+  // Pays off once a client-side TTL lapses: the revalidation returns a bodiless
+  // 304 instead of re-sending a payload that has not changed.
+  void app.register(etag, { weak: true });
+
   // Multipart parser — only activates on `multipart/form-data` requests, leaves the
   // Zod-validated JSON routes untouched. Cap each upload at 25 MB.
   void app.register(multipart, {
@@ -206,6 +226,10 @@ export function buildApp() {
   // Health check
   app.get('/health', () => ok({ status: 'ok', uptime: process.uptime() }));
 
+  // Single external MCP endpoint (Streamable HTTP, stateless). Mounted at ROOT — third
+  // parties point their MCP client at <base>/mcp, independent of the /api/v1 REST surface.
+  void app.register(mcpRoutes, { prefix: '/mcp' });
+
   // Public pages required for App Store privacy, support, and deletion URLs.
   void app.register(publicLegalRoutes);
 
@@ -221,6 +245,9 @@ export function buildApp() {
       await api.register(authRoutes, { prefix: '/auth' });
       await api.register(catalogRoutes, { prefix: '/catalog' });
       await api.register(pincodeRoutes, { prefix: '/pincode' });
+      // Client-facing config the apps must not hardcode (support contact,
+      // try-on window, return window). Public — no per-user data.
+      await api.register(appConfigRoutes, { prefix: '/app-config' });
       await api.register(retailerProfileRoutes, { prefix: '/retailer' });
       await api.register(retailerListingsRoutes, { prefix: '/retailer' });
       await api.register(retailerBrandsRoutes, { prefix: '/retailer/brands' });

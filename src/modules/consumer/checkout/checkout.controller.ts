@@ -104,7 +104,11 @@ export async function placeConsumerGroupOrder(input: {
   return ok(result);
 }
 
-function orderListRow(o: typeof orders.$inferSelect) {
+function orderListRow(
+  o: typeof orders.$inferSelect & {
+    items: { listingNameSnap: string; brandSnap: string; galleryImageSnap: string | null; qty: number }[];
+  },
+) {
   return {
     id: o.id,
     groupId: o.groupId,
@@ -117,6 +121,15 @@ function orderListRow(o: typeof orders.$inferSelect) {
     grandTotalPaise: o.grandTotalPaise,
     placedAt: o.placedAt,
     deliveredAt: o.deliveredAt,
+    // Line preview so the history list can render a real card (thumbnail, item
+    // name, "+2 more") without an N+1 detail fetch per row.
+    itemCount: o.items.reduce((s, it) => s + it.qty, 0),
+    items: o.items.map((it) => ({
+      name: it.listingNameSnap,
+      brand: it.brandSnap,
+      image: it.galleryImageSnap,
+      qty: it.qty,
+    })),
   };
 }
 
@@ -125,6 +138,11 @@ export async function listOrders(input: { auth: Auth }) {
   const rows = await db.query.orders.findMany({
     where: eq(orders.consumerId, input.auth.sub),
     orderBy: [desc(orders.placedAt)],
+    with: {
+      items: {
+        columns: { listingNameSnap: true, brandSnap: true, galleryImageSnap: true, qty: true },
+      },
+    },
   });
   return ok(rows.map(orderListRow));
 }
@@ -402,7 +420,12 @@ function shapeOrderItem(it: {
  * snaps, cod cash, idempotencyKey, PII-scrub marker, etc. KEEPS deliveryOtp +
  * pickupCode — those are the consumer's own handover proofs.
  */
-function shapeOrderDetail(o: OrderRow & { items: Parameters<typeof shapeOrderItem>[0][] }) {
+function shapeOrderDetail(
+  o: OrderRow & {
+    items: Parameters<typeof shapeOrderItem>[0][];
+    store?: { lat: number; lng: number; contactPhone: string | null } | null;
+  },
+) {
   return {
     id: o.id,
     groupId: o.groupId,
@@ -428,6 +451,12 @@ function shapeOrderDetail(o: OrderRow & { items: Parameters<typeof shapeOrderIte
     storeAddressSnap: o.storeAddressSnap,
     storeGstinSnap: o.storeGstinSnap,
     storeStateCodeSnap: o.storeStateCodeSnap,
+    // Live store contact/geo (NOT snapshotted) — powers "Get directions" and
+    // "Call store" on a pickup order. Only these three columns; nothing else of
+    // the store row is consumer-safe.
+    storeLat: o.store?.lat ?? null,
+    storeLng: o.store?.lng ?? null,
+    storePhone: o.store?.contactPhone ?? null,
     // pricing snapshot
     itemsSubtotalPaise: o.itemsSubtotalPaise,
     retailerPromoPaise: o.retailerPromoPaise,
@@ -466,7 +495,10 @@ function shapeOrderDetail(o: OrderRow & { items: Parameters<typeof shapeOrderIte
 export async function getOrder(input: { auth: Auth; id: string }) {
   const order = await db.query.orders.findFirst({
     where: and(eq(orders.id, input.id), eq(orders.consumerId, input.auth.sub)),
-    with: { items: true },
+    with: {
+      items: true,
+      store: { columns: { lat: true, lng: true, contactPhone: true } },
+    },
   });
   if (!order) throw new AppError(404, ErrorCode.NotFound, 'Order not found');
   return ok(shapeOrderDetail(order));

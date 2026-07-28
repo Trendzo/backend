@@ -14,6 +14,32 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 
 const MODEL = 'gemini-2.5-flash-image';
 
+// Rate-limit (429) retry. Gemini's low/free image tiers throttle easily,
+// especially when a submission fans out several image calls at once
+// (IMAGE_GEN_CONCURRENCY). A single transient 429 otherwise fails the whole
+// submission ("Gemini call failed: ... Too Many Requests"). Retrying is safe:
+// a 429 means the call was rejected — no image generated, no billing. Delays
+// are bounded so total time stays inside the app's 120s request timeout.
+const RATE_LIMIT_MAX_ATTEMPTS = 2;
+const RATE_LIMIT_BASE_DELAY_MS = 1200;
+const RATE_LIMIT_MAX_DELAY_MS = 8000;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** True when a thrown Gemini SDK error is a 429 / rate-limit / quota rejection. */
+function isRateLimitError(err: unknown): boolean {
+  const anyErr = err as { status?: unknown; code?: unknown; response?: { status?: unknown } };
+  const status = anyErr?.status ?? anyErr?.code ?? anyErr?.response?.status;
+  if (status === 429 || status === '429') return true;
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes('429') ||
+    msg.includes('too many requests') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('rate limit')
+  );
+}
+
 /**
  * All catalog mockups are generated 3:4 portrait (Instagram feed format).
  * Must be set via the API's imageConfig — prompt-text hints alone are ignored
@@ -32,7 +58,10 @@ function getClient(): GoogleGenAI {
     );
   }
   // httpOptions.retryOptions.attempts = 1 → single attempt, NO automatic SDK
-  // retries (a retry on a 429/500 can bill for an extra generated image).
+  // retries. We control retries ourselves (429-only, see generateCatalogImage):
+  // the SDK would also retry 5xx/ambiguous responses, which could bill for an
+  // extra generated image. A 429 is safe to retry — the request was rejected,
+  // so no image was produced and nothing was billed.
   if (!client)
     client = new GoogleGenAI({
       apiKey: env.GEMINI_API_KEY,
@@ -108,15 +137,31 @@ export async function generateCatalogImage(input: GenerateInput): Promise<Genera
   parts.push({ text: composePrompt(input) });
 
   let response;
-  try {
-    response = await ai.models.generateContent({
-      model: MODEL,
-      contents: [{ role: 'user', parts }],
-      config: { imageConfig: { aspectRatio: CATALOG_IMAGE_ASPECT_RATIO } },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown Gemini error';
-    throw new AppError(502, ErrorCode.InternalError, `Gemini call failed: ${message}`);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      response = await ai.models.generateContent({
+        model: MODEL,
+        contents: [{ role: 'user', parts }],
+        config: { imageConfig: { aspectRatio: CATALOG_IMAGE_ASPECT_RATIO } },
+      });
+      break;
+    } catch (err) {
+      // Retry only on rate limits (safe: nothing generated/billed). Everything
+      // else fails fast.
+      if (isRateLimitError(err) && attempt < RATE_LIMIT_MAX_ATTEMPTS) {
+        const delay = Math.min(
+          RATE_LIMIT_BASE_DELAY_MS * 2 ** (attempt - 1) + Math.floor(Math.random() * 400),
+          RATE_LIMIT_MAX_DELAY_MS,
+        );
+        console.warn(
+          `[gemini] 429 rate limit (attempt ${attempt}/${RATE_LIMIT_MAX_ATTEMPTS}) — retrying in ${delay}ms`,
+        );
+        await sleep(delay);
+        continue;
+      }
+      const message = err instanceof Error ? err.message : 'Unknown Gemini error';
+      throw new AppError(502, ErrorCode.InternalError, `Gemini call failed: ${message}`);
+    }
   }
 
   const candidate = response.candidates?.[0];

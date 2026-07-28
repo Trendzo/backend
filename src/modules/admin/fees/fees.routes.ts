@@ -6,6 +6,7 @@ import {
   FeeOverrideBody,
   FeesUpdateBody,
   IdParam,
+  PayoutCadenceOverrideBody,
 } from './fees.validators.js';
 
 const adminFeesRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -30,6 +31,21 @@ const adminFeesRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (req) =>
       ctrl.setRetailerFeeOverride({
+        id: req.params.id,
+        auth: getAuth(req),
+        body: req.body,
+        requestId: req.id,
+      }),
+  );
+
+  app.patch(
+    '/retailers/:id/payout-cadence',
+    {
+      preHandler: requirePermission('store_management.edit'),
+      schema: { params: IdParam, body: PayoutCadenceOverrideBody },
+    },
+    async (req) =>
+      ctrl.setRetailerPayoutCadence({
         id: req.params.id,
         auth: getAuth(req),
         body: req.body,

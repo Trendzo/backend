@@ -6,6 +6,7 @@ import {
   CollectionsQuery,
   FacetsQuery,
   IdParam,
+  PickupSlotsQuery,
   ProductReviewsQuery,
   ProductsQuery,
   SizeScalesQuery,
@@ -69,6 +70,14 @@ const catalogRoutes: FastifyPluginAsyncZod = async (app) => {
     '/collections/:slug',
     { schema: { params: SlugParam } },
     async (req) => ctrl.getCollection(req.params.slug),
+  );
+
+  // Concrete upcoming pickup windows for a store, expanded from its recurring
+  // weekly template — the consumer app hands the chosen one back at placement.
+  app.get(
+    '/stores/:id/pickup-slots',
+    { schema: { params: IdParam, querystring: PickupSlotsQuery } },
+    async (req) => ctrl.listStorePickupSlots({ storeId: req.params.id, query: req.query }),
   );
 };
 

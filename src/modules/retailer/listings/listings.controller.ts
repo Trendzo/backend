@@ -362,10 +362,14 @@ export async function createListing(input: {
 
   const body = input.body;
   const [brand, category] = await Promise.all([
-    db.query.brands.findFirst({ where: eq(brands.id, body.brandId) }),
+    // Brand is optional on a draft — only look it up when one was supplied.
+    body.brandId
+      ? db.query.brands.findFirst({ where: eq(brands.id, body.brandId) })
+      : Promise.resolve(null),
     db.query.categories.findFirst({ where: eq(categories.id, body.categoryId) }),
   ]);
-  if (!brand) throw new AppError(404, ErrorCode.NotFound, `Brand ${body.brandId} not found`);
+  if (body.brandId && !brand)
+    throw new AppError(404, ErrorCode.NotFound, `Brand ${body.brandId} not found`);
   if (!category) throw new AppError(404, ErrorCode.NotFound, `Category ${body.categoryId} not found`);
   if (body.templateId) {
     const tpl = await db.query.attributeTemplates.findFirst({
@@ -395,7 +399,7 @@ export async function createListing(input: {
       .values({
         id,
         storeId: store.id,
-        brandId: body.brandId,
+        brandId: body.brandId ?? null,
         categoryId: body.categoryId,
         name: body.name,
         ...(body.description !== undefined && { description: body.description }),

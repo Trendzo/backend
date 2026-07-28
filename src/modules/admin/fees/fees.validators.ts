@@ -19,3 +19,8 @@ export const FeeOverrideBody = z.object({
   platformFeeBp: z.number().int().min(0).max(10000),
   reason: z.string().trim().min(3).max(500),
 });
+
+export const PayoutCadenceOverrideBody = z.object({
+  payoutCadenceDays: z.number().int().min(1).max(30),
+  reason: z.string().trim().min(3).max(500),
+});

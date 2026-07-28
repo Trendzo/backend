@@ -65,8 +65,8 @@ export async function priceCart(input: { auth: Auth; body: z.infer<typeof PriceC
   const cq = await computeCartQuote(db, {
     ...(auth?.sub && { consumerId: auth.sub }),
     items: body.items,
-    deliveryMethod: CART_DEFAULT_METHOD,
-    paymentMethod: CART_DEFAULT_PAYMENT,
+    deliveryMethod: body.deliveryMethod ?? CART_DEFAULT_METHOD,
+    paymentMethod: body.paymentMethod ?? CART_DEFAULT_PAYMENT,
     ...(body.couponCode !== undefined && { couponCode: body.couponCode }),
     ...(body.voucherCode !== undefined && { voucherCode: body.voucherCode }),
     ...(body.pointsToRedeem !== undefined && { pointsToRedeem: body.pointsToRedeem }),

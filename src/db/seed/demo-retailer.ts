@@ -107,17 +107,18 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
   });
   console.log(`  → seeded retailer account ${retailerId}`);
 
-  // 4. Resolve brand + category IDs (seeded by seedCatalogDefaults)
-  const [genericBrand, apparelCat, herDressesCat, herTopsCat, himShirtsCat] = await Promise.all([
+  // 4. Resolve brand + category IDs. Categories are taxonomy LEAVES (seeded by
+  // seedCategoryTaxonomy) — listings live on leaves so browse can find them.
+  const [genericBrand, teesCat, herDressesCat, herTopsCat, himShirtsCat] = await Promise.all([
     database.query.brands.findFirst({ where: eq(brands.slug, 'generic') }),
-    database.query.categories.findFirst({ where: eq(categories.slug, 'apparel') }),
-    database.query.categories.findFirst({ where: eq(categories.slug, 'her-dresses') }),
-    database.query.categories.findFirst({ where: eq(categories.slug, 'her-tops') }),
-    database.query.categories.findFirst({ where: eq(categories.slug, 'him-shirts') }),
+    database.query.categories.findFirst({ where: eq(categories.slug, 'tops-tshirts') }),
+    database.query.categories.findFirst({ where: eq(categories.slug, 'her-dresses-midi') }),
+    database.query.categories.findFirst({ where: eq(categories.slug, 'tops-blouses') }),
+    database.query.categories.findFirst({ where: eq(categories.slug, 'tops-shirts') }),
   ]);
 
   const brandId = genericBrand?.id ?? null;
-  const catApparel = apparelCat?.id ?? (await ensureCategory(database, 'apparel'));
+  const catApparel = teesCat?.id ?? (await ensureCategory(database, 'tops-tshirts'));
   const catDresses = herDressesCat?.id ?? catApparel;
   const catTops = herTopsCat?.id ?? catApparel;
   const catShirts = himShirtsCat?.id ?? catApparel;
@@ -567,13 +568,22 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
   console.log(`  → seeded ${orderCount} orders`);
 }
 
-// Fallback: insert a minimal category if catalog-defaults hasn't run yet
-async function ensureCategory(database: typeof Db, _slug: string): Promise<string> {
+/**
+ * Fallback: insert a minimal category if the taxonomy seed hasn't run yet. Previously
+ * this ignored its `slug` argument and always wrote `apparel-<id>`, so the fallback
+ * produced a junk category that nothing else could ever look up again.
+ */
+async function ensureCategory(database: typeof Db, slug: string): Promise<string> {
+  const existing = await database.query.categories.findFirst({
+    where: eq(categories.slug, slug),
+    columns: { id: true },
+  });
+  if (existing) return existing.id;
   const id = newId(IdPrefix.Category);
   await database.insert(categories).values({
     id,
-    slug: `apparel-${id}`,
-    label: 'Apparel',
+    slug,
+    label: slug,
     gender: 'unisex',
     sortOrder: 10,
     isActive: true,

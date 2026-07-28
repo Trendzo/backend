@@ -21,6 +21,11 @@ export const PriceQuoteBody = z.object({
  *  coupon/voucher + points apply ONCE across the whole cart (split per store). */
 export const PriceCartBody = z.object({
   items: Items,
+  // Optional so the bag screen can still ask for a plain preview. Supplied by the
+  // review screen, where the customer has already chosen — without it the quote
+  // priced the DEFAULT method and the shown total disagreed with what was charged.
+  deliveryMethod: z.enum(['express', 'standard', 'pickup', 'try_and_buy']).optional(),
+  paymentMethod: z.enum(['upi', 'card', 'cod', 'wallet', 'gift_card']).optional(),
   couponCode: z.string().trim().optional(),
   voucherCode: z.string().trim().optional(),
   pointsToRedeem: z.number().int().nonnegative().optional(),

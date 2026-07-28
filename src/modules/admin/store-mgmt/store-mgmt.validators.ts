@@ -23,7 +23,7 @@ export const StoreCreateBody = z.object({
   lng: z.number(),
   openingHours: HoursSchema,
   platformFeeBp: z.number().int().min(0).max(10_000).default(1500),
-  payoutCadenceDays: z.number().int().min(1).max(30).default(7),
+  payoutCadenceDays: z.number().int().min(1).max(30).default(15),
 });
 
 export const StoreEditBody = z

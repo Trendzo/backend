@@ -60,7 +60,7 @@ export const retailerStores = pgTable(
     deliveryOverridePaise: integer('delivery_override_paise'),
     handlingFeePaise: integer('handling_fee_paise').notNull().default(0),
     convenienceFeePaise: integer('convenience_fee_paise').notNull().default(0),
-    payoutCadenceDays: integer('payout_cadence_days').notNull().default(7),
+    payoutCadenceDays: integer('payout_cadence_days').notNull().default(15),
     delegationModeEnabled: boolean('delegation_mode_enabled').notNull().default(false),
     // Per-retailer opt-in for the offline POS / counter-billing surface. Admin-controlled
     // (Admin Portal toggle or by approving a retailer activation request). Defaults false —

@@ -31,13 +31,50 @@ export const GstRateBp = {
 /** Apparel & footwear price slab: at or below this MRP/piece the reduced (5%) rate applies. */
 export const APPAREL_FOOTWEAR_SLAB_PAISE = 250_000; // ₹2,500
 
-type GstKind = 'apparel' | 'footwear' | 'accessory';
+type GstKind = 'apparel' | 'footwear' | 'accessory' | 'cosmetics';
 
-/** Category slugs (catalog-defaults.ts) that are footwear. */
-const FOOTWEAR_SLUGS = new Set(['footwear']);
-/** Category slugs that are accessories. */
-const ACCESSORY_SLUGS = new Set(['accessories']);
-// Everything else (apparel, her-*, him-* garment sub-categories) is apparel-kind.
+/**
+ * Category slugs are two-level (`@/shared/catalog/taxonomy.ts`): a parent like `shoes` or
+ * `accessories`, and leaves named `<parent>-<leaf>` such as `shoes-sneakers` or
+ * `accessories-sunglasses`. Listings always carry the LEAF slug, so classification strips
+ * the last segment to get the parent and looks the kind up there.
+ *
+ * This replaced substring matching on the old flat slugs, which silently mis-classified
+ * the new ones — `denim-jeans` matched none of the old `shirt`/`dress`/`bottom`/`top`
+ * probes and fell through to the knitwear default.
+ */
+const parentOf = (slug: string): string => {
+  const cut = slug.lastIndexOf('-');
+  return cut === -1 ? slug : slug.slice(0, cut);
+};
+
+/** Parent slug → GST kind. Anything unlisted is apparel (the common case). */
+const KIND_BY_PARENT: Record<string, GstKind> = {
+  shoes: 'footwear',
+  bags: 'accessory',
+  accessories: 'accessory',
+  'her-jewelry': 'accessory',
+  beauty: 'cosmetics',
+  // Legacy flat slugs, still reachable via order/POS snapshots taken before the retaxonomy.
+  footwear: 'footwear',
+  apparel: 'apparel',
+};
+
+/**
+ * Leaves that don't take their parent's kind. Socks, tights and scarves sit under
+ * Accessories on the rail but are knitted/woven textiles for tax purposes (chapter 61/62),
+ * so they follow the apparel price slab rather than the flat 18%.
+ */
+const KIND_BY_LEAF: Record<string, GstKind> = {
+  'accessories-socks': 'apparel',
+  'accessories-tights': 'apparel',
+  'accessories-scarves': 'apparel',
+};
+
+/** Resolve a category slug (leaf or parent) to its GST kind. */
+function kindForSlug(slug: string): GstKind {
+  return KIND_BY_LEAF[slug] ?? KIND_BY_PARENT[slug] ?? KIND_BY_PARENT[parentOf(slug)] ?? 'apparel';
+}
 
 /** Classify a line into a GST kind from its category slug + HSN. HSN wins when recognisable. */
 function classify(hsn: string | null, categorySlug: string | null): GstKind {
@@ -54,11 +91,12 @@ function classify(hsn: string | null, categorySlug: string | null): GstKind {
   ) {
     return 'accessory';
   }
+  if (chapter.startsWith('3303') || chapter.startsWith('3304') || chapter.startsWith('3305')) {
+    return 'cosmetics';
+  }
   if (chapter.startsWith('61') || chapter.startsWith('62')) return 'apparel';
-  // No usable HSN — fall back to category slug.
-  if (categorySlug && FOOTWEAR_SLUGS.has(categorySlug)) return 'footwear';
-  if (categorySlug && ACCESSORY_SLUGS.has(categorySlug)) return 'accessory';
-  return 'apparel';
+  // No usable HSN — fall back to the category slug's kind.
+  return categorySlug ? kindForSlug(categorySlug) : 'apparel';
 }
 
 /** Accessory rate from a 4-digit HSN chapter; defaults to 18% (the common bags/belts/sunglasses case). */
@@ -87,6 +125,10 @@ export function resolveGstRateBp(input: {
   switch (kind) {
     case 'accessory':
       return accessoryRateBp(input.hsn);
+    case 'cosmetics':
+      // Cosmetics & toiletries (chapter 33) are flat 18% — no price slab. Previously
+      // these fell through to apparel, so a ₹800 lipstick was taxed at 5%.
+      return GstRateBp.standard;
     case 'footwear':
     case 'apparel':
       return slabRateBp(input.unitMrpPaise);
@@ -100,14 +142,54 @@ export function resolveGstRateBp(input: {
  */
 export function categoryDefaultHsn(categorySlug: string | null): string | null {
   if (!categorySlug) return null;
-  if (FOOTWEAR_SLUGS.has(categorySlug)) return '6403';
-  if (ACCESSORY_SLUGS.has(categorySlug)) return '4202';
-  // Apparel & garment sub-categories. Knitted (chapter 61) is the common default for tops/tees;
-  // woven (62) covers shirts/trousers/dresses. We default to 61 — retailer overrides as needed.
-  if (categorySlug === 'apparel') return '6109';
-  if (categorySlug.includes('shirt')) return categorySlug.includes('tshirt') ? '6109' : '6205';
-  if (categorySlug.includes('dress')) return '6204';
-  if (categorySlug.includes('bottom')) return '6203';
-  if (categorySlug.includes('top')) return '6109';
-  return '6109';
+  const leafHit = HSN_BY_LEAF[categorySlug];
+  if (leafHit) return leafHit;
+  return HSN_BY_PARENT[categorySlug] ?? HSN_BY_PARENT[parentOf(categorySlug)] ?? '6109';
 }
+
+/**
+ * Default HSN per taxonomy parent. Knitted (chapter 61) is the common default for
+ * tops/tees; woven (62) covers shirts, trousers and dresses.
+ */
+const HSN_BY_PARENT: Record<string, string> = {
+  tops: '6109',
+  bottoms: '6203',
+  denim: '6203',
+  outerwear: '6201',
+  active: '6112',
+  lounge: '6208',
+  swim: '6112',
+  shoes: '6403',
+  bags: '4202',
+  accessories: '4202',
+  beauty: '3304',
+  'her-dresses': '6204',
+  'her-coords': '6204',
+  'her-jewelry': '7117',
+  'him-ethnic': '6205',
+  'him-formal': '6203',
+  // Legacy flat slugs, kept so pre-retaxonomy snapshots still resolve.
+  apparel: '6109',
+  footwear: '6403',
+};
+
+/** Leaves whose HSN differs from their parent's default. */
+const HSN_BY_LEAF: Record<string, string> = {
+  'tops-shirts': '6205',
+  'tops-sweaters': '6110',
+  'tops-cardigans': '6110',
+  'bottoms-skirts': '6204',
+  'denim-jackets': '6201',
+  'accessories-sunglasses': '9004',
+  'accessories-watches': '9102',
+  'accessories-belts': '4203',
+  'accessories-wallets': '4202',
+  'accessories-socks': '6115',
+  'accessories-tights': '6115',
+  'accessories-scarves': '6214',
+  'accessories-caps': '6505',
+  'accessories-hats': '6505',
+  'him-formal-shirts': '6205',
+  'beauty-fragrance': '3303',
+  'beauty-hair': '3305',
+};

@@ -124,7 +124,7 @@ export const PLATFORM_CONFIG_DEFAULTS: readonly ConfigRow[] = [
   },
   {
     key: 'payout_cadence_days',
-    value: 7,
+    value: 15,
     description: 'Default; can be overridden per retailer',
   },
 

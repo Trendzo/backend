@@ -1,11 +1,14 @@
 /* eslint-disable no-console -- CLI seed: console output is the intended UX */
 /**
- * Consumer catalog seed — rich browse data for the consumer app: 24 real brands,
- * image-bearing categories (8 HER + 8 HIM + 3 unisex), ~66 product listings with
- * color/size variants, and outfit/occasion/drop collections.
+ * Consumer catalog seed — rich browse data for the consumer app: 24 real brands, ~66
+ * hand-written product listings with color/size variants, and outfit/occasion/drop
+ * collections.
  *
- * Idempotent: brands/categories skip-or-backfill by slug; the listings + collections
- * block is skipped entirely when the sentinel collection 'her-brunch-goddess' exists.
+ * Categories are NOT seeded here — `category-taxonomy.ts` owns the tree and runs first.
+ * This resolves each listing's leaf through the shared LISTING_REMAP table.
+ *
+ * Idempotent: brands skip by slug; the listings + collections block is skipped entirely
+ * when the sentinel collection 'her-brunch-goddess' exists.
  *
  * Run standalone: npx tsx src/db/seed/consumer-catalog.ts
  * Or via orchestrator: npm run db:seed
@@ -16,7 +19,6 @@ import { db } from '@/db/client.js';
 import type { db as Db } from '@/db/client.js';
 import {
   brands,
-  categories,
   collectionListings,
   collections,
   productListings,
@@ -25,6 +27,7 @@ import {
   variants,
 } from '@/db/schema/index.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
+import { LISTING_REMAP } from './category-taxonomy.js';
 
 const SENTINEL_COLLECTION_SLUG = 'her-brunch-goddess';
 
@@ -82,41 +85,10 @@ const BRAND_SPECS: BrandSpec[] = [
 ];
 
 // ── Categories ────────────────────────────────────────────────────────────────
-
-type CategorySpec = {
-  slug: string;
-  label: string;
-  gender: 'her' | 'him' | 'unisex';
-  iconName: string;
-  tintColor: string;
-  imageUrl: string;
-  sortOrder: number;
-};
-
-const CATEGORY_SPECS: CategorySpec[] = [
-  // Unisex (existing — backfilled)
-  { slug: 'apparel', label: 'Apparel', gender: 'unisex', iconName: 'shirt-outline', tintColor: '#FFE66D', imageUrl: png('tshirt', 5452), sortOrder: 10 },
-  { slug: 'footwear', label: 'Footwear', gender: 'unisex', iconName: 'footsteps-outline', tintColor: '#4ECDC4', imageUrl: png('women_shoes', 7472), sortOrder: 20 },
-  { slug: 'accessories', label: 'Accessories', gender: 'unisex', iconName: 'glasses-outline', tintColor: '#A78BFA', imageUrl: png('women_bag', 6427), sortOrder: 30 },
-  // HER (first 3 existing — backfilled; rest new)
-  { slug: 'her-tops', label: 'Tops', gender: 'her', iconName: 'shirt-outline', tintColor: '#A78BFA', imageUrl: png('tshirt', 5452), sortOrder: 100 },
-  { slug: 'her-dresses', label: 'Dresses', gender: 'her', iconName: 'woman-outline', tintColor: '#FFAFBD', imageUrl: png('dress', 197), sortOrder: 110 },
-  { slug: 'her-bottoms', label: 'Bottoms', gender: 'her', iconName: 'walk-outline', tintColor: '#FECA57', imageUrl: png('jeans', 5778), sortOrder: 120 },
-  { slug: 'her-heels', label: 'Heels', gender: 'her', iconName: 'trending-up-outline', tintColor: '#A8E6CF', imageUrl: png('women_shoes', 7473), sortOrder: 130 },
-  { slug: 'her-bags', label: 'Bags', gender: 'her', iconName: 'bag-handle-outline', tintColor: '#5D4037', imageUrl: png('women_bag', 6428), sortOrder: 140 },
-  { slug: 'her-beauty', label: 'Beauty', gender: 'her', iconName: 'color-palette-outline', tintColor: '#FF6B9D', imageUrl: png('lipstick', 76278), sortOrder: 150 },
-  { slug: 'her-coats', label: 'Coats', gender: 'her', iconName: 'cloud-outline', tintColor: '#F5E6D3', imageUrl: png('coat', 79), sortOrder: 160 },
-  { slug: 'her-maxi', label: 'Maxi', gender: 'her', iconName: 'flower-outline', tintColor: '#FFC3A0', imageUrl: png('dress', 196), sortOrder: 170 },
-  // HIM (first 3 existing — backfilled; rest new)
-  { slug: 'him-shirts', label: 'Shirts', gender: 'him', iconName: 'shirt-outline', tintColor: '#2C3E50', imageUrl: png('tshirt', 5453), sortOrder: 200 },
-  { slug: 'him-tshirts', label: 'Tees', gender: 'him', iconName: 'shirt-outline', tintColor: '#1A1A1A', imageUrl: png('tshirt', 5454), sortOrder: 210 },
-  { slug: 'him-bottoms', label: 'Jeans', gender: 'him', iconName: 'walk-outline', tintColor: '#3A3A3A', imageUrl: png('jeans', 5779), sortOrder: 220 },
-  { slug: 'him-jackets', label: 'Jackets', gender: 'him', iconName: 'shield-outline', tintColor: '#111111', imageUrl: png('jacket', 8059), sortOrder: 230 },
-  { slug: 'him-sneakers', label: 'Sneakers', gender: 'him', iconName: 'footsteps-outline', tintColor: '#FFFFFF', imageUrl: png('women_shoes', 7472), sortOrder: 240 },
-  { slug: 'him-watches', label: 'Watches', gender: 'him', iconName: 'time-outline', tintColor: '#2C3E50', imageUrl: png('watches', 101457), sortOrder: 250 },
-  { slug: 'him-coats', label: 'Coats', gender: 'him', iconName: 'cloud-outline', tintColor: '#5D4037', imageUrl: png('coat', 80), sortOrder: 260 },
-  { slug: 'him-eyewear', label: 'Shades', gender: 'him', iconName: 'glasses-outline', tintColor: '#3E2723', imageUrl: png('sunglasses', 155), sortOrder: 270 },
-];
+//
+// Categories are NOT seeded here any more. `category-taxonomy.ts` owns the two-level
+// tree and runs first; this file just resolves the leaves its listings belong to, via
+// LISTING_REMAP (which is also what migrates an already-seeded database).
 
 // ── Products ──────────────────────────────────────────────────────────────────
 
@@ -329,38 +301,14 @@ export async function seedConsumerCatalog(database: typeof Db): Promise<void> {
     console.log(`  → seeded brand '${b.slug}'`);
   }
 
-  // 2. Categories — insert new; backfill image/tint/icon on existing rows missing imageUrl.
-  const categoryIdBySlug = new Map<string, string>();
-  for (const c of CATEGORY_SPECS) {
-    const existing = await database.query.categories.findFirst({
-      where: eq(categories.slug, c.slug),
-    });
-    if (existing) {
-      categoryIdBySlug.set(c.slug, existing.id);
-      if (!existing.imageUrl) {
-        await database
-          .update(categories)
-          .set({ imageUrl: c.imageUrl, tintColor: c.tintColor, iconName: c.iconName, label: c.label })
-          .where(eq(categories.id, existing.id));
-        console.log(`  → backfilled category '${c.slug}'`);
-      }
-      continue;
-    }
-    const id = newId(IdPrefix.Category);
-    await database.insert(categories).values({
-      id,
-      slug: c.slug,
-      label: c.label,
-      gender: c.gender,
-      iconName: c.iconName,
-      tintColor: c.tintColor,
-      imageUrl: c.imageUrl,
-      sortOrder: c.sortOrder,
-      isActive: true,
-    });
-    categoryIdBySlug.set(c.slug, id);
-    console.log(`  → seeded category '${c.slug}'`);
-  }
+  // 2. Categories — resolve the taxonomy leaves these listings belong to. The tree is
+  // seeded by `category-taxonomy.ts`, which runs before this.
+  const categoryIdBySlug = new Map(
+    (await database.query.categories.findMany({ columns: { id: true, slug: true } })).map((c) => [
+      c.slug,
+      c.id,
+    ]),
+  );
 
   // 3. Listings + collections — all-or-nothing block guarded by sentinel collection.
   const sentinel = await database.query.collections.findFirst({
@@ -404,10 +352,14 @@ export async function seedConsumerCatalog(database: typeof Db): Promise<void> {
   // 3b. Listings with variant groups + variants.
   const listingIdByName = new Map<string, string>();
   for (const spec of PRODUCT_SPECS) {
+    // `spec.cat` still names the old flat slug; LISTING_REMAP is the single place that
+    // says where each of these products lives in the taxonomy (it also migrates an
+    // already-seeded database).
+    const catSlug = LISTING_REMAP[spec.name] ?? spec.cat;
     const brandId = brandIdBySlug.get(spec.brand);
-    const categoryId = categoryIdBySlug.get(spec.cat);
+    const categoryId = categoryIdBySlug.get(catSlug);
     if (!brandId || !categoryId) {
-      console.warn(`  ! skipping "${spec.name}" — missing brand/category (${spec.brand}/${spec.cat})`);
+      console.warn(`  ! skipping "${spec.name}" — missing brand/category (${spec.brand}/${catSlug})`);
       continue;
     }
     const listingId = newId(IdPrefix.Listing);

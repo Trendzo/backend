@@ -11,18 +11,27 @@ import type { db as Db } from '@/db/client.js';
 import { sizeScales } from '@/db/schema/index.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 
+/**
+ * Slugs are TAXONOMY PARENTS. `listSizeScales` walks a category's ancestors before
+ * matching, so naming the parent covers every leaf under it — `tops` reaches
+ * `tops-tshirts`, `tops-blouses` and the rest without listing them.
+ */
 const APPAREL = [
-  'apparel',
-  'her-tops',
+  'tops',
+  'bottoms',
+  'denim',
+  'outerwear',
+  'active',
+  'lounge',
+  'swim',
   'her-dresses',
-  'her-bottoms',
-  'him-shirts',
-  'him-tshirts',
-  'him-bottoms',
+  'her-coords',
+  'him-ethnic',
+  'him-formal',
 ];
-const BOTTOMS = ['apparel', 'her-bottoms', 'him-bottoms'];
-const FOOTWEAR = ['footwear'];
-const ACCESSORIES = ['accessories'];
+const BOTTOMS = ['bottoms', 'denim', 'him-formal'];
+const FOOTWEAR = ['shoes'];
+const ACCESSORIES = ['accessories', 'bags', 'her-jewelry'];
 
 type Scale = { name: string; values: string[]; categorySlugs: string[]; sortOrder: number };
 
@@ -48,7 +57,16 @@ export async function seedSizeScales(db: typeof Db): Promise<void> {
     const existing = await db.query.sizeScales.findFirst({
       where: eq(sizeScales.name, scale.name),
     });
-    if (existing) continue;
+    if (existing) {
+      // Idempotency is by NAME, so a plain skip-if-exists would silently strand the old
+      // flat slugs on an already-seeded database and every scale would stop matching.
+      // Converge categorySlugs (and values) instead.
+      await db
+        .update(sizeScales)
+        .set({ categorySlugs: scale.categorySlugs, values: scale.values })
+        .where(eq(sizeScales.id, existing.id));
+      continue;
+    }
     await db.insert(sizeScales).values({ id: newId(IdPrefix.SizeScale), ...scale });
     console.log(`  → seeded size scale '${scale.name}'`);
   }

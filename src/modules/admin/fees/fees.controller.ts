@@ -11,7 +11,11 @@ import { ok } from '@/shared/http/envelope.js';
 import { recordAudit } from '@/shared/audit.js';
 import { notifyStoreAccounts } from '@/shared/notify-store.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
-import type { FeeOverrideBody, FeesUpdateBody } from './fees.validators.js';
+import type {
+  FeeOverrideBody,
+  FeesUpdateBody,
+  PayoutCadenceOverrideBody,
+} from './fees.validators.js';
 
 type Auth = AccessTokenPayload;
 
@@ -220,6 +224,53 @@ export async function setRetailerFeeOverride(input: {
   }).catch(() => undefined);
 
   return ok({ storeId: retailer.storeId, platformFeeBp: store!.platformFeeBp });
+}
+
+/** Per-retailer payout cadence override. Applies to the retailer's store. */
+export async function setRetailerPayoutCadence(input: {
+  id: string;
+  auth: Auth;
+  body: z.infer<typeof PayoutCadenceOverrideBody>;
+  requestId: string;
+}) {
+  const { id, auth, body, requestId } = input;
+  const retailer = await db.query.retailerAccounts.findFirst({
+    where: eq(retailerAccounts.id, id),
+  });
+  if (!retailer?.storeId) throw new Error('Store not found for retailer');
+
+  const priorStore = await db.query.retailerStores.findFirst({
+    where: eq(retailerStores.id, retailer.storeId),
+  });
+  const priorDays = priorStore?.payoutCadenceDays ?? null;
+
+  const [store] = await db
+    .update(retailerStores)
+    .set({ payoutCadenceDays: body.payoutCadenceDays })
+    .where(eq(retailerStores.id, retailer.storeId))
+    .returning();
+
+  await recordAudit({
+    actor: auth,
+    action: 'store.payout_cadence_override',
+    resourceKind: 'retailer_store',
+    resourceId: retailer.storeId,
+    before: { payoutCadenceDays: priorDays },
+    after: { payoutCadenceDays: body.payoutCadenceDays },
+    note: body.reason,
+    requestId,
+  });
+
+  // Best-effort retailer notification — failure must not block the admin action.
+  await notifyStoreAccounts({
+    storeId: retailer.storeId,
+    kind: 'system',
+    title: 'Payout schedule updated',
+    body: `Admin set payout cadence to every ${body.payoutCadenceDays} days: ${body.reason}`,
+    deepLink: '/retailer/payouts',
+  }).catch(() => undefined);
+
+  return ok({ storeId: retailer.storeId, payoutCadenceDays: store!.payoutCadenceDays });
 }
 
 export async function getDeliveryWindows() {

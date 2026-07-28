@@ -9,9 +9,12 @@ import {
   collections,
   productListings,
   productReviews,
+  retailerStores,
   sizeScales,
+  storePickupSlots,
   variants,
 } from '@/db/schema/index.js';
+import { parentIdSet, resolveDescendantIds } from '@/shared/catalog/category-tree.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import type {
@@ -19,6 +22,7 @@ import type {
   CategoriesQuery,
   CollectionsQuery,
   FacetsQuery,
+  PickupSlotsQuery,
   ProductReviewsQuery,
   ProductsQuery,
   SizeScalesQuery,
@@ -29,10 +33,25 @@ import type {
  * dropdowns; consumer-facing browse uses richer endpoints (later phase).
  */
 
+/**
+ * The category tree, flat, with `parentId` — the client assembles it (the admin dashboard
+ * already does, see webprotal `routes/admin/categories.tsx`).
+ *
+ * Gender is "requested OR unisex", matching listings (`listProducts`) and collections
+ * (`listCollections`). That is what makes the mixed-gender tree work: a shared node like
+ * Tops is stored once as `unisex` and appears on both rails, while Dresses (her) and
+ * Ethnic Wear (him) appear on one. It used to be strict equality, which would have hidden
+ * every shared node from both rails.
+ *
+ * `isLeaf` is computed so pick-lists can indent and disable parents; `listingCount` is
+ * descendant-inclusive so a parent reports what its children hold, not zero.
+ */
 export async function listCategories(input: { query: z.infer<typeof CategoriesQuery> }) {
   const { query } = input;
   const filters = [];
-  if (query.gender) filters.push(eq(categories.gender, query.gender));
+  if (query.gender) {
+    filters.push(or(eq(categories.gender, query.gender), eq(categories.gender, 'unisex'))!);
+  }
   if (query.activeOnly) filters.push(eq(categories.isActive, true));
   const where =
     filters.length === 0 ? undefined : filters.length === 1 ? filters[0] : and(...filters);
@@ -40,7 +59,41 @@ export async function listCategories(input: { query: z.infer<typeof CategoriesQu
     ...(where && { where }),
     orderBy: [asc(categories.sortOrder), asc(categories.label)],
   });
-  return ok(rows);
+
+  const parents = await parentIdSet();
+  if (!query.withCounts) {
+    return ok(rows.map((c) => ({ ...c, isLeaf: !parents.has(c.id) })));
+  }
+
+  // Direct counts per category, then rolled up to ancestors. Counting per-leaf once and
+  // adding it into each ancestor is a single pass; doing a descendant query per row would
+  // be ~134 aggregates per request.
+  const direct = await db
+    .select({ categoryId: productListings.categoryId, count: sql<number>`count(*)::int` })
+    .from(productListings)
+    .where(and(eq(productListings.status, 'active' as const), storeIsBrowsableSql))
+    .groupBy(productListings.categoryId);
+
+  const parentById = new Map(rows.map((c) => [c.id, c.parentId]));
+  // Ancestors may be filtered out of `rows` by gender, so resolve parents from the full
+  // tree rather than from the (possibly partial) result set.
+  const allNodes = await db.query.categories.findMany({ columns: { id: true, parentId: true } });
+  for (const n of allNodes) parentById.set(n.id, n.parentId);
+
+  const total = new Map<string, number>();
+  for (const d of direct) {
+    let cursor: string | null | undefined = d.categoryId;
+    const seen = new Set<string>();
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      total.set(cursor, (total.get(cursor) ?? 0) + d.count);
+      cursor = parentById.get(cursor) ?? null;
+    }
+  }
+
+  return ok(
+    rows.map((c) => ({ ...c, isLeaf: !parents.has(c.id), listingCount: total.get(c.id) ?? 0 })),
+  );
 }
 
 /**
@@ -201,27 +254,167 @@ function shapeListings(rows: ListingRow[]) {
 }
 
 /**
+ * Product-CARD projection: only what a grid tile draws.
+ *
+ * The list endpoint and the detail endpoint used to return byte-identical shapes
+ * (both called `shapeListings`), so every card in a 60-item grid carried the full
+ * description, the whole galleryUrls array, every variant group, and EVERY variant
+ * with its own imageUrls, price, compare-at price and availability. For a
+ * 4-colour x 6-size product that is 24 variant objects downloaded and JSON.parsed
+ * — on the JS thread — to render one price.
+ *
+ * The consumer card adapter (`customer-app/src/services/catalog.ts:toProduct`)
+ * reads nine fields. This returns those nine and nothing else. `shapeListings`
+ * stays exactly as it was for product detail, which genuinely needs all of it.
+ */
+function shapeCards(rows: ListingRow[]) {
+  return rows
+    .map((l) => {
+      const activeGroupIds = new Set(l.variantGroups.map((g) => g.id));
+      const shoppable = l.variants.filter((v) => activeGroupIds.has(v.groupId));
+      if (shoppable.length === 0) return null;
+
+      // The card shows the cheapest shoppable variant — the same number
+      // `sort=price_asc` orders by, so the grid never disagrees with itself.
+      let pick = shoppable[0]!;
+      for (const v of shoppable) if (v.pricePaise < pick.pricePaise) pick = v;
+
+      const compare = pick.compareAtPrice;
+      const discountPct = compare && compare > pick.pricePaise
+        ? Math.round((1 - pick.pricePaise / compare) * 100)
+        : 0;
+
+      // Two swatches is all a card renders.
+      const colors = l.variantGroups
+        .map((g) => g.colorHex)
+        .filter((c): c is string => !!c)
+        .slice(0, 2);
+
+      return {
+        id: l.id,
+        name: l.name,
+        brandName: l.brand?.name ?? l.store.legalName,
+        categoryLabel: l.category.label,
+        ratingAvg: Number(l.ratingAvg),
+        ratingCount: l.ratingCount,
+        image: pick.imageUrls?.[0] ?? l.galleryUrls?.[0] ?? null,
+        pricePaise: pick.pricePaise,
+        compareAtPricePaise: compare,
+        discountPct,
+        colors,
+        occasion: l.occasion?.[0] ?? null,
+        // Lets a card add to the bag without first fetching the full detail.
+        defaultVariantId: pick.id,
+      };
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+}
+
+/**
+ * At least one shoppable variant — active variant belonging to an active group, which is
+ * exactly what `shapeListings` keeps. Applied while paging so `limit`/`offset` count the
+ * rows the caller actually receives; without it a page of 24 could shrink to 19 after
+ * shaping and the next offset would skip products.
+ */
+const hasShoppableVariantSql = sql`EXISTS (
+  SELECT 1 FROM variants v
+  JOIN variant_groups vg ON vg.id = v.group_id
+  WHERE v.listing_id = ${productListings.id}
+    AND v.is_active = true
+    AND vg.is_active = true
+)`;
+
+/**
  * Consumer product browse — active listings with their shoppable variants, shaped for
  * the consumer app's product cards. Public (no auth). Each listing carries its storeId;
  * checkout requires it (single-store MVP: all seeded listings share one store).
+ *
+ * Two phases, because `queryListings` uses drizzle's relational builder — that can't order
+ * by an aggregate over a joined table, which price sorting needs. Phase 1 is a plain
+ * select that decides WHICH listings and in WHAT ORDER; phase 2 hydrates them through the
+ * existing shared query so browse and collection detail keep returning identical payloads.
+ * `getCollection` already uses this shape for membership ordering.
  */
 export async function listProducts(input: { query: z.infer<typeof ProductsQuery> }) {
   const { query } = input;
-  const filters = [eq(productListings.status, 'active' as const)];
+  const filters = [eq(productListings.status, 'active' as const), hasShoppableVariantSql];
   if (query.gender) {
     // Unisex listings show on both HER and HIM rails.
     filters.push(or(eq(productListings.gender, query.gender), eq(productListings.gender, 'unisex'))!);
   }
-  if (query.categoryId) filters.push(eq(productListings.categoryId, query.categoryId));
   if (query.storeId) filters.push(eq(productListings.storeId, query.storeId));
   if (query.search) filters.push(ilike(productListings.name, `%${query.search}%`));
 
-  const rows = await queryListings({
-    where: and(...filters),
-    limit: query.limit,
-    offset: query.offset,
-  });
-  return ok(shapeListings(rows));
+  if (query.categoryId || query.categorySlug) {
+    const ids = await resolveDescendantIds({
+      ...(query.categoryId !== undefined && { categoryId: query.categoryId }),
+      ...(query.categorySlug !== undefined && { categorySlug: query.categorySlug }),
+    });
+    // Unknown category → no products, rather than silently dropping the filter and
+    // returning the whole catalog.
+    if (!ids) return ok([]);
+    filters.push(inArray(productListings.categoryId, ids));
+  }
+
+  const ordered = await orderedListingIds(and(...filters)!, query.sort, query.limit, query.offset);
+  if (ordered.length === 0) return ok([]);
+
+  const rows = await queryListings({ where: inArray(productListings.id, ordered) });
+  const rank = new Map(ordered.map((id, i) => [id, i]));
+  // `view=card` is the slim grid projection; `full` keeps the historical shape so
+  // existing callers (retailer app, webprotal, MCP) are untouched.
+  const shaped = query.view === 'card'
+    ? shapeCards(rows).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
+    : shapeListings(rows).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+  return ok(shaped);
+}
+
+/** Phase 1 of browse: which listings, in which order. Returns ids only. */
+async function orderedListingIds(
+  where: SQL,
+  sort: z.infer<typeof ProductsQuery>['sort'],
+  limit: number,
+  offset: number,
+): Promise<string[]> {
+  const scoped = and(where, storeIsBrowsableSql)!;
+
+  if (sort === 'price_asc' || sort === 'price_desc') {
+    // Price of a listing = its cheapest shoppable variant, the same number the product
+    // card shows. Mirrors the min() aggregate `listCollections` uses for bundle pricing.
+    const rows = await db
+      .select({ id: productListings.id, price: sql<number>`min(${variants.pricePaise})` })
+      .from(productListings)
+      .innerJoin(
+        variants,
+        and(eq(variants.listingId, productListings.id), eq(variants.isActive, true)),
+      )
+      .where(scoped)
+      .groupBy(productListings.id)
+      // `id` breaks ties. Without it, listings sharing a price (or a createdAt, below)
+      // come back in whatever order Postgres feels like per query, so page 2 can repeat
+      // rows from page 1 — the seeded catalog inserts in batches and hits ties constantly.
+      .orderBy(
+        sort === 'price_asc'
+          ? sql`min(${variants.pricePaise}) ASC, ${productListings.id} ASC`
+          : sql`min(${variants.pricePaise}) DESC, ${productListings.id} ASC`,
+      )
+      .limit(limit)
+      .offset(offset);
+    return rows.map((r) => r.id);
+  }
+
+  const rows = await db
+    .select({ id: productListings.id })
+    .from(productListings)
+    .where(scoped)
+    .orderBy(
+      sort === 'rating'
+        ? sql`${productListings.ratingAvg} DESC, ${productListings.ratingCount} DESC, ${productListings.id} ASC`
+        : sql`${productListings.createdAt} DESC, ${productListings.id} ASC`,
+    )
+    .limit(limit)
+    .offset(offset);
+  return rows.map((r) => r.id);
 }
 
 /** Single active listing for the product detail page. Same shape as the list rows. */
@@ -302,9 +495,16 @@ export async function listFacets(input: { query: z.infer<typeof FacetsQuery> }) 
   if (query.storeId) base.push(eq(productListings.storeId, query.storeId));
   if (query.search) base.push(ilike(productListings.name, `%${query.search}%`));
 
-  const categoryFilter = query.categoryId
-    ? eq(productListings.categoryId, query.categoryId)
-    : undefined;
+  // Descendant-inclusive, same as browse: scoping to a parent has to cover its leaves.
+  let categoryFilter: SQL | undefined;
+  if (query.categoryId || query.categorySlug) {
+    const ids = await resolveDescendantIds({
+      ...(query.categoryId !== undefined && { categoryId: query.categoryId }),
+      ...(query.categorySlug !== undefined && { categorySlug: query.categorySlug }),
+    });
+    if (!ids) return ok({ total: 0, genders: [], categories: [] });
+    categoryFilter = inArray(productListings.categoryId, ids);
+  }
   const genderFilter = query.gender
     ? or(eq(productListings.gender, query.gender), eq(productListings.gender, 'unisex'))!
     : undefined;
@@ -327,7 +527,9 @@ export async function listFacets(input: { query: z.infer<typeof FacetsQuery> }) 
     .from(productListings)
     .innerJoin(categories, eq(categories.id, productListings.categoryId))
     .where(and(...base, ...(genderFilter ? [genderFilter] : [])))
-    .groupBy(productListings.categoryId, categories.label, categories.slug)
+    // sortOrder has to be grouped as well as ordered by — Postgres rejects an ORDER BY on
+    // a column that is neither grouped nor aggregated, so this endpoint used to 500.
+    .groupBy(productListings.categoryId, categories.label, categories.slug, categories.sortOrder)
     .orderBy(asc(categories.sortOrder), asc(categories.label));
 
   // Total: every active filter applied together — the "N results" header count.
@@ -484,4 +686,98 @@ export async function getCollection(slug: string) {
   }
 
   return ok({ ...c, listings });
+}
+
+/* ── Store pickup windows ─────────────────────────────────────────────────── */
+
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/** 'HH:MM' → minutes since midnight; null when unparseable. */
+function parseHhMm(v: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+/**
+ * Upcoming pickup windows for one store.
+ *
+ * `store_pickup_slots` is a RECURRING weekly template (dayOfWeek + 'HH:MM'), but
+ * placement wants a concrete instant (`pickupSlotStart`/`pickupSlotEnd`). This
+ * expands the template over the next `days` days in IST — the store's local clock —
+ * and drops windows whose END has already passed, so the app never offers a slot it
+ * cannot honour. Ordering is chronological.
+ */
+export async function listStorePickupSlots(input: {
+  storeId: string;
+  query: z.infer<typeof PickupSlotsQuery>;
+}) {
+  const store = await db.query.retailerStores.findFirst({
+    where: eq(retailerStores.id, input.storeId),
+    columns: { id: true, legalName: true, address: true, lat: true, lng: true, contactPhone: true, status: true },
+  });
+  if (!store || store.status !== 'active') {
+    throw new AppError(404, ErrorCode.NotFound, 'Store not found');
+  }
+
+  const rows = await db.query.storePickupSlots.findMany({
+    where: and(eq(storePickupSlots.storeId, store.id), eq(storePickupSlots.isActive, true)),
+  });
+
+  const now = Date.now();
+  const byDay = new Map<number, typeof rows>();
+  for (const r of rows) {
+    const bucket = byDay.get(r.dayOfWeek);
+    if (bucket) bucket.push(r);
+    else byDay.set(r.dayOfWeek, [r]);
+  }
+
+  const slots: {
+    slotId: string;
+    startsAt: string;
+    endsAt: string;
+    capacity: number;
+  }[] = [];
+
+  for (let dayOffset = 0; dayOffset < input.query.days; dayOffset++) {
+    // Midnight IST of the target day, expressed as a real UTC instant.
+    const istNow = new Date(now + IST_OFFSET_MS);
+    const istMidnightUtcMs =
+      Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate()) -
+      IST_OFFSET_MS +
+      dayOffset * 24 * 60 * 60 * 1000;
+    const dow = new Date(istMidnightUtcMs + IST_OFFSET_MS).getUTCDay();
+
+    for (const r of byDay.get(dow) ?? []) {
+      const startMin = parseHhMm(r.startTime);
+      const endMin = parseHhMm(r.endTime);
+      if (startMin === null || endMin === null || endMin <= startMin) continue;
+      const startMs = istMidnightUtcMs + startMin * 60_000;
+      const endMs = istMidnightUtcMs + endMin * 60_000;
+      if (endMs <= now) continue; // already over
+      slots.push({
+        slotId: r.id,
+        startsAt: new Date(startMs).toISOString(),
+        endsAt: new Date(endMs).toISOString(),
+        capacity: r.capacity,
+      });
+    }
+  }
+
+  slots.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+
+  return ok({
+    store: {
+      id: store.id,
+      name: store.legalName,
+      address: store.address,
+      lat: store.lat,
+      lng: store.lng,
+      contactPhone: store.contactPhone,
+    },
+    slots,
+  });
 }

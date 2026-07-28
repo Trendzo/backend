@@ -70,14 +70,14 @@ async function main() {
 
   // 4. Resolve brand + category
   const genericBrand = await db.query.brands.findFirst({ where: eq(brands.slug, 'generic') });
-  const apparelCat = await db.query.categories.findFirst({ where: eq(categories.slug, 'apparel') });
-  const herTopsCat = await db.query.categories.findFirst({ where: eq(categories.slug, 'her-tops') });
-  const herDressesCat = await db.query.categories.findFirst({ where: eq(categories.slug, 'her-dresses') });
-  const himShirtsCat = await db.query.categories.findFirst({ where: eq(categories.slug, 'him-shirts') });
+  const apparelCat = await db.query.categories.findFirst({ where: eq(categories.slug, 'tops-tshirts') });
+  const herTopsCat = await db.query.categories.findFirst({ where: eq(categories.slug, 'tops-blouses') });
+  const herDressesCat = await db.query.categories.findFirst({ where: eq(categories.slug, 'her-dresses-midi') });
+  const himShirtsCat = await db.query.categories.findFirst({ where: eq(categories.slug, 'tops-shirts') });
 
   const brandId = genericBrand?.id ?? null;
   const catFallback = apparelCat?.id;
-  if (!catFallback) { console.error('No apparel category found — run catalog-defaults seed first'); process.exit(1); }
+  if (!catFallback) { console.error('No tops-tshirts category found — run the category-taxonomy seed first'); process.exit(1); }
 
   const catTops = herTopsCat?.id ?? catFallback;
   const catDresses = herDressesCat?.id ?? catFallback;

@@ -12,6 +12,8 @@ import { db } from '@/db/client.js';
 import { seedAdmin } from './admin.js';
 import { seedAttributeTemplates } from './attribute-templates.js';
 import { seedCatalogDefaults } from './catalog-defaults.js';
+import { seedCatalogExpand } from './catalog-expand.js';
+import { seedCategoryTaxonomy } from './category-taxonomy.js';
 import { seedClubbingMatrix } from './clubbing-matrix.js';
 import { seedConsumerCatalog } from './consumer-catalog.js';
 import { seedDelegationModes } from './delegation-modes.js';
@@ -41,8 +43,13 @@ async function main(): Promise<void> {
   console.log('Seeding super-admin…');
   await seedAdmin(db);
 
-  console.log('Seeding catalog defaults (brands + categories)…');
+  console.log('Seeding catalog defaults (brands)…');
   await seedCatalogDefaults(db);
+
+  // Must precede every seeder that resolves a category by slug — demo-retailer,
+  // consumer-catalog and catalog-expand all look up taxonomy leaves.
+  console.log('Seeding category taxonomy (tree + listing remap)…');
+  await seedCategoryTaxonomy(db);
 
   console.log('Seeding size_scales…');
   await seedSizeScales(db);
@@ -52,6 +59,11 @@ async function main(): Promise<void> {
 
   console.log('Seeding consumer catalog (brands, categories, listings, collections)…');
   await seedConsumerCatalog(db);
+
+  // The hand-written catalog covers a dozen leaves; this fills the remaining ~100 so no
+  // browse tile opens empty. Needs the store + brands the seeds above create.
+  console.log('Expanding catalog across every taxonomy leaf…');
+  await seedCatalogExpand(db);
 
   console.log('Seeding product reviews…');
   await seedProductReviews(db);

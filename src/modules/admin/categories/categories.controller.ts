@@ -1,10 +1,11 @@
 /**
  * Admin category CRUD, taxonomy tree with cycle guard on reparent.
  */
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import { categories, productListings } from '@/db/schema/index.js';
+import { invalidateCategoryTree } from '@/shared/catalog/category-tree.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
@@ -22,23 +23,33 @@ export async function listCategories(input: { query: z.infer<typeof ListQuery> }
     ...(where && { where }),
     orderBy: [asc(categories.sortOrder), asc(categories.label)],
   });
-  const counts =
-    rows.length === 0
-      ? []
-      : await db
-          .select({
-            categoryId: productListings.categoryId,
-            count: sql<number>`cast(count(*) as int)`,
-          })
-          .from(productListings)
-          .where(
-            inArray(
-              productListings.categoryId,
-              rows.map((r) => r.id),
-            ),
-          )
-          .groupBy(productListings.categoryId);
-  const countMap = new Map(counts.map((c) => [c.categoryId, c.count]));
+  if (rows.length === 0) return ok([]);
+
+  // Counted over the WHOLE table, not just `rows`, then rolled up to ancestors. Listings
+  // sit on leaves, so a direct count makes every parent read 0 — which since the
+  // retaxonomy is most of the tree, and it would make the delete guard's "N listings
+  // reference this" warning look inconsistent with the row the admin is staring at.
+  const counts = await db
+    .select({ categoryId: productListings.categoryId, count: sql<number>`cast(count(*) as int)` })
+    .from(productListings)
+    .groupBy(productListings.categoryId);
+
+  const parentById = new Map(
+    (await db.query.categories.findMany({ columns: { id: true, parentId: true } })).map((c) => [
+      c.id,
+      c.parentId,
+    ]),
+  );
+  const countMap = new Map<string, number>();
+  for (const c of counts) {
+    let cursor: string | null | undefined = c.categoryId;
+    const seen = new Set<string>();
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      countMap.set(cursor, (countMap.get(cursor) ?? 0) + c.count);
+      cursor = parentById.get(cursor) ?? null;
+    }
+  }
   return ok(rows.map((c) => ({ ...c, listingCount: countMap.get(c.id) ?? 0 })));
 }
 
@@ -57,15 +68,18 @@ export async function createCategory(input: { body: z.infer<typeof CreateBody> }
         id,
         slug: input.body.slug,
         label: input.body.label,
+        ...(input.body.labelHim !== undefined && { labelHim: input.body.labelHim }),
         parentId: input.body.parentId ?? null,
         gender: input.body.gender,
         ...(input.body.iconName !== undefined && { iconName: input.body.iconName }),
         ...(input.body.tintColor !== undefined && { tintColor: input.body.tintColor }),
         ...(input.body.imageUrl !== undefined && { imageUrl: input.body.imageUrl }),
         sortOrder: input.body.sortOrder,
+        ...(input.body.sortOrderHim !== undefined && { sortOrderHim: input.body.sortOrderHim }),
         isActive: input.body.isActive,
       })
       .returning();
+    invalidateCategoryTree();
     return ok(created);
   } catch (err) {
     if ((err as { code?: string }).code === '23505') {
@@ -112,6 +126,7 @@ export async function patchCategory(input: { id: string; body: z.infer<typeof Pa
       .set(compact(input.body))
       .where(eq(categories.id, existing.id))
       .returning();
+    invalidateCategoryTree();
     return ok(updated);
   } catch (err) {
     if ((err as { code?: string }).code === '23505') {
@@ -143,5 +158,6 @@ export async function deleteCategory(input: { id: string }) {
   }
 
   await db.delete(categories).where(eq(categories.id, existing.id));
+  invalidateCategoryTree();
   return ok({ id: existing.id, deleted: true });
 }

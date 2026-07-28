@@ -67,7 +67,7 @@ export async function listStores(input: { query: z.infer<typeof ListQuery> }) {
 export async function approveStore(input: { id: string; body: z.infer<typeof ApproveBody> }) {
   const body = input.body as { platformFeeBp?: number; payoutCadenceDays?: number };
   const platformFeeBp = body.platformFeeBp ?? 1500;
-  const payoutCadenceDays = body.payoutCadenceDays ?? 7;
+  const payoutCadenceDays = body.payoutCadenceDays ?? 15;
   const store = await db.query.retailerStores.findFirst({
     where: eq(retailerStores.id, input.id),
   });

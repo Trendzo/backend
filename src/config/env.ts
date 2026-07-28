@@ -63,6 +63,10 @@ const EnvSchema = z
     PUBLIC_SUPPORT_EMAIL: z.string().email().default('trendzodevelopment@gmail.com'),
     PUBLIC_SUPPORT_PHONE: z.string().optional(),
     PUBLIC_BUSINESS_ADDRESS: z.string().optional(),
+    // Free-text opening hours shown in the app's support screen, e.g.
+    // "Mon-Sat, 9am - 9pm IST". Optional: absent means the app hides the row
+    // rather than inventing one.
+    PUBLIC_SUPPORT_HOURS: z.string().optional(),
 
     TCS_RATE_BP: z.coerce.number().int().nonnegative().default(100),
 
@@ -130,6 +134,11 @@ const EnvSchema = z
     // Leave unset in dev — when NODE_ENV=development, all origins are allowed.
     // Example for prod: CORS_ORIGIN=https://closetx-frontend.vercel.app,https://admin.closetx.in
     CORS_ORIGIN: z.string().optional(),
+
+    // Shared bearer key for the external MCP endpoint (POST /mcp). Optional: unset ⇒ the
+    // endpoint is OPEN (dev/test). When set, third-party MCP clients must send
+    // `Authorization: Bearer <key>`. The check is dormant until this is set.
+    MCP_API_KEY: optionalSecret(16),
   });
 
 const parsed = EnvSchema.safeParse(process.env);

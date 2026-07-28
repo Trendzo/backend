@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PositivePaiseSchema, StockSchema } from '@/shared/validation/common.js';
+import { PaiseSchema, PositivePaiseSchema, StockSchema } from '@/shared/validation/common.js';
 
 export const GenderEnum = z.enum(['her', 'him', 'unisex']);
 
@@ -30,7 +30,9 @@ export const CreateListingBody = z.object({
   // Rich HTML — sanitized server-side in the controller before persisting.
   // Raw cap is slightly above the post-sanitize byte cap (LONG_DESC_MAX_BYTES).
   descriptionLong: z.string().max(110_000).optional(),
-  brandId: z.string().min(1),
+  // Optional so a draft can be saved before a brand is picked (brand_id is
+  // nullable in the DB). Publishing still requires a complete listing.
+  brandId: z.string().min(1).optional(),
   categoryId: z.string().min(1),
   gender: GenderEnum,
   listingPolicy: z.enum(['return', 'replace', 'final_sale']).default('return'),
@@ -94,7 +96,9 @@ const GroupVariantInput = z
   .object({
     size: z.string().trim().min(1).max(40).optional(),
     sku: z.string().trim().min(1).max(64).optional(),
-    pricePaise: PositivePaiseSchema,
+    // 0 allowed so an in-progress draft variant can exist without a price yet;
+    // the publish guard (assertVariantComplete) still requires pricePaise > 0.
+    pricePaise: PaiseSchema,
     compareAtPrice: PositivePaiseSchema.optional(),
     stock: StockSchema.default(0),
     imageUrls: z.array(z.string().url()).default([]),
@@ -114,7 +118,8 @@ export const BulkCreateGroupVariantsBody = z.object({
 export const DefaultVariantBody = z
   .object({
     sku: z.string().trim().min(1).max(64).optional(),
-    pricePaise: PositivePaiseSchema,
+    // 0 allowed for an in-progress draft; publish guard enforces pricePaise > 0.
+    pricePaise: PaiseSchema,
     compareAtPrice: PositivePaiseSchema.nullable().optional(),
     stock: StockSchema.default(0),
     imageUrls: z.array(z.string().url()).default([]),
