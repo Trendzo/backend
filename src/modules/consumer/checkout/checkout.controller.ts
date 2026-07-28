@@ -386,6 +386,58 @@ export async function retryGroupPayment(input: { auth: Auth; groupId: string }) 
   });
 }
 
+/* ── Return eligibility ───────────────────────────────────────────────────── */
+
+/** Mirrors shared/returns/open-return.ts RETURN_WINDOW_DAYS. */
+const RETURN_WINDOW_DAYS = 7;
+
+/** Item outcomes that leave the goods with the customer, so a return is possible. */
+const RETURNABLE_OUTCOMES = new Set(['delivered_kept', 'at_door_kept', 'pending_delivery']);
+
+/**
+ * Whether this order can still be returned, and until when.
+ *
+ * Computed here because only the server has the inputs: the delivery timestamp,
+ * each item's outcome, and the `final_sale` policy FROZEN at placement (so a
+ * later policy change cannot retroactively block or unblock a past order). The
+ * app previously ran its own day counter against a constant, which was a second
+ * copy of a rule that lives in open-return.ts and could silently drift from it.
+ */
+function returnPolicyFor(o: {
+  status: string;
+  deliveredAt: Date | null;
+  items: { id: string; outcome: string; listingPolicySnap: string }[];
+}) {
+  const windowDays = RETURN_WINDOW_DAYS;
+
+  if (o.status !== 'delivered' || !o.deliveredAt) {
+    return { eligible: false, windowDays, deadline: null as string | null, reason: 'not_delivered', items: [] };
+  }
+
+  const deadline = new Date(o.deliveredAt.getTime() + windowDays * 24 * 60 * 60 * 1000);
+  const expired = Date.now() > deadline.getTime();
+
+  // Per item, so the app can grey out exactly the lines it cannot send back
+  // instead of hiding them or failing at submit.
+  const items = o.items.map((it) => {
+    const finalSale = it.listingPolicySnap === 'final_sale';
+    const outcomeOk = RETURNABLE_OUTCOMES.has(it.outcome);
+    return {
+      orderItemId: it.id,
+      eligible: !expired && !finalSale && outcomeOk,
+      reason: expired ? 'window_expired' : finalSale ? 'final_sale' : outcomeOk ? null : 'already_returned',
+    };
+  });
+
+  return {
+    eligible: !expired && items.some((i) => i.eligible),
+    windowDays,
+    deadline: deadline.toISOString(),
+    reason: expired ? 'window_expired' : null,
+    items,
+  };
+}
+
 /** One order with line items — ownership enforced via the consumerId filter. */
 type OrderRow = typeof orders.$inferSelect;
 
@@ -424,6 +476,7 @@ function shapeOrderDetail(
   o: OrderRow & {
     items: Parameters<typeof shapeOrderItem>[0][];
     store?: { lat: number; lng: number; contactPhone: string | null } | null;
+    refunds?: { id: string; totalRefundPaise: number; status: string; reason: string | null; createdAt: Date; completedAt: Date | null }[];
   },
 ) {
   return {
@@ -482,6 +535,27 @@ function shapeOrderDetail(
     pickupSlotStart: o.pickupSlotStart,
     pickupSlotEnd: o.pickupSlotEnd,
     doorWindowExpiresAt: o.doorWindowExpiresAt,
+    // Return eligibility, computed SERVER-side. It depends on deliveredAt, the
+    // per-item outcome and the final_sale policy frozen at placement — the app
+    // cannot derive any of that, and its local 7-day counter was a second copy
+    // of a rule that only lives here (open-return.ts).
+    returnPolicy: returnPolicyFor(o),
+    /**
+     * Refunds raised against this order.
+     *
+     * Previously a refund was only visible through /consumer/returns, i.e. only
+     * when it came from a RETURN. A cancelled prepaid order also raises one, and
+     * the customer had no way to see that it existed, its amount or its status —
+     * the app could only say "you will be refunded" and hope.
+     */
+    refunds: (o.refunds ?? []).map((r) => ({
+      id: r.id,
+      amountPaise: r.totalRefundPaise,
+      status: r.status,
+      reason: r.reason,
+      createdAt: r.createdAt,
+      completedAt: r.completedAt,
+    })),
     // timestamps
     placedAt: o.placedAt,
     acceptedAt: o.acceptedAt,
@@ -498,6 +572,12 @@ export async function getOrder(input: { auth: Auth; id: string }) {
     with: {
       items: true,
       store: { columns: { lat: true, lng: true, contactPhone: true } },
+      refunds: {
+        columns: {
+          id: true, totalRefundPaise: true, status: true,
+          reason: true, createdAt: true, completedAt: true,
+        },
+      },
     },
   });
   if (!order) throw new AppError(404, ErrorCode.NotFound, 'Order not found');

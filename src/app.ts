@@ -126,6 +126,10 @@ import retailerBannersRoutes from '@/modules/retailer/banners/banners.routes.js'
 import adminDigestRoutes from '@/modules/admin/digest/digest.routes.js';
 import pincodeRoutes from '@/modules/_shared/pincode/pincode.routes.js';
 import appConfigRoutes from '@/modules/public/app-config.routes.js';
+import consumerNotificationRoutes from '@/modules/consumer/notifications/notifications.routes.js';
+import spinRoutes from '@/modules/public/spin/spin.routes.js';
+import consumerRewardsRoutes from '@/modules/consumer/rewards/rewards.routes.js';
+import adminSpinWheelRoutes from '@/modules/admin/spin-wheel/spin-wheel.routes.js';
 import publicLegalRoutes from '@/modules/public/legal.routes.js';
 import publicLegalApiRoutes from '@/modules/public/legal-api.routes.js';
 import mcpRoutes from '@/modules/mcp/mcp.routes.js';
@@ -248,6 +252,9 @@ export function buildApp() {
       // Client-facing config the apps must not hardcode (support contact,
       // try-on window, return window). Public — no per-user data.
       await api.register(appConfigRoutes, { prefix: '/app-config' });
+      await api.register(consumerNotificationRoutes, { prefix: '/consumer/notifications' });
+      await api.register(spinRoutes, { prefix: '/spin' });
+      await api.register(consumerRewardsRoutes, { prefix: '/consumer/rewards' });
       await api.register(retailerProfileRoutes, { prefix: '/retailer' });
       await api.register(retailerListingsRoutes, { prefix: '/retailer' });
       await api.register(retailerBrandsRoutes, { prefix: '/retailer/brands' });
@@ -258,6 +265,7 @@ export function buildApp() {
       await api.register(adminCollectionsRoutes, { prefix: '/admin/collections' });
       await api.register(adminListingsRoutes, { prefix: '/admin/listings' });
       await api.register(adminPromotionRoutes, { prefix: '/admin/promotions' });
+      await api.register(adminSpinWheelRoutes, { prefix: '/admin/spin-wheels' });
       await api.register(adminVoucherRoutes, { prefix: '/admin/promotions' });
       await api.register(adminClubbingRoutes, { prefix: '/admin/clubbing-matrix' });
       await api.register(adminLoyaltyRoutes, { prefix: '/admin/loyalty' });

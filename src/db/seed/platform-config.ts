@@ -29,6 +29,12 @@ export const PLATFORM_CONFIG_DEFAULTS: readonly ConfigRow[] = [
     value: 10000,
     description: 'Up to 100% of eligible amount',
   },
+  // Tier ladder. These three were READ (admin/promotions.controller.ts) with code
+  // fallbacks but never seeded, so editing them in the DB had no effect unless an
+  // admin inserted the rows by hand. Seeded at the values the code already assumed.
+  { key: 'loyalty_tier_silver_min', value: 500, description: 'Lifetime points for Silver' },
+  { key: 'loyalty_tier_gold_min', value: 2000, description: 'Lifetime points for Gold' },
+  { key: 'loyalty_tier_platinum_min', value: 5000, description: 'Lifetime points for Platinum' },
 
   // Acquisition rewards
   { key: 'welcome_points', value: 100, description: 'Awarded at signup' },

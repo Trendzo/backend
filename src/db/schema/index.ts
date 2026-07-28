@@ -40,3 +40,4 @@ export * from './analytics-events.js';
 export * from './notifications-extra.js';
 export * from './pos.js';
 export * from './terms.js';
+export * from './spin.js';

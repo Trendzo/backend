@@ -30,15 +30,20 @@ type Executor = Pick<typeof db, 'query'>;
 const LOYALTY_CONFIG_KEYS = [
   'loyalty_point_value_paise',
   'loyalty_earn_rate_bp',
-  'loyalty_min_redeemable_points',
-  'loyalty_max_redeem_fraction_bp',
+  // NOT 'loyalty_'-prefixed. Those keys are never seeded and are not what the
+  // admin loyalty screen writes, so this path silently fell through to its code
+  // defaults while compute-quote read the real rows — 20%% redeemable here vs
+  // 100%% there for the same order.
+  'min_redeemable_points',
+  'max_redeem_fraction_bp',
 ] as const;
 
 const DEFAULT_LOYALTY_CONFIG: LoyaltyConfig = {
   pointValuePaise: 100,
   earnRateBp: 10000,
   minRedeemablePoints: 100,
-  maxRedeemFractionBp: 2000,
+  // Matches compute-quote.ts:671 — the two paths must not disagree.
+  maxRedeemFractionBp: 10000,
 };
 
 export async function loadLoyaltyConfig(): Promise<LoyaltyConfig> {
@@ -50,9 +55,9 @@ export async function loadLoyaltyConfig(): Promise<LoyaltyConfig> {
     pointValuePaise: (map.get('loyalty_point_value_paise') as number) ?? DEFAULT_LOYALTY_CONFIG.pointValuePaise,
     earnRateBp: (map.get('loyalty_earn_rate_bp') as number) ?? DEFAULT_LOYALTY_CONFIG.earnRateBp,
     minRedeemablePoints:
-      (map.get('loyalty_min_redeemable_points') as number) ?? DEFAULT_LOYALTY_CONFIG.minRedeemablePoints,
+      (map.get('min_redeemable_points') as number) ?? DEFAULT_LOYALTY_CONFIG.minRedeemablePoints,
     maxRedeemFractionBp:
-      (map.get('loyalty_max_redeem_fraction_bp') as number) ?? DEFAULT_LOYALTY_CONFIG.maxRedeemFractionBp,
+      (map.get('max_redeem_fraction_bp') as number) ?? DEFAULT_LOYALTY_CONFIG.maxRedeemFractionBp,
   };
 }
 

@@ -7,6 +7,18 @@ export const SlugParam = z.object({ slug: z.string() });
 export const IdParam = z.object({ id: z.string() });
 
 /**
+ * Stores near a point. Consumers get a whitelisted projection — see
+ * catalog.controller.ts shapeStore. `radiusKm` is capped so this can never be
+ * used to enumerate the whole store table.
+ */
+export const NearbyStoresQuery = z.object({
+  lat: z.coerce.number().min(-90).max(90),
+  lng: z.coerce.number().min(-180).max(180),
+  radiusKm: z.coerce.number().positive().max(50).default(15),
+  limit: z.coerce.number().int().positive().max(50).default(20),
+});
+
+/**
  * Upcoming pickup windows for a store. `store_pickup_slots` rows are RECURRING
  * (dayOfWeek + HH:MM), so the endpoint expands them into concrete dated windows
  * the consumer app can show and hand straight back at placement.

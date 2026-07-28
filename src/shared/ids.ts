@@ -108,4 +108,8 @@ export const IdPrefix = {
   PostLike: 'plk',
   PostComment: 'pcmt',
   PostSave: 'psv',
+  // Spin & Win
+  SpinWheel: 'swh',
+  SpinSegment: 'sseg',
+  SpinPlay: 'splay',
 } as const;

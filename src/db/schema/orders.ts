@@ -27,6 +27,7 @@ import {
 import { consumers, deliveryAgents } from './identity.js';
 import { retailerStores } from './store.js';
 import { productListings, variants } from './products.js';
+import { refunds } from './refunds.js';
 
 /**
  * Saved consumer addresses. Used as the source for an order's address_*_snap fields at
@@ -480,6 +481,9 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
   transitions: many(orderTransitions),
   payments: many(payments),
   deliveryAttempts: many(deliveryAttempts),
+  // Declared so the consumer order-detail read can include refunds in one query.
+  // The inverse side already existed (refundsRelations.order).
+  refunds: many(refunds),
 }));
 
 export const orderItemsRelations = relations(orderItems, ({ one }) => ({

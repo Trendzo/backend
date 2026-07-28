@@ -478,6 +478,35 @@ export const clubbingDefault = pgEnum('clubbing_default', [
   'always_allowed',
 ]);
 
+// ===== Spin & Win =====
+/**
+ * A wheel's lifecycle. `active` IS the enable/disable toggle the admin flips — a partial
+ * unique index guarantees at most one active wheel, so activating a second one is a
+ * constraint violation rather than a silent race between two live wheels.
+ */
+export const spinWheelStatus = pgEnum('spin_wheel_status', [
+  'draft',
+  'active',
+  'paused',
+  'archived',
+]);
+/**
+ * What a slice pays out. `promotion` issues a single-use voucher against an existing
+ * promotion — so every eligibility rule (min order value, first-order-only, per-consumer
+ * limit, tier, store scope, expiry) is the promotion's, not a second rules engine here.
+ */
+export const spinRewardKind = pgEnum('spin_reward_kind', ['promotion', 'points', 'none']);
+/**
+ * A single spin's life. A guest's win parks at `pending_claim` until they sign in;
+ * `no_prize` is terminal for a "better luck next time" slice.
+ */
+export const spinPlayStatus = pgEnum('spin_play_status', [
+  'pending_claim',
+  'claimed',
+  'no_prize',
+  'expired',
+]);
+
 // ===== §14 Wallet Payouts =====
 export const walletPayoutStatus = pgEnum('wallet_payout_status', [
   'pending_claim',

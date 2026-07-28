@@ -6,6 +6,7 @@ import {
   CollectionsQuery,
   FacetsQuery,
   IdParam,
+  NearbyStoresQuery,
   PickupSlotsQuery,
   ProductReviewsQuery,
   ProductsQuery,
@@ -70,6 +71,21 @@ const catalogRoutes: FastifyPluginAsyncZod = async (app) => {
     '/collections/:slug',
     { schema: { params: SlugParam } },
     async (req) => ctrl.getCollection(req.params.slug),
+  );
+
+  // Stores near a point, nearest first. Registered BEFORE /stores/:id so the
+  // literal path is not swallowed by the parameterised one.
+  app.get(
+    '/stores/nearby',
+    { schema: { querystring: NearbyStoresQuery } },
+    async (req) => ctrl.listNearbyStores({ query: req.query }),
+  );
+
+  // Consumer-safe store detail: address, coordinates, hours, phone, gallery.
+  app.get(
+    '/stores/:id',
+    { schema: { params: IdParam } },
+    async (req) => ctrl.getStore(req.params.id),
   );
 
   // Concrete upcoming pickup windows for a store, expanded from its recurring

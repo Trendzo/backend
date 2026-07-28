@@ -24,6 +24,7 @@ import {
   orders,
   platformConfig,
   promotions,
+  promotionConsumerUsage,
   retailerStores,
   variants,
   voucherCodes,
@@ -174,38 +175,60 @@ export async function resolveExplicitPromotions(
   let voucherCodeId: string | undefined;
   let voucherCodePromotionId: string | undefined;
 
+  /**
+   * Resolve a string against `voucher_codes`. Shared by the explicit `voucherCode`
+   * input and by the coupon-field fallback below, so a single-use code behaves
+   * identically however it arrived.
+   *
+   * `kind` is carried through to the rejection so the app can tell the customer why
+   * the thing they typed did not work, using the label they typed it under.
+   */
+  const resolveVoucher = async (raw: string, kind: 'coupon' | 'voucher'): Promise<boolean> => {
+    const code = await database.query.voucherCodes.findFirst({
+      where: eq(voucherCodes.code, raw.toUpperCase()),
+    });
+    if (!code) return false;
+    if (code.totalUses != null && code.redeemedCount >= code.totalUses) {
+      rejectedCodes.push({ code: raw, kind, reason: 'fully_redeemed' });
+      return true;
+    }
+    if (code.assignedConsumerId && (isGuest || code.assignedConsumerId !== consumer!.id)) {
+      rejectedCodes.push({
+        code: raw,
+        kind,
+        reason: isGuest ? 'requires_login' : 'assigned_to_other',
+      });
+      return true;
+    }
+    promoIds.add(code.promotionId);
+    explicitCodeByPromoId.set(code.promotionId, { code: raw, kind });
+    voucherCodeId = code.id;
+    voucherCodePromotionId = code.promotionId;
+    return true;
+  };
+
   if (args.couponCode) {
     const promo = await database.query.promotions.findFirst({
       where: and(eq(promotions.name, args.couponCode), eq(promotions.mechanism, 'coupon')),
     });
-    if (!promo) {
-      rejectedCodes.push({ code: args.couponCode, kind: 'coupon', reason: 'not_found' });
-    } else {
+    if (promo) {
       promoIds.add(promo.id);
       explicitCodeByPromoId.set(promo.id, { code: args.couponCode, kind: 'coupon' });
+    } else if (!(await resolveVoucher(args.couponCode, 'coupon'))) {
+      /**
+       * Fall back to the voucher table before giving up.
+       *
+       * Checkout has exactly one "have a code?" field, and a customer cannot be
+       * expected to know whether what they hold is a coupon (a shared promotion
+       * name) or a voucher (a single-use code). Wheel prizes are vouchers, so
+       * without this the app would tell a winner their own prize did not exist.
+       */
+      rejectedCodes.push({ code: args.couponCode, kind: 'coupon', reason: 'not_found' });
     }
   }
 
-  if (args.voucherCode) {
-    const code = await database.query.voucherCodes.findFirst({
-      where: eq(voucherCodes.code, args.voucherCode.toUpperCase()),
-    });
-    if (!code) {
-      rejectedCodes.push({ code: args.voucherCode, kind: 'voucher', reason: 'not_found' });
-    } else if (code.totalUses != null && code.redeemedCount >= code.totalUses) {
-      rejectedCodes.push({ code: args.voucherCode, kind: 'voucher', reason: 'fully_redeemed' });
-    } else if (code.assignedConsumerId && (isGuest || code.assignedConsumerId !== consumer!.id)) {
-      rejectedCodes.push({
-        code: args.voucherCode,
-        kind: 'voucher',
-        reason: isGuest ? 'requires_login' : 'assigned_to_other',
-      });
-    } else {
-      promoIds.add(code.promotionId);
-      explicitCodeByPromoId.set(code.promotionId, { code: args.voucherCode, kind: 'voucher' });
-      voucherCodeId = code.id;
-      voucherCodePromotionId = code.promotionId;
-    }
+  if (args.voucherCode && !(await resolveVoucher(args.voucherCode, 'voucher'))) {
+    rejectedCodes.push({ code: args.voucherCode, kind: 'voucher', reason: 'not_found' });
   }
 
   const promoRows =
@@ -278,6 +301,46 @@ export async function resolveExplicitPromotions(
       if (filter?.length && !filter.includes(consumerTier)) {
         const explicit = explicitCodeByPromoId.get(enginePromos[i]!.id);
         if (explicit) rejectedCodes.push({ ...explicit, reason: 'tier_ineligible' });
+        enginePromos.splice(i, 1);
+      }
+    }
+  }
+
+  /**
+   * G5: perConsumerLimit — how many times ONE account may ever use this promotion.
+   *
+   * This gate did not exist. `promotions.perConsumerLimit` was validated by three admin
+   * controllers, documented on the schema as driving "perConsumerLimit checks at checkout",
+   * and `place-order.ts` faithfully incremented `promotion_consumer_usage.useCount` after
+   * every redemption — but nothing ever compared the two. A coupon capped at one use per
+   * customer could be used forever.
+   *
+   * Guests are skipped: with no account there is no usage history to check, and an
+   * unauthenticated caller cannot hold a targeted voucher anyway (see the assignment gate
+   * above). The count is read here rather than at placement so the customer is told before
+   * they reach the pay button.
+   */
+  if (consumer) {
+    const capped = validPromoRows.filter(
+      (p) => p.perConsumerLimit !== null && enginePromos.some((e) => e.id === p.id),
+    );
+    if (capped.length > 0) {
+      const usage = await database.query.promotionConsumerUsage.findMany({
+        where: and(
+          eq(promotionConsumerUsage.consumerId, consumer.id),
+          inArray(
+            promotionConsumerUsage.promotionId,
+            capped.map((p) => p.id),
+          ),
+        ),
+      });
+      const usedByPromo = new Map(usage.map((u) => [u.promotionId, u.useCount]));
+      for (const p of capped) {
+        if ((usedByPromo.get(p.id) ?? 0) < p.perConsumerLimit!) continue;
+        const i = enginePromos.findIndex((e) => e.id === p.id);
+        if (i === -1) continue;
+        const explicit = explicitCodeByPromoId.get(p.id);
+        if (explicit) rejectedCodes.push({ ...explicit, reason: 'per_consumer_limit_reached' });
         enginePromos.splice(i, 1);
       }
     }

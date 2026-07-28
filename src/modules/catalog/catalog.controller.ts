@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, lte, gte, or, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, lte, gte, ne, or, isNull, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
@@ -22,6 +22,7 @@ import type {
   CategoriesQuery,
   CollectionsQuery,
   FacetsQuery,
+  NearbyStoresQuery,
   PickupSlotsQuery,
   ProductReviewsQuery,
   ProductsQuery,
@@ -780,4 +781,92 @@ export async function listStorePickupSlots(input: {
     },
     slots,
   });
+}
+
+
+/* ── Consumer store projection ────────────────────────────────────────────── */
+
+/**
+ * What a shopper may see about a store.
+ *
+ * Consumers previously received only `{ id, legalName }` on a product and there
+ * was no store endpoint at all — no address, no coordinates, no hours. The app
+ * filled the gap with three invented stores complete with fake distances and
+ * opening hours.
+ *
+ * Whitelist, not a redaction: GSTIN, PAN, legal entity, fee structure, payout
+ * cadence, pause reasons and suspension attribution are all commercially
+ * sensitive and never belong in a consumer response.
+ */
+function shapeStore(s: {
+  id: string; legalName: string; address: string; lat: number; lng: number;
+  contactPhone: string | null; openingHours: Record<string, { open: string; close: string }[]> | null;
+  galleryImageUrls: string[] | null;
+}) {
+  return {
+    id: s.id,
+    name: s.legalName,
+    address: s.address,
+    lat: s.lat,
+    lng: s.lng,
+    phone: s.contactPhone,
+    openingHours: s.openingHours ?? null,
+    images: s.galleryImageUrls ?? [],
+  };
+}
+
+/** Only stores a shopper can actually buy from — same rule as browsable listings. */
+const STORE_IS_VISIBLE = or(
+  eq(retailerStores.status, 'active'),
+  and(eq(retailerStores.status, 'paused'), ne(retailerStores.pauseVisibility, 'hidden')),
+)!;
+
+export async function getStore(id: string) {
+  const s = await db.query.retailerStores.findFirst({
+    where: and(eq(retailerStores.id, id), STORE_IS_VISIBLE),
+    columns: {
+      id: true, legalName: true, address: true, lat: true, lng: true,
+      contactPhone: true, openingHours: true, galleryImageUrls: true,
+    },
+  });
+  if (!s) throw new AppError(404, ErrorCode.NotFound, 'Store not found');
+  return ok(shapeStore(s));
+}
+
+/** Great-circle distance in km. */
+function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371;
+  const dLat = ((bLat - aLat) * Math.PI) / 180;
+  const dLng = ((bLng - aLng) * Math.PI) / 180;
+  const la1 = (aLat * Math.PI) / 180;
+  const la2 = (bLat * Math.PI) / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Stores near a point, nearest first, with a real distance.
+ *
+ * Filtered and sorted in memory on purpose: the store table is small (tens of
+ * rows), and PostGIS is not installed. Revisit with an earth_distance index if
+ * the count ever reaches the thousands.
+ */
+export async function listNearbyStores(input: { query: z.infer<typeof NearbyStoresQuery> }) {
+  const { lat, lng, radiusKm, limit } = input.query;
+  const rows = await db.query.retailerStores.findMany({
+    where: STORE_IS_VISIBLE,
+    columns: {
+      id: true, legalName: true, address: true, lat: true, lng: true,
+      contactPhone: true, openingHours: true, galleryImageUrls: true,
+    },
+  });
+
+  const near = rows
+    .map((s) => ({ store: s, distanceKm: haversineKm(lat, lng, s.lat, s.lng) }))
+    .filter((r) => r.distanceKm <= radiusKm)
+    .sort((a, b) => a.distanceKm - b.distanceKm)
+    .slice(0, limit)
+    .map((r) => ({ ...shapeStore(r.store), distanceKm: Math.round(r.distanceKm * 10) / 10 }));
+
+  return ok(near);
 }
