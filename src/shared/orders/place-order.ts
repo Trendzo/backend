@@ -60,8 +60,16 @@ export type PlaceOrderInput = {
   items: Array<{ variantId: string; qty: number }>;
   deliveryMethod: 'express' | 'standard' | 'pickup' | 'try_and_buy';
   paymentMethod: 'upi' | 'card' | 'cod' | 'wallet' | 'gift_card';
-  /** Test-surface admin choice; in real checkout this comes from the gateway callback. */
-  paymentOutcome: PaymentOutcome;
+  /**
+   * ADMIN TEST SURFACE ONLY — `POST /admin/orders/test`, where an authenticated
+   * admin is deliberately simulating an outcome.
+   *
+   * Consumer checkout does NOT send this and cannot: the field was removed from
+   * its request schema. A payment's fate is decided here from the method, and
+   * confirmed by the gateway. Absent means `pending`, so anything this function
+   * does not explicitly know how to settle stays unpaid.
+   */
+  paymentOutcome?: PaymentOutcome | undefined;
   /** Required for non-pickup; pickup orders may omit. */
   addressId?: string | undefined;
   couponCode?: string | undefined;
@@ -519,17 +527,40 @@ export async function placeOrder(
     // the Checkout verify call / webhook, never self-declared.
     const amountChargedPaise = breakdown.totalPaise - walletAppliedPaise;
     const isCodCharge = input.paymentMethod === 'cod' && amountChargedPaise > 0;
-    const isGatewayCharge =
+    /** A consumer paying a remainder by card/UPI — settled by a gateway, whichever is active. */
+    const isConsumerCardCharge =
       amountChargedPaise > 0 &&
       input.placedByActorType === 'consumer' &&
-      (input.paymentMethod === 'upi' || input.paymentMethod === 'card') &&
-      isRazorpayActive();
+      (input.paymentMethod === 'upi' || input.paymentMethod === 'card');
+    const isGatewayCharge = isConsumerCardCharge && isRazorpayActive();
+    /**
+     * Same charge, but no Razorpay configured, so the MOCK gateway is in play
+     * (see shared/payments/gateway.ts — it deterministically succeeds). The
+     * simulated success is decided HERE, server-side, instead of being taken from
+     * the request: dev and test keep their network-free green path, and a caller
+     * still has no way to influence whether a payment counts as received.
+     */
+    const isMockCardCharge = isConsumerCardCharge && !isRazorpayActive();
+    /**
+     * The server decides. Nothing a caller says can mark money as received.
+     *
+     * - Nothing left to charge (wallet covered it, or the order is free) → settled,
+     *   because the wallet debit above is the real movement of money.
+     * - COD → pending until cash is collected at the door/counter.
+     * - Gateway → pending until Razorpay's signed callback verifies capture.
+     * - Anything else → `input.paymentOutcome` only reaches here from the admin
+     *   test endpoint; for every other caller it is undefined and falls to
+     *   'pending'. It used to default to 'succeeded', which meant an unknown or
+     *   unimplemented payment method confirmed the order having collected nothing.
+     */
     const effectiveOutcome: PaymentOutcome =
       amountChargedPaise === 0
         ? 'succeeded'
         : isCodCharge || isGatewayCharge
           ? 'pending'
-          : input.paymentOutcome;
+          : isMockCardCharge
+            ? 'succeeded'
+            : (input.paymentOutcome ?? 'pending');
     const paymentId = newId(IdPrefix.Payment);
     const settledAt =
       effectiveOutcome === 'succeeded' || effectiveOutcome === 'failed'

@@ -96,6 +96,31 @@ async function placeOrder(opts: {
   applyWallet?: boolean;
 }) {
   const isPickup = opts.deliveryMethod === 'pickup';
+
+  // Consumer checkout no longer accepts `paymentOutcome` — the server alone decides
+  // whether money arrived, so a client cannot post itself a settled (or a pending)
+  // payment. Tests that need a specific outcome go through the admin simulation
+  // endpoint, which is the one surface where declaring one is legitimate.
+  if (opts.paymentOutcome) {
+    const admin = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/test-orders',
+      headers: auth(adminToken),
+      payload: {
+        storeId,
+        consumerId,
+        items: [{ variantId, qty: 1 }],
+        deliveryMethod: opts.deliveryMethod,
+        paymentMethod: opts.paymentMethod,
+        paymentOutcome: opts.paymentOutcome,
+        ...(isPickup ? {} : { addressId }),
+        ...(opts.applyWallet !== undefined ? { applyWallet: opts.applyWallet } : {}),
+      },
+    });
+    expect(admin.statusCode).toBe(200);
+    return data(admin) as { orderId: string; status: string };
+  }
+
   const res = await app.inject({
     method: 'POST',
     url: '/api/v1/consumer/checkout',
@@ -112,7 +137,6 @@ async function placeOrder(opts: {
             pickupSlotEnd: new Date(Date.now() + 7_200_000).toISOString(),
           }
         : { addressId }),
-      ...(opts.paymentOutcome ? { paymentOutcome: opts.paymentOutcome } : {}),
       ...(opts.applyWallet !== undefined ? { applyWallet: opts.applyWallet } : {}),
     },
   });
@@ -1320,7 +1344,6 @@ describe('gateway settle/fail — pending checkout lifecycle', () => {
         items: [{ variantId, qty: 1 }],
         deliveryMethod: 'standard',
         paymentMethod: 'upi',
-        paymentOutcome: 'pending',
         addressId,
         idempotencyKey: key,
       },
@@ -1328,11 +1351,19 @@ describe('gateway settle/fail — pending checkout lifecycle', () => {
     expect(res.statusCode).toBe(200);
     const body = data(res) as { groupId: string; orders: Array<{ orderId: string }> };
     const gwOrder = `order_grp_${Date.now()}`;
+    // Drive the group back to the awaiting-Checkout state. Group checkout takes no
+    // `paymentOutcome` from the caller any more, and with no Razorpay keys in test
+    // the mock gateway settles it immediately — so rewind both the payments and the
+    // orders here to reproduce what a live two-phase group looks like.
     for (const child of body.orders) {
       await db
         .update(payments)
-        .set({ gatewayOrderId: gwOrder })
+        .set({ gatewayOrderId: gwOrder, status: 'pending', settledAt: null })
         .where(eq(payments.orderId, child.orderId));
+      await db
+        .update(orders)
+        .set({ status: 'pending' })
+        .where(eq(orders.id, child.orderId));
     }
 
     const hook = await app.inject({
@@ -1359,6 +1390,107 @@ describe('gateway settle/fail — pending checkout lifecycle', () => {
         payload: {},
       });
     }
+  });
+});
+
+/* ═══ Webhook — asynchronous refund failure ═══════════════════════════════ */
+
+describe('razorpay webhook — refund.failed rolls the refund back', () => {
+  it('marks the disbursement failed AND reopens the parent refund', async () => {
+    // A refund Razorpay accepted, then failed out of band. The webhook used to flip
+    // only the disbursement, so the parent stayed 'succeeded' and the customer kept
+    // reading "Refund complete" for money that had bounced.
+    const { orderId } = await placeOrder({ deliveryMethod: 'standard', paymentMethod: 'upi' });
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/consumer/checkout/orders/${orderId}/cancel`,
+      headers: auth(consumerToken),
+      payload: { reason: 'webhook refund-failure test' },
+    });
+
+    const refundRow = await db.query.refunds.findFirst({ where: eq(refunds.orderId, orderId) });
+    expect(refundRow).toBeTruthy();
+
+    // Stamp a razorpay-shaped refund id on the disbursement, as a real gateway
+    // refund would, so the webhook can find it.
+    const gatewayRefundId = `rfnd_test_${Date.now()}`;
+    const [disb] = await db
+      .update(refundDisbursements)
+      .set({ gatewayRef: gatewayRefundId })
+      .where(eq(refundDisbursements.refundId, refundRow!.id))
+      .returning({ id: refundDisbursements.id });
+    expect(disb).toBeTruthy();
+
+    const hook = await app.inject({
+      method: 'POST',
+      url: '/api/v1/webhooks/razorpay',
+      headers: { 'content-type': 'application/json', 'x-razorpay-signature': 'skipped-in-dev' },
+      payload: {
+        event: 'refund.failed',
+        payload: { refund: { entity: { id: gatewayRefundId, status: 'failed' } } },
+      },
+    });
+    expect(hook.statusCode).toBe(200);
+
+    const afterDisb = await db.query.refundDisbursements.findFirst({
+      where: eq(refundDisbursements.id, disb!.id),
+    });
+    expect(afterDisb?.status).toBe('failed');
+
+    const afterRefund = await db.query.refunds.findFirst({ where: eq(refunds.id, refundRow!.id) });
+    expect(afterRefund?.status).toBe('partially_disbursed');
+  });
+});
+
+/* ═══ Payment authority ═══════════════════════════════════════════════════ */
+
+/**
+ * The backend is the only thing that may decide a payment succeeded.
+ *
+ * Both of these were exploitable. `paymentOutcome` was part of the consumer
+ * checkout schema and defaulted to 'succeeded', and `gift_card` was an accepted
+ * payment method with no implementation behind it — no balance lookup, no debit.
+ * Together they let any authenticated caller POST an order that confirmed, routed
+ * and shipped having collected nothing.
+ */
+describe('payment authority — the client cannot declare itself paid', () => {
+  const checkout = async (payload: Record<string, unknown>) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/checkout',
+      headers: auth(consumerToken),
+      payload: {
+        storeId,
+        items: [{ variantId, qty: 1 }],
+        deliveryMethod: 'standard',
+        addressId,
+        ...payload,
+      },
+    });
+
+  it('rejects gift_card, which nothing implements', async () => {
+    const res = await checkout({ paymentMethod: 'gift_card' });
+    expect(res.statusCode).toBe(422);
+  });
+
+  it('ignores a self-declared paymentOutcome instead of honouring it', async () => {
+    // A caller claiming failure must not be able to steer the payment record; the
+    // outcome is whatever the server decides for this method.
+    const res = await checkout({ paymentMethod: 'upi', paymentOutcome: 'failed' });
+    expect(res.statusCode).toBe(200);
+    const { orderId } = data(res) as { orderId: string };
+    const pay = await db.query.payments.findFirst({ where: eq(payments.orderId, orderId) });
+    expect(pay?.status).not.toBe('failed');
+    expect((await orderRow(orderId)).status).not.toBe('payment_failed');
+  });
+
+  it('still refuses to settle COD at placement, whatever the caller claims', async () => {
+    const res = await checkout({ paymentMethod: 'cod', paymentOutcome: 'succeeded' });
+    expect(res.statusCode).toBe(200);
+    const { orderId } = data(res) as { orderId: string };
+    const pay = await db.query.payments.findFirst({ where: eq(payments.orderId, orderId) });
+    // No cash exists until the driver collects it at the door.
+    expect(pay?.status).toBe('pending');
   });
 });
 

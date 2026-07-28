@@ -18,8 +18,9 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { and, eq, like } from 'drizzle-orm';
 import { db } from '@/db/client.js';
-import { refundDisbursements } from '@/db/schema/index.js';
+import { refundDisbursements, refunds } from '@/db/schema/index.js';
 import { verifyWebhookSignature } from '@/shared/payments/razorpay.js';
+import { notifyAllAdmins } from '@/shared/notify-admins.js';
 import {
   failGatewayCheckout,
   settleGatewayCapture,
@@ -97,22 +98,46 @@ const razorpayWebhookRoutes: FastifyPluginAsync = async (app) => {
         case 'refund.processed':
         case 'refund.failed': {
           // Annotate the disbursement we created for this refund (gatewayRef =
-          // razorpay refund id). refund.failed flags it for the admin retry desk.
+          // razorpay refund id).
           const r = parsed.payload?.refund?.entity;
-          if (r?.id) {
-            if (parsed.event === 'refund.failed') {
+          if (r?.id && parsed.event === 'refund.failed') {
+            /**
+             * A refund Razorpay accepted and then failed asynchronously.
+             *
+             * This used to flip only the disbursement, leaving the parent refund at
+             * 'succeeded' and telling nobody — so the customer kept reading "Refund
+             * complete · back on your original payment method" while the money had
+             * bounced. Mirror what the synchronous failure path in
+             * shared/refunds/disburse-tender.ts does: roll the refund back to
+             * partially_disbursed and put it on the admin retry desk.
+             */
+            const [row] = await db
+              .update(refundDisbursements)
+              .set({ status: 'failed' })
+              .where(
+                and(
+                  eq(refundDisbursements.gatewayRef, r.id),
+                  like(refundDisbursements.gatewayRef, 'rfnd_%'),
+                ),
+              )
+              .returning({ id: refundDisbursements.id, refundId: refundDisbursements.refundId });
+
+            if (row) {
               await db
-                .update(refundDisbursements)
-                .set({ status: 'failed' })
-                .where(
-                  and(
-                    eq(refundDisbursements.gatewayRef, r.id),
-                    like(refundDisbursements.gatewayRef, 'rfnd_%'),
-                  ),
-                );
+                .update(refunds)
+                .set({ status: 'partially_disbursed' })
+                .where(eq(refunds.id, row.refundId));
+              await notifyAllAdmins({
+                kind: 'system',
+                title: 'Gateway refund failed — needs retry',
+                body: `Refund ${row.refundId}: Razorpay reported refund ${r.id} as failed`,
+                payload: { refundId: row.refundId, disbursementId: row.id, gatewayRefundId: r.id },
+              }).catch(() => undefined);
+            } else {
+              console.error(`[razorpay-webhook] refund.failed ${r.id} matched no disbursement`);
             }
-            // refund.processed: our row was already marked succeeded at creation.
           }
+          // refund.processed: our row was already marked succeeded at creation.
           break;
         }
         default:

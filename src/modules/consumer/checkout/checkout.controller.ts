@@ -55,7 +55,7 @@ export async function placeConsumerOrder(input: { auth: Auth; body: PlaceInput }
     items: body.items,
     deliveryMethod: body.deliveryMethod,
     paymentMethod: body.paymentMethod,
-    paymentOutcome: body.paymentOutcome,
+    // No paymentOutcome: the server decides whether money arrived, not the caller.
     ...(body.addressId !== undefined && { addressId: body.addressId }),
     ...(body.couponCode !== undefined && { couponCode: body.couponCode }),
     ...(body.voucherCode !== undefined && { voucherCode: body.voucherCode }),
@@ -88,7 +88,7 @@ export async function placeConsumerGroupOrder(input: {
     items: body.items,
     deliveryMethod: body.deliveryMethod,
     paymentMethod: body.paymentMethod,
-    paymentOutcome: body.paymentOutcome,
+    // No paymentOutcome: the server decides whether money arrived, not the caller.
     ...(body.addressId !== undefined && { addressId: body.addressId }),
     ...(body.applyWallet !== undefined && { applyWallet: body.applyWallet }),
     ...(body.couponCode !== undefined && { couponCode: body.couponCode }),

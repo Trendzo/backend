@@ -1,10 +1,23 @@
 import { z } from 'zod';
 
-// Reuse the canonical method/outcome enums so consumer checkout stays in lockstep
-// with the order core (see modules/admin/orders/orders.validators.ts).
+// Mirrors the order core's enums (see modules/admin/orders/orders.validators.ts),
+// minus what a consumer must not be able to ask for.
 export const DeliveryMethodEnum = z.enum(['express', 'standard', 'pickup', 'try_and_buy']);
-export const PaymentMethodEnum = z.enum(['upi', 'card', 'cod', 'wallet', 'gift_card']);
-export const PaymentOutcomeEnum = z.enum(['succeeded', 'failed', 'pending']);
+
+/**
+ * `gift_card` is deliberately ABSENT.
+ *
+ * It was accepted here but nothing implements it: place-order's only mention is a
+ * display label, there is no balance lookup and no debit. Combined with the old
+ * `paymentOutcome` default of 'succeeded', any authenticated caller could post
+ * `paymentMethod: 'gift_card'` and have an order confirm, route and ship having
+ * collected nothing — no gift card required, not even a claim of payment.
+ *
+ * Gift cards do exist, but as a top-up: `/consumer/gift-cards/redeem` credits the
+ * wallet, and the order is then paid with `wallet`. Re-add this only when checkout
+ * genuinely debits a card balance.
+ */
+export const PaymentMethodEnum = z.enum(['upi', 'card', 'cod', 'wallet']);
 
 export const OrderIdParam = z.object({ id: z.string() });
 
@@ -58,7 +71,6 @@ export const PaymentFailedBody = z.object({
 });
 
 export const PlaceOrderBody = QuoteBody.extend({
-  paymentOutcome: PaymentOutcomeEnum.default('succeeded'),
   idempotencyKey: z.string().min(1).optional(),
   // §9 pickup slot snap — required for real consumer pickup orders.
   pickupSlotId: z.string().min(1).optional(),
@@ -76,7 +88,6 @@ export const PlaceGroupOrderBody = z.object({
   items: ItemsSchema,
   deliveryMethod: DeliveryMethodEnum,
   paymentMethod: PaymentMethodEnum,
-  paymentOutcome: PaymentOutcomeEnum.default('succeeded'),
   addressId: z.string().min(1).optional(),
   applyWallet: z.boolean().optional(),
   // Cart-level codes/points — resolved once against the whole cart, split across stores.

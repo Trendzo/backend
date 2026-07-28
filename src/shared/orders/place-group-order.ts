@@ -68,7 +68,8 @@ export type PlaceGroupOrderInput = {
   items: Array<{ variantId: string; qty: number }>;
   deliveryMethod: PlaceOrderInput['deliveryMethod'];
   paymentMethod: PlaceOrderInput['paymentMethod'];
-  paymentOutcome: PlaceOrderInput['paymentOutcome'];
+  /** Admin test surface only — see PlaceOrderInput. Consumer checkout omits it. */
+  paymentOutcome?: PlaceOrderInput['paymentOutcome'];
   addressId?: string | undefined;
   applyWallet?: boolean | undefined;
   /** Cart-level codes — resolved once against the WHOLE cart and split across children. */

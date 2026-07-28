@@ -92,27 +92,38 @@ export async function fixImages(database: typeof Db): Promise<void> {
   }
   console.log(`  → fixed ${galleryFixed} listing galleries`);
 
-  // 3. Variants — broken/empty imageUrls get a pool image; vary by color group so
-  //    swatch switches still change the lead shot.
+  /**
+   * 3. Variants — strip dead URLs only. Never invent one.
+   *
+   * An EMPTY `imageUrls` is a valid, meaningful state: it means "this variant has
+   * no photo of its own, show the listing's". Every reader already does exactly
+   * that — the consumer app resolves `variant.imageUrls[0] ?? listing.galleryUrls[0]`,
+   * and the card projection follows the same order.
+   *
+   * This step used to fill an empty set with a stock pool photo so colour swatches
+   * would change the lead shot in the demo catalogue. The cost of that was not
+   * worth it: because the variant image WINS over the gallery, a fabricated stock
+   * photo permanently hid the real one for every listing a retailer had actually
+   * uploaded photos to. A men's shirt shipped with a women's cargo-pants shot on
+   * every browse, search and product page, while its genuine photo sat unused in
+   * the gallery. Leaving the set empty makes the fallback do the obvious thing.
+   */
   let variantFixed = 0;
-  for (const [i, l] of listings.entries()) {
-    const pool = poolFor(slugById.get(l.categoryId));
+  for (const l of listings) {
     const rows = await database.query.variants.findMany({
       where: eq(variants.listingId, l.id),
-      columns: { id: true, groupId: true, imageUrls: true },
+      columns: { id: true, imageUrls: true },
     });
-    const groupIdx = new Map<string | null, number>();
     for (const v of rows) {
-      if (!groupIdx.has(v.groupId)) groupIdx.set(v.groupId, groupIdx.size);
-      const hasBroken = v.imageUrls.some(isBroken) || v.imageUrls.length === 0;
-      if (!hasBroken) continue;
-      const img = pool[(i + groupIdx.get(v.groupId)!) % pool.length]!;
-      const next = Array.from(new Set([img, ...keepGood(v.imageUrls)]));
-      await database.update(variants).set({ imageUrls: next }).where(eq(variants.id, v.id));
+      if (!v.imageUrls.some(isBroken)) continue;
+      await database
+        .update(variants)
+        .set({ imageUrls: keepGood(v.imageUrls) })
+        .where(eq(variants.id, v.id));
       variantFixed++;
     }
   }
-  console.log(`  → fixed ${variantFixed} variant image sets`);
+  console.log(`  → cleaned ${variantFixed} variant image sets`);
 }
 
 // Standalone entry: npx tsx src/db/seed/fix-images.ts

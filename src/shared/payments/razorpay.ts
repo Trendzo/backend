@@ -101,6 +101,26 @@ export function verifyCheckoutSignature(input: {
  */
 export function verifyWebhookSignature(rawBody: Buffer | string, signature: string): boolean {
   if (!env.RAZORPAY_WEBHOOK_SECRET) {
+    /**
+     * Fail CLOSED everywhere except dev/test.
+     *
+     * This used to return true — an unset secret meant every webhook was accepted
+     * unverified. That was survivable when a client could declare its own payment
+     * outcome, because the webhook was merely a convergence path. It is not
+     * survivable now: card/UPI orders deliberately wait at 'pending' until the
+     * gateway confirms, so THIS endpoint is what marks an order paid. Without the
+     * secret it would be an open "mark any order paid" API, and a gateway order id
+     * is the only thing an attacker would need.
+     *
+     * Dev and test keep the permissive path so the local webhook test stays
+     * network- and secret-free.
+     */
+    if (env.NODE_ENV === 'production') {
+      console.error(
+        '[razorpay] RAZORPAY_WEBHOOK_SECRET unset in production — rejecting webhook',
+      );
+      return false;
+    }
     console.warn('[razorpay] RAZORPAY_WEBHOOK_SECRET unset — webhook signature NOT verified');
     return true;
   }
