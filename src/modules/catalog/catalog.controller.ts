@@ -236,6 +236,16 @@ function shapeListings(rows: ListingRow[]) {
         description: l.description,
         gender: l.gender,
         listingPolicy: l.listingPolicy,
+        /**
+         * How the retailer said this product is sold: 'single' (one price, one
+         * SKU), 'color_size', or 'custom' option axes.
+         *
+         * It was never shipped to the consumer API, so the app could not tell a
+         * one-SKU shirt from a product with real options and drew colour swatches
+         * and a size row for everything — inventing four hexes and a "Default"
+         * size chip for a product the retailer had explicitly marked as a single.
+         */
+        variantMode: l.variantMode,
         galleryUrls: l.galleryUrls,
         occasion: l.occasion,
         brand: l.brand ? { id: l.brand.id, name: l.brand.name } : null,
