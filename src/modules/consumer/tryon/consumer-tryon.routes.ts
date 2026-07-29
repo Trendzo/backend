@@ -36,6 +36,11 @@ const consumerTryOnRoutes: FastifyPluginAsyncZod = async (app) => {
           'Try-on is busy right now — please try again in a moment.',
         );
       }
+      // NOTE: a garment photo blocked by Vertex's safety filter lands here too,
+      // and "please try again" is the wrong advice for it — that failure is
+      // permanent for that product. We cannot branch on it yet because the
+      // @google/genai SDK drops the 400 body; see the KNOWN GAP block in
+      // shared/vertex-tryon.ts for the reproduction and the fix.
       throw new AppError(502, ErrorCode.InternalError, 'Try-on failed — please try again.');
     }
   });
