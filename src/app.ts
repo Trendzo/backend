@@ -116,6 +116,7 @@ import consumerReturnsRoutes from '@/modules/consumer/returns/returns.routes.js'
 import publicPromotionRoutes from '@/modules/promotions/public.routes.js';
 import pricingRoutes from '@/modules/pricing/pricing.routes.js';
 import consumerProfileRoutes from '@/modules/consumer/profile/profile.routes.js';
+import consumerTryOnRoutes from '@/modules/consumer/tryon/consumer-tryon.routes.js';
 import publicMoodboardRoutes from '@/modules/consumer/moodboards/public.routes.js';
 import adminMoodboardRoutes from '@/modules/admin/moodboards/moodboards.routes.js';
 import retailerPushRoutes from '@/modules/retailer/push/push.routes.js';
@@ -397,6 +398,7 @@ export function buildApp() {
       await api.register(consumerReturnsRoutes, { prefix: '/consumer/returns' });
       // Consumer self-profile (OTP signups fill in name/email here before checkout)
       await api.register(consumerProfileRoutes, { prefix: '/consumer/profile' });
+      await api.register(consumerTryOnRoutes, { prefix: '/consumer/tryon' });
       // Public share read for moodboards (UNAUTHENTICATED — no auth hook)
       await api.register(publicMoodboardRoutes, { prefix: '/public/moodboards' });
       // Public live offers + coupons (UNAUTHENTICATED — drives banners + coupon wallet)
