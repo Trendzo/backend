@@ -1,0 +1,16 @@
+-- consumer_ban_surface was missing 'reels'.
+--
+-- `src/db/schema/enums.ts` has listed 'reels' since the reels feature landed, and
+-- both createReel and addComment call isConsumerBannedFrom(sub, 'reels') — which
+-- casts that string to this enum. The database only ever had posts/reviews/rewards,
+-- so every one of those calls failed with:
+--
+--   22P02  invalid input value for enum consumer_ban_surface: "reels"
+--
+-- surfacing to the app as a bare 500 "Internal server error" on POST. It went
+-- unnoticed because 0058_reels.sql backfilled the four reel TABLES but not this
+-- enum, and until now nothing in the app could reach the create path.
+--
+-- ALTER TYPE ... ADD VALUE is transaction-safe on PG 12+ as long as the new label
+-- is not USED in the same transaction; this migration only adds it.
+ALTER TYPE "public"."consumer_ban_surface" ADD VALUE IF NOT EXISTS 'reels';

@@ -484,6 +484,13 @@
       "when": 1786000000000,
       "tag": "0068_reel_variant_tag",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1786100000000,
+      "tag": "0069_ban_surface_reels",
+      "breakpoints": true
     }
   ]
 }
