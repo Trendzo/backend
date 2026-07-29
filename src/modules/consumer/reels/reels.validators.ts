@@ -27,8 +27,20 @@ export const CreateReelBody = z.object({
   height: z.coerce.number().int().positive().optional(),
   bytes: z.coerce.number().int().positive().optional(),
   caption: z.string().trim().max(2200).optional(),
-  // Required — a reel is always about a specific product the consumer purchased.
-  productId: z.string().min(1),
+  /**
+   * OPTIONAL. A reel is content first; featuring a product is a choice.
+   *
+   * This was required, and the controller additionally refused unless the author
+   * had a delivered-and-kept order line for it — so posting anything at all meant
+   * having shopped first. Anyone can post now, with or without a tag.
+   */
+  productId: z.string().min(1).optional(),
+  /**
+   * Which variant of that product (colour/size). Only meaningful alongside
+   * `productId`; the controller rejects a variant that does not belong to the
+   * given listing rather than silently dropping it.
+   */
+  variantId: z.string().min(1).optional(),
 });
 
 export const CreateCommentBody = z.object({

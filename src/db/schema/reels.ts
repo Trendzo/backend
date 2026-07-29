@@ -16,7 +16,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { reelCommentStatus, reelStatus } from './enums.js';
 import { adminAccounts, consumers } from './identity.js';
-import { productListings } from './products.js';
+import { productListings, variants } from './products.js';
 
 export const reels = pgTable(
   'reels',
@@ -35,7 +35,13 @@ export const reels = pgTable(
     height: integer('height'),
     bytes: integer('bytes'),
     // Product tag — nullable; ON DELETE SET NULL so a delisted product doesn't drop the reel.
+    // Optional by design: a reel is a piece of content first. Requiring a product (and
+    // that the author had bought it) is what kept this feature from being postable at all.
     productId: text('product_id').references(() => productListings.id, { onDelete: 'set null' }),
+    // Which variant of that product, when the creator picked one (colour/size). Also
+    // SET NULL — a variant going away must not orphan or delete the reel, it just
+    // degrades the tag back to the listing.
+    variantId: text('variant_id').references(() => variants.id, { onDelete: 'set null' }),
     status: reelStatus('status').notNull().default('active'),
     // Denormalised counters — kept in sync in the like/save/comment transactions.
     likeCount: integer('like_count').notNull().default(0),
@@ -156,6 +162,7 @@ export const reelComments = pgTable(
 export const reelsRelations = relations(reels, ({ one, many }) => ({
   consumer: one(consumers, { fields: [reels.consumerId], references: [consumers.id] }),
   product: one(productListings, { fields: [reels.productId], references: [productListings.id] }),
+  variant: one(variants, { fields: [reels.variantId], references: [variants.id] }),
   takedownByAdmin: one(adminAccounts, {
     fields: [reels.takedownByAdminId],
     references: [adminAccounts.id],

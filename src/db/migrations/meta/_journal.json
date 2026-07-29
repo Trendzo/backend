@@ -477,6 +477,13 @@
       "when": 1785900000000,
       "tag": "0067_spin_wheel",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1786000000000,
+      "tag": "0068_reel_variant_tag",
+      "breakpoints": true
     }
   ]
 }

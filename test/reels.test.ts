@@ -226,10 +226,36 @@ afterAll(async () => {
 });
 
 describe('reels — auth & validation', () => {
-  it('rejects unauthenticated access', async () => {
+  it('serves the feed to a signed-out visitor', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/consumer/reels' });
+    expect(res.statusCode).toBe(200);
+    expect(json(res).success).toBe(true);
+    // No viewer means nothing can be liked or saved BY that viewer — the flags
+    // must be present and false, not absent (the app renders off them).
+    for (const item of data(res).items) {
+      expect(item.viewerHasLiked).toBe(false);
+      expect(item.viewerHasSaved).toBe(false);
+    }
+  });
+
+  it('still requires a token to POST a reel', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/reels',
+      payload: reelPayload(),
+    });
     expect(res.statusCode).toBe(401);
-    expect(json(res).success).toBe(false);
+  });
+
+  it('still requires a token to like or comment', async () => {
+    const like = await app.inject({ method: 'POST', url: `/api/v1/consumer/reels/${'rel_x'}/like` });
+    expect(like.statusCode).toBe(401);
+    const comment = await app.inject({
+      method: 'POST',
+      url: `/api/v1/consumer/reels/${'rel_x'}/comments`,
+      payload: { body: 'hi' },
+    });
+    expect(comment.statusCode).toBe(401);
   });
 
   it('422s on an invalid create body', async () => {
@@ -242,12 +268,23 @@ describe('reels — auth & validation', () => {
     expect(res.statusCode).toBe(422);
   });
 
-  it('422s when productId is missing (a reel must tag a product)', async () => {
+  it('creates a reel with no product tag at all', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/consumer/reels',
       headers: auth(ctoken),
       payload: reelPayload({ productId: undefined }),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(data(res).product).toBeNull();
+  });
+
+  it('422s on a variant with no product to belong to', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/reels',
+      headers: auth(ctoken),
+      payload: reelPayload({ productId: undefined, variantId: 'var_orphan' }),
     });
     expect(res.statusCode).toBe(422);
   });
@@ -263,15 +300,26 @@ describe('reels — auth & validation', () => {
   });
 });
 
-describe('reels — purchase gating', () => {
-  it('403s when the tagged product was not purchased', async () => {
+describe('reels — product tagging', () => {
+  it('lets anyone feature a product they never bought', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/consumer/reels',
       headers: auth(ctoken),
       payload: reelPayload({ productId: unpurchasedListingId }),
     });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(200);
+    expect(data(res).product).toMatchObject({ id: unpurchasedListingId });
+  });
+
+  it("404s on a variant that belongs to a different listing", async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/reels',
+      headers: auth(ctoken),
+      payload: reelPayload({ productId: purchasedListingId, variantId: 'var_not_of_this_listing' }),
+    });
+    expect(res.statusCode).toBe(404);
   });
 
   it('404s when the tagged product does not exist', async () => {
@@ -284,7 +332,7 @@ describe('reels — purchase gating', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it('creates a reel for a purchased product and echoes the product chip', async () => {
+  it('creates a reel for a product and echoes the product chip', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/consumer/reels',

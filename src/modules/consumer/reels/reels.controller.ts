@@ -11,13 +11,12 @@ import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
   consumers,
-  orderItems,
-  orders,
   productListings,
   reelComments,
   reelLikes,
   reelSaves,
   reels,
+  variants,
 } from '@/db/schema/index.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import { deleteObject, uploadObject } from '@/shared/storage/index.js';
@@ -40,43 +39,30 @@ const REEL_VIDEO_MIMES = new Set(['video/mp4', 'video/quicktime', 'video/webm'])
 // duration (the client-reported durationSec is only advisory and can't be trusted).
 const REEL_MAX_DURATION_SEC = 30;
 
-// Order-item outcomes where the consumer ends up keeping the product — the "purchased"
-// signal that gates who may post a reel about a given listing. Excludes returned/refused/
-// refunded outcomes and the pre-delivery 'pending_delivery' state.
-const KEPT_OUTCOMES = [
-  'delivered_kept',
-  'at_door_kept',
-  'at_door_return_rejected',
-  'held_collected_at_counter',
-  'held_redelivered',
-  'dispute_resolved_no_refund',
-  'dispute_resolved_fresh_delivery',
-] as const;
-
-/** True if the consumer has an order line for this listing that they received and kept. */
-async function hasPurchasedProduct(consumerId: string, productId: string): Promise<boolean> {
-  const rows = await db
-    .select({ id: orderItems.id })
-    .from(orderItems)
-    .innerJoin(orders, eq(orderItems.orderId, orders.id))
-    .where(
-      and(
-        eq(orders.consumerId, consumerId),
-        eq(orderItems.listingId, productId),
-        inArray(orderItems.outcome, [...KEPT_OUTCOMES]),
-      ),
-    )
-    .limit(1);
-  return rows.length > 0;
-}
+/*
+ * The purchase gate used to live here.
+ *
+ * `hasPurchasedProduct()` walked order_items for a delivered-and-kept outcome and
+ * createReel refused with 403 unless it found one — and `productId` was mandatory,
+ * so posting ANY reel required having shopped first. That is the opposite of the
+ * product rule: anyone may post, with or without a product tag, bought or not.
+ * Moderation is the backstop (status + takedown trio + the reels ban surface),
+ * not purchase history.
+ */
 
 // ── shaping ──
 
 type AuthorCols = Pick<typeof consumers.$inferSelect, 'id' | 'name' | 'avatarUrl'>;
 
+type VariantCols = Pick<
+  typeof variants.$inferSelect,
+  'id' | 'attributes' | 'attributesLabel' | 'imageUrls' | 'pricePaise'
+>;
+
 type ReelRow = typeof reels.$inferSelect & {
   consumer: AuthorCols;
   product: Pick<typeof productListings.$inferSelect, 'id' | 'name' | 'galleryUrls' | 'status'> | null;
+  variant: VariantCols | null;
 };
 
 type CommentRow = typeof reelComments.$inferSelect & { consumer: AuthorCols };
@@ -84,6 +70,7 @@ type CommentRow = typeof reelComments.$inferSelect & { consumer: AuthorCols };
 const reelWith = {
   consumer: { columns: { id: true, name: true, avatarUrl: true } },
   product: { columns: { id: true, name: true, galleryUrls: true, status: true } },
+  variant: { columns: { id: true, attributes: true, attributesLabel: true, imageUrls: true, pricePaise: true } },
 } as const;
 
 const authorWith = {
@@ -114,8 +101,27 @@ function shapeReel(r: ReelRow, viewerHasLiked: boolean, viewerHasSaved: boolean)
       ? {
           id: r.product.id,
           name: r.product.name,
-          image: r.product.galleryUrls[0] ?? null,
+          /**
+           * The featured variant's own photo wins.
+           *
+           * A reel tagged "black / M" showing the listing's default (often the
+           * cheapest variant) contradicts the video the shopper just watched.
+           * Falls back to the listing image when the variant has none.
+           */
+          image: r.variant?.imageUrls?.[0] ?? r.product.galleryUrls[0] ?? null,
           status: r.product.status,
+          // `attributesLabel` is the retailer's own rendering ("M / Black"), so the
+          // reel shows exactly what the listing page shows rather than a second
+          // opinion assembled from the raw attribute map.
+          variant: r.variant
+            ? {
+                id: r.variant.id,
+                label: r.variant.attributesLabel,
+                size: r.variant.attributes?.size ?? null,
+                color: r.variant.attributes?.color ?? null,
+                pricePaise: r.variant.pricePaise,
+              }
+            : null,
         }
       : null,
     viewerHasLiked,
@@ -159,9 +165,17 @@ async function ensureActiveReel(id: string): Promise<void> {
   if (!r || r.status !== 'active') throw new AppError(404, ErrorCode.NotFound, 'Reel not found');
 }
 
-/** Batch the current viewer's liked/saved sets for a page of reel ids. */
-async function viewerFlags(consumerId: string, reelIds: string[]) {
-  if (!reelIds.length) return { liked: new Set<string>(), saved: new Set<string>() };
+/**
+ * Batch the current viewer's liked/saved sets for a page of reel ids.
+ *
+ * `consumerId` is undefined for a signed-out viewer — the feed is public, so that is
+ * the normal case, not an error. Nothing is liked or saved by nobody, and skipping
+ * the two queries entirely is also the cheap path for the guest feed.
+ */
+async function viewerFlags(consumerId: string | undefined, reelIds: string[]) {
+  if (!consumerId || !reelIds.length) {
+    return { liked: new Set<string>(), saved: new Set<string>() };
+  }
   const [likedRows, savedRows] = await Promise.all([
     db
       .select({ reelId: reelLikes.reelId })
@@ -250,19 +264,31 @@ export async function createReel(input: { auth: Auth; body: z.infer<typeof Creat
   if (await isConsumerBannedFrom(auth.sub, 'reels')) {
     throw new AppError(403, ErrorCode.ConsumerBanned, 'You are banned from posting reels');
   }
-  // A reel is always tied to a product the consumer actually purchased — verify the listing
-  // exists and that this consumer has a kept order line for it.
-  const listing = await db.query.productListings.findFirst({
-    where: eq(productListings.id, body.productId),
-    columns: { id: true },
-  });
-  if (!listing) throw new AppError(404, ErrorCode.NotFound, 'Tagged product not found');
-  if (!(await hasPurchasedProduct(auth.sub, body.productId))) {
-    throw new AppError(
-      403,
-      ErrorCode.Forbidden,
-      'You can only post a reel for a product you have purchased',
-    );
+  /*
+   * Featuring a product is optional, and open to any live listing — the creator does
+   * not have to have bought it. What IS checked: the listing exists, and a supplied
+   * variant actually belongs to that listing. Rejecting a mismatched pair beats
+   * silently dropping it, which would leave the reel tagged with a product whose
+   * displayed colour/size was never what the creator picked.
+   */
+  if (body.variantId && !body.productId) {
+    throw new AppError(422, ErrorCode.ValidationError, 'A variant needs its product');
+  }
+  if (body.productId) {
+    const listing = await db.query.productListings.findFirst({
+      where: eq(productListings.id, body.productId),
+      columns: { id: true },
+    });
+    if (!listing) throw new AppError(404, ErrorCode.NotFound, 'Tagged product not found');
+    if (body.variantId) {
+      const variant = await db.query.variants.findFirst({
+        where: and(eq(variants.id, body.variantId), eq(variants.listingId, body.productId)),
+        columns: { id: true },
+      });
+      if (!variant) {
+        throw new AppError(404, ErrorCode.NotFound, 'Variant not found for this product');
+      }
+    }
   }
   const id = newId(IdPrefix.Reel);
   await db.insert(reels).values({
@@ -277,11 +303,12 @@ export async function createReel(input: { auth: Auth; body: z.infer<typeof Creat
     height: body.height ?? null,
     bytes: body.bytes ?? null,
     productId: body.productId ?? null,
+    variantId: body.variantId ?? null,
   });
   return ok(shapeReel(await loadReel(id), false, false));
 }
 
-export async function getFeed(input: { auth: Auth; query: z.infer<typeof FeedQuery> }) {
+export async function getFeed(input: { auth?: Auth | undefined; query: z.infer<typeof FeedQuery> }) {
   const { auth, query } = input;
   const conds = [eq(reels.status, 'active')];
   const c = cursorDate(query.cursor);
@@ -297,7 +324,7 @@ export async function getFeed(input: { auth: Auth; query: z.infer<typeof FeedQue
   const hasMore = rows.length > query.limit;
   const items = (hasMore ? rows.slice(0, query.limit) : rows) as ReelRow[];
   const nextCursor = hasMore ? items[items.length - 1]!.createdAt.toISOString() : null;
-  const { liked, saved } = await viewerFlags(auth.sub, items.map((r) => r.id));
+  const { liked, saved } = await viewerFlags(auth?.sub, items.map((r) => r.id));
 
   return ok({
     items: items.map((r) => shapeReel(r, liked.has(r.id), saved.has(r.id))),
@@ -355,13 +382,14 @@ export async function listSaved(input: { auth: Auth; query: z.infer<typeof FeedQ
   });
 }
 
-export async function getReel(input: { auth: Auth; id: string }) {
+export async function getReel(input: { auth?: Auth | undefined; id: string }) {
   const row = await loadReel(input.id);
-  // Hide taken-down/hidden reels from everyone but their author.
-  if (row.status !== 'active' && row.consumerId !== input.auth.sub) {
+  // Hide taken-down/hidden reels from everyone but their author. A guest has no
+  // author identity, so `undefined` can never match and they simply get the 404.
+  if (row.status !== 'active' && row.consumerId !== input.auth?.sub) {
     throw new AppError(404, ErrorCode.NotFound, 'Reel not found');
   }
-  const { liked, saved } = await viewerFlags(input.auth.sub, [row.id]);
+  const { liked, saved } = await viewerFlags(input.auth?.sub, [row.id]);
   return ok(shapeReel(row, liked.has(row.id), saved.has(row.id)));
 }
 
