@@ -54,11 +54,33 @@ export const PasswordSchema = z.string().min(4, 'Password must be at least 4 cha
 /** State code — 2 alpha-numeric chars (matches GSTIN's first 2 digits in practice). */
 export const StateCodeSchema = z.string().trim().regex(/^[0-9]{2}$/, 'State code must be 2 digits');
 
-/** Money in paise — non-negative integer. */
-export const PaiseSchema = z.number().int().nonnegative();
+/**
+ * Every money and stock column these guard is Postgres `integer` (int4). Without an
+ * upper bound a value above int4 range passed validation, reached the INSERT, and
+ * came back as an unhandled pg 22003 — a bare 500 with no hint at which field was
+ * wrong. Bounding here turns that into a 422 naming the field.
+ *
+ * INT4_MAX paise is ₹2,14,74,836.47 per line, which is far above any real listing.
+ */
+const INT4_MAX = 2_147_483_647;
+
+/** Money in paise — non-negative integer that fits the int4 column. */
+export const PaiseSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(INT4_MAX, 'Amount is too large');
 
 /** Strictly positive paise (used for prices). */
-export const PositivePaiseSchema = z.number().int().positive();
+export const PositivePaiseSchema = z
+  .number()
+  .int()
+  .positive()
+  .max(INT4_MAX, 'Amount is too large');
 
-/** Stock count — non-negative integer. */
-export const StockSchema = z.number().int().nonnegative();
+/** Stock count — non-negative integer that fits the int4 column. */
+export const StockSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(INT4_MAX, 'Stock count is too large');

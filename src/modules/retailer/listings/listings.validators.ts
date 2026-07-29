@@ -1,6 +1,21 @@
 import { z } from 'zod';
 import { PaiseSchema, PositivePaiseSchema, StockSchema } from '@/shared/validation/common.js';
 
+/**
+ * Per-item price ceiling. The hard limit is the int4 column (₹2,14,74,836.47), but
+ * that is a storage artifact, not a business rule — and a retailer types RUPEES, so
+ * the message has to speak rupees. ₹1 crore sits well above any real listing and
+ * well below the column's ceiling, which leaves the overflow unreachable by design.
+ */
+export const MAX_PRICE_RUPEES = 1_00_00_000;
+const MAX_PRICE_PAISE = MAX_PRICE_RUPEES * 100;
+const priceCeilingMsg = `Price must be ₹${MAX_PRICE_RUPEES.toLocaleString('en-IN')} or less`;
+
+/** Selling price in paise; 0 allowed so an in-progress draft can exist without one. */
+const ListingPaiseSchema = PaiseSchema.max(MAX_PRICE_PAISE, priceCeilingMsg);
+/** Strictly positive price in paise (selling price on a complete variant, MRP). */
+const ListingPricePaiseSchema = PositivePaiseSchema.max(MAX_PRICE_PAISE, priceCeilingMsg);
+
 export const GenderEnum = z.enum(['her', 'him', 'unisex']);
 
 export const IdParam = z.object({ id: z.string() });
@@ -98,8 +113,8 @@ const GroupVariantInput = z
     sku: z.string().trim().min(1).max(64).optional(),
     // 0 allowed so an in-progress draft variant can exist without a price yet;
     // the publish guard (assertVariantComplete) still requires pricePaise > 0.
-    pricePaise: PaiseSchema,
-    compareAtPrice: PositivePaiseSchema.optional(),
+    pricePaise: ListingPaiseSchema,
+    compareAtPrice: ListingPricePaiseSchema.optional(),
     stock: StockSchema.default(0),
     imageUrls: z.array(z.string().url()).default([]),
   })
@@ -119,8 +134,8 @@ export const DefaultVariantBody = z
   .object({
     sku: z.string().trim().min(1).max(64).optional(),
     // 0 allowed for an in-progress draft; publish guard enforces pricePaise > 0.
-    pricePaise: PaiseSchema,
-    compareAtPrice: PositivePaiseSchema.nullable().optional(),
+    pricePaise: ListingPaiseSchema,
+    compareAtPrice: ListingPricePaiseSchema.nullable().optional(),
     stock: StockSchema.default(0),
     imageUrls: z.array(z.string().url()).default([]),
   })
@@ -142,8 +157,8 @@ export const CreateVariantBody = z
     // Optional explicit parent group; defaults to the listing's default group.
     groupId: z.string().optional(),
     sku: z.string().trim().min(1).max(64).optional(),
-    pricePaise: PositivePaiseSchema,
-    compareAtPrice: PositivePaiseSchema.optional(),
+    pricePaise: ListingPricePaiseSchema,
+    compareAtPrice: ListingPricePaiseSchema.optional(),
     stock: StockSchema.default(0),
     imageUrls: z.array(z.string().url()).default([]),
   })
@@ -157,8 +172,8 @@ export const BulkCreateVariantsBody = z.object({
           attributes: z.record(z.string(), z.string()),
           attributesLabel: z.string().trim().min(1).max(120),
           sku: z.string().trim().min(1).max(64).optional(),
-          pricePaise: PositivePaiseSchema,
-          compareAtPrice: PositivePaiseSchema.optional(),
+          pricePaise: ListingPricePaiseSchema,
+          compareAtPrice: ListingPricePaiseSchema.optional(),
           stock: StockSchema.default(0),
           imageUrls: z.array(z.string().url()).default([]),
         })
@@ -179,10 +194,10 @@ export const PatchVariantBody = z
     // Move the variant to another group on the same listing (identity re-derived).
     groupId: z.string().optional(),
     sku: z.string().trim().min(1).max(64).nullable().optional(),
-    pricePaise: PositivePaiseSchema.optional(),
+    pricePaise: ListingPricePaiseSchema.optional(),
     // null clears the compare-at price; cross-field check vs pricePaise is done
     // in the controller (Zod can't see the existing row's price).
-    compareAtPrice: PositivePaiseSchema.nullable().optional(),
+    compareAtPrice: ListingPricePaiseSchema.nullable().optional(),
     stock: StockSchema.optional(),
     isActive: z.boolean().optional(),
     imageUrls: z.array(z.string().url()).optional(),
