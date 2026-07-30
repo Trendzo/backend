@@ -41,3 +41,4 @@ export * from './notifications-extra.js';
 export * from './pos.js';
 export * from './terms.js';
 export * from './spin.js';
+export * from './cms.js';

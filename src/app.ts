@@ -127,6 +127,8 @@ import retailerBannersRoutes from '@/modules/retailer/banners/banners.routes.js'
 import adminDigestRoutes from '@/modules/admin/digest/digest.routes.js';
 import pincodeRoutes from '@/modules/_shared/pincode/pincode.routes.js';
 import appConfigRoutes from '@/modules/public/app-config.routes.js';
+import publicCmsRoutes from '@/modules/public/cms.routes.js';
+import adminCmsRoutes from '@/modules/admin/cms/cms.routes.js';
 import consumerNotificationRoutes from '@/modules/consumer/notifications/notifications.routes.js';
 import spinRoutes from '@/modules/public/spin/spin.routes.js';
 import consumerRewardsRoutes from '@/modules/consumer/rewards/rewards.routes.js';
@@ -253,6 +255,8 @@ export function buildApp() {
       // Client-facing config the apps must not hardcode (support contact,
       // try-on window, return window). Public — no per-user data.
       await api.register(appConfigRoutes, { prefix: '/app-config' });
+      // Home CMS: public read of the published snapshot, admin CRUD over the draft.
+      await api.register(publicCmsRoutes, { prefix: '/cms' });
       await api.register(consumerNotificationRoutes, { prefix: '/consumer/notifications' });
       await api.register(spinRoutes, { prefix: '/spin' });
       await api.register(consumerRewardsRoutes, { prefix: '/consumer/rewards' });
@@ -267,6 +271,7 @@ export function buildApp() {
       await api.register(adminListingsRoutes, { prefix: '/admin/listings' });
       await api.register(adminPromotionRoutes, { prefix: '/admin/promotions' });
       await api.register(adminSpinWheelRoutes, { prefix: '/admin/spin-wheels' });
+      await api.register(adminCmsRoutes, { prefix: '/admin/cms' });
       await api.register(adminVoucherRoutes, { prefix: '/admin/promotions' });
       await api.register(adminClubbingRoutes, { prefix: '/admin/clubbing-matrix' });
       await api.register(adminLoyaltyRoutes, { prefix: '/admin/loyalty' });

@@ -112,6 +112,12 @@ export const ADMIN_ACTIONS = [
   'impersonation.end',
   'platform_config.edit',
   'platform_config.view',
+  // Home CMS. Deliberately NOT folded into platform_config.* the way terms/banners are:
+  // ops_admin is explicitly denied platform_config.edit below, and ops is exactly who runs
+  // campaigns. Publishing is split from editing because it is what customers actually see.
+  'cms.view',
+  'cms.edit',
+  'cms.publish',
   'reports.view',
   'store_management.view',
   'store_management.edit',
@@ -223,6 +229,7 @@ const ADMIN_READ_ONLY: AdminAction[] = [
   'audit_log.view',
   'reports.view',
   'platform_config.view',
+  'cms.view',
   'store_management.view',
 ];
 

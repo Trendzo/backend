@@ -15,6 +15,7 @@ import { seedCatalogDefaults } from './catalog-defaults.js';
 import { seedCatalogExpand } from './catalog-expand.js';
 import { seedCategoryTaxonomy } from './category-taxonomy.js';
 import { seedClubbingMatrix } from './clubbing-matrix.js';
+import { seedCmsHome } from './cms-home.js';
 import { seedConsumerCatalog } from './consumer-catalog.js';
 import { seedDelegationModes } from './delegation-modes.js';
 import { seedDemoRetailer } from './demo-retailer.js';
@@ -70,6 +71,11 @@ async function main(): Promise<void> {
 
   console.log('Fixing image URLs (pngimg → unsplash)…');
   await fixImages(db);
+
+  // Independent of the catalog — it seeds merchandising content, not products. Last only
+  // because it is the newest. Fills the DRAFT; nothing is live until an admin presses Publish.
+  console.log('Seeding home CMS (sections, items, bundled-asset catalogue)…');
+  await seedCmsHome(db);
 
   console.log('Seed complete.');
 }

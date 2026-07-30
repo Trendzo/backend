@@ -690,3 +690,11 @@ export const paymentReconDiscrepancyKind = pgEnum('payment_recon_discrepancy_kin
   'duplicate',
 ]);
 
+// ===== Home CMS =====
+// Which rail a piece of merchandising content belongs to. Deliberately NOT the `gender`
+// enum above: that one describes a product ('unisex' = the item suits anyone), this one
+// describes an audience ('all' = render it on both the HER and HIM rails). A banner is not
+// unisex, it is shown to everyone — different question, different enum.
+export const cmsGender = pgEnum('cms_gender', ['her', 'him', 'all']);
+export const cmsMediaKind = pgEnum('cms_media_kind', ['image', 'video']);
+

@@ -1,0 +1,762 @@
+[
+  {
+    "key": "banners/her-60min",
+    "category": "banners",
+    "kind": "image"
+  },
+  {
+    "key": "banners/her-closet",
+    "category": "banners",
+    "kind": "image"
+  },
+  {
+    "key": "banners/her-friday",
+    "category": "banners",
+    "kind": "image"
+  },
+  {
+    "key": "banners/her-new1",
+    "category": "banners",
+    "kind": "image"
+  },
+  {
+    "key": "banners/her-new2",
+    "category": "banners",
+    "kind": "image"
+  },
+  {
+    "key": "banners/him-60min",
+    "category": "banners",
+    "kind": "image"
+  },
+  {
+    "key": "banners/him-closet",
+    "category": "banners",
+    "kind": "image"
+  },
+  {
+    "key": "banners/him-coffee",
+    "category": "banners",
+    "kind": "image"
+  },
+  {
+    "key": "banners/him-friday",
+    "category": "banners",
+    "kind": "image"
+  },
+  {
+    "key": "banners/him-new1",
+    "category": "banners",
+    "kind": "image"
+  },
+  {
+    "key": "banners/him-traditional",
+    "category": "banners",
+    "kind": "image"
+  },
+  {
+    "key": "categories/her/bags",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/her/beauty",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/her/coats",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/her/dresses",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/her/heels",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/her/jewelry",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/her/kimono",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/her/maxi",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/her/mini",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/her/necklaces",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/her/scarves",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/her/tops",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/him/coats",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/him/hoodies",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/him/jackets",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/him/jeans",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/him/polos",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/him/shades",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/him/sneakers",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/him/sweaters",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/him/tees",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "categories/him/watches",
+    "category": "categories",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/accessories",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/active",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/bags",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/beauty",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/bottoms",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/coords",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/denim",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/dresses",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/jewelry",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/lounge",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/outerwear",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/shoes",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/swim",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/her/tops",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/him/active",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/him/bottoms",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/him/denim",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/him/ethnic",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/him/formal",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/him/lounge",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/him/outerwear",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/him/swim",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "category-banners/him/tops",
+    "category": "category-banners",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/extra/1",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/extra/2",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/extra/3",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/extra/4",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/extra/5",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/men/cap",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/men/jackets",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/men/jeans",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/men/shirt",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/men/shoes",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/men/short",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/men/tshirt",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/men/watchs",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered-men/1",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered-men/10",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered-men/11",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered-men/12",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered-men/2",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered-men/3",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered-men/4",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered-men/5",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered-men/6",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered-men/7",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered-men/8",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered-men/9",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered/1",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered/10",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered/11",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered/12",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered/2",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered/3",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered/4",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered/5",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered/6",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered/7",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered/8",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/numbered/9",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/1",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/2",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/banner",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/bannerf",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/bannerm",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/bg",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/box",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/cur",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/cur2",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/cur3",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/cur4",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/deal",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/hoodie_sorry_iam_not",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/left",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/logo",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/rigth",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/Untitled_design",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/w",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/w2",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/w3",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/w4",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/top/w5",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/women/dress",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/women/ethenic",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/women/glasses",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/women/heels",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/women/jwellery",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/women/pants",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/women/skirts",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "github-import/women/top",
+    "category": "github-import",
+    "kind": "image"
+  },
+  {
+    "key": "home",
+    "category": "root",
+    "kind": "image"
+  },
+  {
+    "key": "login",
+    "category": "root",
+    "kind": "image"
+  },
+  {
+    "key": "onb1",
+    "category": "root",
+    "kind": "image"
+  },
+  {
+    "key": "onb2",
+    "category": "root",
+    "kind": "image"
+  },
+  {
+    "key": "onb3",
+    "category": "root",
+    "kind": "image"
+  },
+  {
+    "key": "reel-features/evening-edit",
+    "category": "reel-features",
+    "kind": "image"
+  },
+  {
+    "key": "reel-features/him-after-dark",
+    "category": "reel-features",
+    "kind": "image"
+  },
+  {
+    "key": "reel-features/him-city",
+    "category": "reel-features",
+    "kind": "image"
+  },
+  {
+    "key": "reel-features/sheer-confidence",
+    "category": "reel-features",
+    "kind": "image"
+  },
+  {
+    "key": "reels/female1",
+    "category": "reels",
+    "kind": "video"
+  },
+  {
+    "key": "reels/female2",
+    "category": "reels",
+    "kind": "video"
+  },
+  {
+    "key": "reels/men1",
+    "category": "reels",
+    "kind": "video"
+  },
+  {
+    "key": "reels/men2",
+    "category": "reels",
+    "kind": "video"
+  },
+  {
+    "key": "steals/her/beauty",
+    "category": "steals",
+    "kind": "image"
+  },
+  {
+    "key": "steals/her/jewelry",
+    "category": "steals",
+    "kind": "image"
+  },
+  {
+    "key": "steals/her/tops",
+    "category": "steals",
+    "kind": "image"
+  },
+  {
+    "key": "steals/him/eyewear",
+    "category": "steals",
+    "kind": "image"
+  },
+  {
+    "key": "steals/him/jacket",
+    "category": "steals",
+    "kind": "image"
+  },
+  {
+    "key": "steals/him/tee",
+    "category": "steals",
+    "kind": "image"
+  },
+  {
+    "key": "story-posters/her-60-min",
+    "category": "story-posters",
+    "kind": "image"
+  },
+  {
+    "key": "story-posters/her-casual-affair",
+    "category": "story-posters",
+    "kind": "image"
+  },
+  {
+    "key": "story-posters/her-friday",
+    "category": "story-posters",
+    "kind": "image"
+  },
+  {
+    "key": "story-posters/her-latest-drops",
+    "category": "story-posters",
+    "kind": "image"
+  },
+  {
+    "key": "story-posters/her-roommate",
+    "category": "story-posters",
+    "kind": "image"
+  },
+  {
+    "key": "story-posters/him-60-min",
+    "category": "story-posters",
+    "kind": "image"
+  },
+  {
+    "key": "story-posters/him-bros",
+    "category": "story-posters",
+    "kind": "image"
+  },
+  {
+    "key": "story-posters/him-coffee",
+    "category": "story-posters",
+    "kind": "image"
+  },
+  {
+    "key": "story-posters/him-friday",
+    "category": "story-posters",
+    "kind": "image"
+  },
+  {
+    "key": "vr-try-on",
+    "category": "root",
+    "kind": "image"
+  }
+]

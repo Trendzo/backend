@@ -112,4 +112,8 @@ export const IdPrefix = {
   SpinWheel: 'swh',
   SpinSegment: 'sseg',
   SpinPlay: 'splay',
+  // Home CMS (merchandising content for the consumer app's home + section pages)
+  CmsSection: 'cmss',
+  CmsItem: 'cmsi',
+  CmsPublication: 'cmsp',
 } as const;
