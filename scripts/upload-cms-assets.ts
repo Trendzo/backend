@@ -96,8 +96,10 @@ async function main(): Promise<void> {
       continue;
     }
 
+    // `publicId` only — passing `folder` as well makes the driver prefix it onto an id that
+    // already contains it, producing `cms/bundled/cms/bundled/…`. Harmless (the URL resolves)
+    // but confusing, and it was doing exactly that on the first run.
     const result = await uploadObject(file.buffer, {
-      folder: 'cms/bundled',
       publicId: `cms/bundled/${row.key}`,
       resourceType: row.kind,
       filename: file.filename,
