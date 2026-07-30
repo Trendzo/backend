@@ -52,6 +52,16 @@ export async function verifyMsg91AccessToken(
   }
 
   if (data.type !== 'success' || !data.message) {
+    // Log what MSG91 actually said, plus the account the authkey belongs to. A cross-account
+    // mismatch (app's widget minted the token under account A, we verify with account B's
+    // authkey) is rejected exactly like a wrong OTP, so without this line the two are
+    // indistinguishable and every failure looks like "user typed the wrong code".
+    // Only the account id is logged — it is the public prefix of the widget tokenAuth, not
+    // the secret key.
+    console.error(
+      `[msg91] verifyAccessToken rejected (account ${authKey.slice(0, 6)}): ` +
+        `${JSON.stringify(data)}`,
+    );
     throw new AppError(401, ErrorCode.InvalidCredentials, 'OTP verification failed');
   }
 
