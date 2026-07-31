@@ -1,10 +1,11 @@
-import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, notInArray, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
   communityPosts,
   consumers,
   moderationReports,
+  orderItems,
   orders,
   postComments,
   postLikes,
@@ -74,6 +75,24 @@ export async function createReview(input: { auth: Auth; body: z.infer<typeof Cre
       throw new AppError(404, ErrorCode.OrderNotFound, 'Order not found');
     }
   }
+  // Verified purchase is derived here, never trusted from the client: the reviewer
+  // must have a non-cancelled order containing THIS listing. It drives the badge
+  // and public visibility — the product detail read only returns verified reviews,
+  // so a review from a non-buyer is kept (and visible to its author under "my
+  // reviews") but never shown to other shoppers.
+  const purchased = await db
+    .select({ one: sql`1` })
+    .from(orderItems)
+    .innerJoin(orders, eq(orders.id, orderItems.orderId))
+    .where(
+      and(
+        eq(orderItems.listingId, input.body.listingId),
+        eq(orders.consumerId, input.auth.sub),
+        notInArray(orders.status, ['cancelled', 'payment_failed']),
+      ),
+    )
+    .limit(1);
+  const verifiedPurchase = purchased.length > 0;
   const id = newId(IdPrefix.ProductReview);
   const [row] = await db
     .insert(productReviews)
@@ -85,6 +104,7 @@ export async function createReview(input: { auth: Auth; body: z.infer<typeof Cre
       rating: input.body.rating,
       body: input.body.body ?? null,
       media: input.body.media,
+      verifiedPurchase,
     })
     .returning();
   return ok({
@@ -94,6 +114,7 @@ export async function createReview(input: { auth: Auth; body: z.infer<typeof Cre
     body: row!.body,
     media: row!.media,
     status: row!.status,
+    verifiedPurchase: row!.verifiedPurchase,
     createdAt: row!.createdAt.toISOString(),
   });
 }
@@ -156,6 +177,7 @@ export async function listMyReviews(input: { auth: Auth; query: z.infer<typeof L
       body: r.body,
       media: r.media,
       status: r.status,
+      verifiedPurchase: r.verifiedPurchase,
       createdAt: r.createdAt.toISOString(),
       takedownReason: r.takedownReason,
     })),

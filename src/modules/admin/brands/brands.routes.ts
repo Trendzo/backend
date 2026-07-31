@@ -1,5 +1,5 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
-import { requireAuth } from '@/shared/auth/middleware.js';
+import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
 import * as ctrl from './brands.controller.js';
 import { CreateBody, IdParam, ListQuery, PatchBody } from './brands.validators.js';
 
@@ -15,7 +15,7 @@ const adminBrandsRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     '/',
     { schema: { body: CreateBody } },
-    async (req) => ctrl.createBrand({ body: req.body }),
+    async (req) => ctrl.createBrand({ body: req.body, actor: getAuth(req) }),
   );
 
   app.patch(

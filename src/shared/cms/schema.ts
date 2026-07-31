@@ -673,7 +673,7 @@ export const SECTION_SCHEMA = {
     media: 'image',
     link: false,
     minItems: 0,
-    maxItems: 60,
+    maxItems: 200,
     copyFields: [],
     configFields: [],
     itemFields: [

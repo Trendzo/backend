@@ -8,6 +8,7 @@
  */
 import { relations, sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   index,
   integer,
@@ -124,6 +125,11 @@ export const productReviews = pgTable(
     rating: integer('rating').notNull(),
     body: text('body'),
     media: jsonb('media').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    // True when the reviewer had a non-cancelled order containing this listing at
+    // the time they posted — drives the "Verified Purchase" badge AND public
+    // visibility: only verified reviews are returned by the public detail read.
+    // Derived server-side on create (see consumer/community createReview).
+    verifiedPurchase: boolean('verified_purchase').notNull().default(false),
     status: productReviewStatus('status').notNull().default('active'),
     takedownReason: text('takedown_reason'),
     takedownByAdminId: text('takedown_by_admin_id').references(() => adminAccounts.id),

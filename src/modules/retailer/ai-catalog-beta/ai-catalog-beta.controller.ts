@@ -49,6 +49,14 @@ export async function createSubmission(input: {
 }) {
   const { auth, body } = input;
   const store = await loadStore(auth.sub);
+  const requestedId = body.clientRequestId;
+
+  if (requestedId) {
+    const existing = await db.query.aiCatalogSubmissions.findFirst({
+      where: and(eq(aiCatalogSubmissions.id, requestedId), eq(aiCatalogSubmissions.storeId, store.id)),
+    });
+    if (existing) return ok(existing);
+  }
 
   const openDrafts = await db.query.aiCatalogSubmissions.findMany({
     where: and(
@@ -76,7 +84,7 @@ export async function createSubmission(input: {
   ];
   const basePrompt = body.prompt?.trim() ?? '';
 
-  const id = newId('aic');
+  const id = requestedId ?? newId('aic');
   await db.insert(aiCatalogSubmissions).values({
     id,
     storeId: store.id,

@@ -1,5 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { boolean, index, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
+import { adminAccounts } from './identity.js';
+import { retailerAccounts } from './store.js';
 
 /**
  * Brand — structured entity referenced by product_listings via FK.
@@ -21,6 +23,13 @@ export const brands = pgTable(
     tintColor: text('tint_color'),
     logoUrl: text('logo_url'),
     domain: text('domain'),
+    createdByRetailerAccountId: text('created_by_retailer_account_id').references(
+      () => retailerAccounts.id,
+      { onDelete: 'set null' },
+    ),
+    createdByAdminId: text('created_by_admin_id').references(() => adminAccounts.id, {
+      onDelete: 'set null',
+    }),
     isActive: boolean('is_active').notNull().default(true),
   },
   (t) => ({

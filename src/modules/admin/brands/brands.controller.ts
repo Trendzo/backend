@@ -5,6 +5,7 @@ import { asc, eq, inArray, sql } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import { brands, productListings } from '@/db/schema/index.js';
+import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
@@ -54,7 +55,9 @@ export async function listBrands(input: { query: z.infer<typeof ListQuery> }) {
   return ok(rows.map((b) => ({ ...b, listingCount: countMap.get(b.id) ?? 0 })));
 }
 
-export async function createBrand(input: { body: z.infer<typeof CreateBody> }) {
+type Actor = Pick<AccessTokenPayload, 'sub'>;
+
+export async function createBrand(input: { body: z.infer<typeof CreateBody>; actor: Actor }) {
   const id = newId(IdPrefix.Brand);
   try {
     const [created] = await db
@@ -66,6 +69,7 @@ export async function createBrand(input: { body: z.infer<typeof CreateBody> }) {
         ...(input.body.tintColor !== undefined && { tintColor: input.body.tintColor }),
         ...(input.body.logoUrl !== undefined && { logoUrl: input.body.logoUrl }),
         ...(input.body.domain !== undefined && { domain: input.body.domain }),
+        createdByAdminId: input.actor.sub ?? null,
         isActive: input.body.isActive,
       })
       .returning();

@@ -498,6 +498,20 @@
       "when": 1786200000000,
       "tag": "0070_cms",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1786300000000,
+      "tag": "0071_review_verified_purchase",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1786400000000,
+      "tag": "0072_brand_ownership",
+      "breakpoints": true
     }
   ]
 }

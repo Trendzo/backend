@@ -21,7 +21,7 @@ export const CreateBody = z.object({
   slug: SlugSchema,
   name: z.string().trim().min(1).max(120),
   tintColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-  logoUrl: z.string().url().optional(),
+  logoUrl: z.string().url().max(2000).optional(),
   domain: z.string().url().optional(),
   isActive: z.boolean().default(true),
 });
@@ -31,7 +31,7 @@ export const PatchBody = z
     slug: SlugSchema.optional(),
     name: z.string().trim().min(1).max(120).optional(),
     tintColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
-    logoUrl: z.string().url().nullable().optional(),
+    logoUrl: z.string().url().max(2000).nullable().optional(),
     domain: z.string().url().nullable().optional(),
     isActive: z.boolean().optional(),
   })

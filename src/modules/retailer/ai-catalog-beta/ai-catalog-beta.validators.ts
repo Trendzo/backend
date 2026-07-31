@@ -15,6 +15,7 @@ export const IdParam = z.object({ id: z.string() });
  * are generated (cheap testing).
  */
 export const SubmissionBody = z.object({
+  clientRequestId: z.string().regex(/^aic_[a-f0-9]{32}$/).optional(),
   mode: z.enum(['without_model', 'with_model']),
   prompt: z.string().trim().max(800).optional(),
   apparelImageUrls: z.array(z.string().url()).min(1).max(5),

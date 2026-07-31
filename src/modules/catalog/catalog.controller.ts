@@ -136,6 +136,15 @@ export async function listBrands(input: { query: z.infer<typeof BrandsQuery> }) 
   const where = input.query.activeOnly ? eq(brands.isActive, true) : undefined;
   const rows = await db.query.brands.findMany({
     ...(where && { where }),
+    columns: {
+      id: true,
+      slug: true,
+      name: true,
+      tintColor: true,
+      logoUrl: true,
+      domain: true,
+      isActive: true,
+    },
     orderBy: asc(brands.name),
   });
   return ok(rows);
@@ -428,7 +437,12 @@ async function orderedListingIds(
   return rows.map((r) => r.id);
 }
 
-/** Single active listing for the product detail page. Same shape as the list rows. */
+/**
+ * Single active listing for the product detail page. Superset of the list-row
+ * shape: adds the rich-text long description (kept off list rows to avoid bloating
+ * browse payloads) and a LIVE rating computed from the reviews shoppers actually
+ * see (active + verified purchase), so the header matches the reviews list.
+ */
 export async function getProduct(id: string) {
   const rows = await queryListings({
     where: and(eq(productListings.id, id), eq(productListings.status, 'active')),
@@ -439,7 +453,30 @@ export async function getProduct(id: string) {
   if (shaped.length === 0) {
     throw new AppError(404, ErrorCode.NotFound, 'Product not found');
   }
-  return ok(shaped[0]);
+  // queryListings selects the full row, so descriptionLong is already loaded here;
+  // shapeListings just doesn't map it (it's detail-only). Pull it off the raw row.
+  const raw = rows.find((r) => r.id === shaped[0]!.id);
+  // The stored ratingAvg/ratingCount projection is not maintained per-review, so
+  // aggregate the visible reviews live. One extra aggregate on the detail page.
+  const [agg] = await db
+    .select({
+      count: sql<number>`count(*)::int`,
+      avg: sql<number>`coalesce(round(avg(${productReviews.rating}), 2), 0)::float`,
+    })
+    .from(productReviews)
+    .where(
+      and(
+        eq(productReviews.listingId, id),
+        eq(productReviews.status, 'active'),
+        eq(productReviews.verifiedPurchase, true),
+      ),
+    );
+  return ok({
+    ...shaped[0]!,
+    descriptionLong: raw?.descriptionLong ?? null,
+    ratingCount: agg?.count ?? 0,
+    ratingAvg: agg?.avg ?? 0,
+  });
 }
 
 /**
@@ -464,8 +501,15 @@ export async function listProductReviews(
     throw new AppError(404, ErrorCode.NotFound, 'Product not found');
   }
 
+  // verified_purchase gate: a review from someone who never bought the item is
+  // never shown to other shoppers (it stays visible to its author via
+  // consumer/community listMyReviews). active = not taken down/hidden.
   const rows = await db.query.productReviews.findMany({
-    where: and(eq(productReviews.listingId, id), eq(productReviews.status, 'active')),
+    where: and(
+      eq(productReviews.listingId, id),
+      eq(productReviews.status, 'active'),
+      eq(productReviews.verifiedPurchase, true),
+    ),
     orderBy: (t, { desc }) => [desc(t.createdAt)],
     limit: query.limit,
     offset: query.offset,
@@ -477,8 +521,9 @@ export async function listProductReviews(
       id: r.id,
       rating: r.rating,
       body: r.body,
+      verifiedPurchase: r.verifiedPurchase,
       createdAt: r.createdAt,
-      author: r.consumer.name?.trim().split(/\s+/)[0] ?? 'ClosetX Shopper',
+      author: r.consumer.name?.trim().split(/\s+/)[0] ?? 'Trendzo Shopper',
     })),
   );
 }
