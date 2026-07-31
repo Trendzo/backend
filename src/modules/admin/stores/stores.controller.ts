@@ -44,6 +44,7 @@ export async function listStores(input: { query: z.infer<typeof ListQuery> }) {
       retailerEmail: retailerAccounts.email,
       retailerLegalName: retailerAccounts.legalName,
       retailerStatus: retailerAccounts.status,
+      retailerPhone: retailerAccounts.phone,
       orderCount: sql<number>`(SELECT COUNT(*)::int FROM orders WHERE store_id = ${retailerStores.id})`,
       disputeCount: sql<number>`(SELECT COUNT(*)::int FROM disputes WHERE order_id IN (SELECT id FROM orders WHERE store_id = ${retailerStores.id}))`,
     })
@@ -55,12 +56,20 @@ export async function listStores(input: { query: z.infer<typeof ListQuery> }) {
     .where(where)
     .orderBy(desc(retailerStores.createdAt))
     .limit(limit);
-  const view = rows.map(({ retailerId, retailerEmail, retailerLegalName, retailerStatus, ...store }) => ({
-    ...store,
-    retailer: retailerId
-      ? { id: retailerId, email: retailerEmail, legalName: retailerLegalName, status: retailerStatus }
-      : null,
-  }));
+  const view = rows.map(
+    ({ retailerId, retailerEmail, retailerLegalName, retailerStatus, retailerPhone, ...store }) => ({
+      ...store,
+      retailer: retailerId
+        ? {
+            id: retailerId,
+            email: retailerEmail,
+            legalName: retailerLegalName,
+            status: retailerStatus,
+            phone: retailerPhone,
+          }
+        : null,
+    }),
+  );
   return ok(view);
 }
 
