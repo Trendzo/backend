@@ -254,12 +254,9 @@ export async function closeDoor(
   const refusedCount = perItemDecisions.filter((d) => d.decision === 'refused').length;
   const returnRejectedCount = perItemDecisions.filter((d) => d.decision === 'return_rejected').length;
 
-  // Verification window for any door-return rows we create.
-  const cfg = await database.query.platformConfig.findFirst({
-    where: eq(platformConfig.key, 'verification_window_hours'),
-  });
-  const verHours = cfg && typeof cfg.value === 'number' ? cfg.value : 24;
-  const verExpires = new Date(Date.now() + verHours * 60 * 60 * 1000);
+  // No verification window is armed here: door returns leave with the driver, so the
+  // store has custody of nothing yet. `arriveOrderAtStore` stamps custody + deadline
+  // when the parcel physically lands.
 
   const itemsById = new Map(orderItemRows.map((i) => [i.id, i]));
   const returnIds: string[] = [];
@@ -315,7 +312,10 @@ export async function closeDoor(
           photos: d.photos ?? [],
           agentDisposition: DECISION_TO_AGENT_DISPOSITION[d.decision],
           storeDecision: 'pending',
-          verificationWindowExpiresAt: verExpires,
+          // No window here: the goods are leaving with the driver, so nobody has
+          // custody at the store yet. `arriveOrderAtStore` stamps custody + deadline
+          // when the parcel physically lands. Arming the clock now would let the
+          // verification sweep auto-accept and refund goods still in a van.
         });
         returnIds.push(rid);
       }

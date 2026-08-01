@@ -179,6 +179,13 @@ export const orders = pgTable(
     // Consumer-facing handover code for pickup orders only. Generated at placement,
     // verified at the store front during the consumer pickup handover.
     pickupCode: text('pickup_code'),
+    // Brute-force guard on the pickup code. The code is CAS-consumed (set to NULL) on a
+    // correct match, so a handover is single-shot and cannot double-decrement stock.
+    pickupCodeAttempts: integer('pickup_code_attempts').notNull().default(0),
+    pickupCodeLockedUntil: timestamp('pickup_code_locked_until', {
+      withTimezone: true,
+      mode: 'date',
+    }),
     // Consumer-facing delivery OTP for door deliveries (express/standard/try-and-buy).
     // Generated at placement; the consumer reads it to the agent who supplies it on
     // door close — proof the handover reached the right person.
@@ -206,6 +213,14 @@ export const orders = pgTable(
     packedAt: timestamp('packed_at', { withTimezone: true, mode: 'date' }),
     deliveredAt: timestamp('delivered_at', { withTimezone: true, mode: 'date' }),
     closedAt: timestamp('closed_at', { withTimezone: true, mode: 'date' }),
+    // Stamped by transitionOrder on →returning_to_store. Anchors the return-leg rot
+    // sweep; indexable, unlike re-deriving it from order_transitions on every tick.
+    returningToStoreAt: timestamp('returning_to_store_at', { withTimezone: true, mode: 'date' }),
+    // One-shot dedupe for the "return leg has not arrived" admin alert.
+    returnLegAlertNotifiedAt: timestamp('return_leg_alert_notified_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
     piiScrubbedAt: timestamp('pii_scrubbed_at', { withTimezone: true, mode: 'date' }),
     // When the current driver claimed/was assigned this order (cleared on unassign).
     // Drives the stale-claim auto-unassign sweep.
@@ -289,6 +304,24 @@ export const orders = pgTable(
     paymentSweepIdx: index('orders_payment_sweep_idx')
       .on(t.placedAt)
       .where(sql`${t.status} IN ('pending','payment_failed')`),
+    returnLegSweepIdx: index('orders_return_leg_sweep_idx')
+      .on(t.returningToStoreAt)
+      .where(sql`${t.status} = 'returning_to_store' AND ${t.returnLegAlertNotifiedAt} IS NULL`),
+    // sweepAutoCloseDelivered has scanned unindexed since it shipped.
+    deliveredSweepIdx: index('orders_delivered_sweep_idx')
+      .on(t.deliveredAt)
+      .where(sql`${t.status} = 'delivered'`),
+    /**
+     * A pickup order can never hold a driver. Pickup orders park in 'packed' for days
+     * waiting for the customer — exactly the driver-offer predicate — so a driver could
+     * claim one and silently convert an in-store collection into a courier delivery.
+     * The offer/dispatch/assign predicates all exclude pickup now; this is what makes
+     * that permanent rather than five forgettable WHERE clauses.
+     */
+    pickupNoAgentGuard: check(
+      'orders_pickup_no_agent_guard',
+      sql`${t.assignedAgentId} IS NULL OR ${t.deliveryMethod} <> 'pickup'`,
+    ),
   }),
 );
 

@@ -17,6 +17,11 @@ import { verifyReturn } from '@/shared/returns/verify-return.js';
 import { forceFailDisbursement } from '@/shared/refunds/force-fail.js';
 import { retryDisbursement } from '@/shared/refunds/retry.js';
 import {
+  listPayoutDesk,
+  redirectPayoutToWallet,
+  settleManualPayout,
+} from '@/shared/refunds/manual-payout.js';
+import {
   extendHoldingWindow,
   forceDispose,
   markExpired,
@@ -29,6 +34,9 @@ import type {
   ListRefundsQuery,
   ListReturnsQuery,
   OpenReturnBody,
+  PayoutDeskQuery,
+  RedirectToWalletBody,
+  SettleManualBody,
   VerifyBody,
 } from './returns.validators.js';
 
@@ -130,6 +138,44 @@ export async function retryDisb(input: { dId: string; adminId: string }) {
     actor: { type: 'admin', id: input.adminId },
   });
   return ok(r);
+}
+
+export async function payoutDesk(input: { query: z.infer<typeof PayoutDeskQuery> }) {
+  return ok(
+    await listPayoutDesk(db, {
+      ...(input.query.destination ? { destination: input.query.destination } : {}),
+      limit: input.query.limit,
+    }),
+  );
+}
+
+export async function settleManual(input: {
+  dId: string;
+  adminId: string;
+  body: z.infer<typeof SettleManualBody>;
+}) {
+  return ok(
+    await settleManualPayout(db, {
+      disbursementId: input.dId,
+      reference: input.body.reference,
+      ...(input.body.note ? { note: input.body.note } : {}),
+      adminId: input.adminId,
+    }),
+  );
+}
+
+export async function redirectToWallet(input: {
+  dId: string;
+  adminId: string;
+  body: z.infer<typeof RedirectToWalletBody>;
+}) {
+  return ok(
+    await redirectPayoutToWallet(db, {
+      disbursementId: input.dId,
+      ...(input.body.note ? { note: input.body.note } : {}),
+      adminId: input.adminId,
+    }),
+  );
 }
 
 export async function listHeldItems(input: { query: z.infer<typeof ListHeldQuery> }) {

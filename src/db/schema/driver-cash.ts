@@ -32,6 +32,8 @@ export const driverCashLedger = pgTable(
     orderId: text('order_id').references(() => orders.id),
     /** Source deposit for 'deposited' entries. */
     depositId: text('deposit_id'),
+    /** Source task for 'refund_paid' entries (cash handed back at a reverse pickup). */
+    reversePickupId: text('reverse_pickup_id'),
     note: text('note'),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
       .notNull()
@@ -47,6 +49,12 @@ export const driverCashLedger = pgTable(
     depositIdx: uniqueIndex('driver_cash_ledger_deposit_idx')
       .on(t.depositId)
       .where(sql`${t.entryKind} = 'deposited' AND ${t.depositId} IS NOT NULL`),
+    // One 'refund_paid' entry per pickup task — a replayed collect cannot pay twice.
+    // Disjoint from the 'collected' index above (different entry_kind predicate), so a
+    // refund_paid row may legitimately carry the same order_id.
+    refundPaidIdx: uniqueIndex('driver_cash_ledger_refund_paid_idx')
+      .on(t.reversePickupId)
+      .where(sql`${t.entryKind} = 'refund_paid' AND ${t.reversePickupId} IS NOT NULL`),
   }),
 );
 

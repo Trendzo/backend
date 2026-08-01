@@ -146,6 +146,23 @@ export function isRazorpayPaymentRef(gatewayRef: string | null | undefined): boo
 }
 
 /**
+ * True when the ref came from cash collected at the door or the counter
+ * (`settleCodPaymentOnDelivery` synthesizes these). There is no gateway payment to
+ * reverse, so refunding one means physically handing cash back.
+ */
+export function isCodPaymentRef(gatewayRef: string | null | undefined): boolean {
+  return Boolean(gatewayRef && (gatewayRef.startsWith('COD-') || gatewayRef.startsWith('COUNTER-')));
+}
+
+/**
+ * True when the ref was fabricated by the mock gateway — a dev/test affordance that
+ * represents no real money. Refunding one in production must never "succeed".
+ */
+export function isSimulatedPaymentRef(gatewayRef: string | null | undefined): boolean {
+  return Boolean(gatewayRef && (gatewayRef.startsWith('TEST-') || gatewayRef.startsWith('MOCK-')));
+}
+
+/**
  * PaymentGateway adapter. `capture` is not used by the two-phase flow (Checkout
  * auto-captures; we verify + record) — it exists to satisfy the interface for
  * any legacy caller and simply refuses.

@@ -3,6 +3,7 @@ import {
   check,
   doublePrecision,
   index,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -56,6 +57,20 @@ export const reversePickups = pgTable(
     /** Consumer→driver collection proof; surfaced only in the consumer's returns list. */
     collectOtp: text('collect_otp').notNull(),
     collectedPhotos: jsonb('collected_photos').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    /**
+     * Cash the driver must hand to the consumer at collection — a COD refund is paid
+     * back as physical cash, since there is no gateway payment to reverse. Computed at
+     * task creation and capped at what was actually collected on the order; the driver
+     * only attests to it, never chooses it.
+     */
+    cashRefundDuePaise: integer('cash_refund_due_paise').notNull().default(0),
+    cashHandedPaise: integer('cash_handed_paise'),
+    cashHandedAt: timestamp('cash_handed_at', { withTimezone: true, mode: 'date' }),
+    /** One-shot dedupe for the stuck-task admin alert. */
+    staleAlertNotifiedAt: timestamp('stale_alert_notified_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     assignedAt: timestamp('assigned_at', { withTimezone: true, mode: 'date' }),
     collectedAt: timestamp('collected_at', { withTimezone: true, mode: 'date' }),
@@ -68,9 +83,16 @@ export const reversePickups = pgTable(
     storeIdx: index('reverse_pickups_store_idx').on(t.storeId, t.status),
     consumerIdx: index('reverse_pickups_consumer_idx').on(t.consumerId),
     orderIdx: index('reverse_pickups_order_idx').on(t.orderId),
+    staleSweepIdx: index('reverse_pickups_stale_sweep_idx')
+      .on(t.status, t.createdAt)
+      .where(sql`${t.status} IN ('pending','assigned','collected')`),
     assignedGuard: check(
       'reverse_pickups_assigned_guard',
       sql`${t.status} NOT IN ('assigned','collected') OR ${t.assignedDriverId} IS NOT NULL`,
+    ),
+    cashHandedGuard: check(
+      'reverse_pickups_cash_handed_guard',
+      sql`${t.cashHandedPaise} IS NULL OR (${t.cashHandedAt} IS NOT NULL AND ${t.cashHandedPaise} >= 0)`,
     ),
   }),
 );

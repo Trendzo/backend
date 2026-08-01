@@ -42,12 +42,16 @@ export const HandoverBody = z
   })
   .default({});
 
-export const MarkDeliveredBody = z
-  .object({
-    note: z.string().trim().max(500).optional(),
-    proofPhotoUrl: z.string().url().optional(),
-  })
-  .default({});
+/**
+ * `otp` is REQUIRED and the whole body no longer `.default({})`, so an empty POST is a
+ * 400. This route could previously mark ANY packed order delivered with no proof of
+ * handover whatsoever — no OTP, no pickup code, not even a photo.
+ */
+export const MarkDeliveredBody = z.object({
+  otp: z.string().trim().min(4).max(8),
+  note: z.string().trim().max(500).optional(),
+  proofPhotoUrl: z.string().url().optional(),
+});
 
 export const MarkUndeliveredBody = z.object({
   reason: z.string().trim().min(3).max(500),

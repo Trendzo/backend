@@ -52,10 +52,12 @@ export const IdPrefix = {
   Refund: 'rfd',
   RefundLine: 'rfl',
   RefundDisbursement: 'rdb',
+  RefundCashHandover: 'rch',
   // §15 Payment Capture
   PaymentSettlement: 'pst',
   PaymentSettlementEntry: 'pse',
   PaymentReconDiscrepancy: 'prd',
+  GatewayCaptureOrphan: 'gco',
   // Disputes
   Dispute: 'dsp',
   // §19 Customer Issues

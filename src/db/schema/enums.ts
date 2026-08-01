@@ -23,7 +23,13 @@ export const retailerSubRole = pgEnum('retailer_sub_role', [
 export const adminAccountStatus = pgEnum('admin_account_status', ['active', 'revoked']);
 export const adminSubRole = pgEnum('admin_sub_role', ['super_admin', 'ops_admin', 'support']);
 // Driver COD cash accounting (append-only ledger + deposit workflow).
-export const driverCashEntryKind = pgEnum('driver_cash_entry_kind', ['collected', 'deposited']);
+export const driverCashEntryKind = pgEnum('driver_cash_entry_kind', [
+  'collected',
+  'deposited',
+  // Subtractive: the driver handed cash back to a consumer at a reverse pickup, so both
+  // his cash-in-hand and his liability to the platform fall.
+  'refund_paid',
+]);
 export const driverCashDepositStatus = pgEnum('driver_cash_deposit_status', [
   'pending',
   'confirmed',
@@ -353,6 +359,10 @@ export const storeReturnDecision = pgEnum('store_return_decision', [
   'accepted',
   'rejected', // store rejected on receipt; goods shelved as a held item
   'rejected_at_door', // agent rejected at the door; goods stayed with customer (no held item, no refund)
+  // Closed with no goods movement and no refund: the pickup was never collected and the
+  // return was abandoned, or it was a duplicate row. Excluded from every 'pending' filter,
+  // so it releases the order for auto-close without touching money or stock.
+  'withdrawn',
 ]);
 export const heldItemStatus = pgEnum('held_item_status', ['holding', 'expired', 'resolved']);
 export const heldItemDisposition = pgEnum('held_item_disposition', [
@@ -387,11 +397,39 @@ export const refundStatus = pgEnum('refund_status', [
 export const refundDisbursementDestination = pgEnum('refund_disbursement_destination', [
   'original_tender',
   'wallet',
+  // Physically handed to the consumer — the only honest rail for a COD refund, since
+  // there is no gateway payment to reverse. Settled by a refund_cash_handovers row.
+  'cash',
+  // No automatic rail exists (e.g. admin force-cancel after a COD delivery). Parks
+  // 'pending' on the admin payout desk; never auto-completes.
+  'manual_payout',
 ]);
 export const refundDisbursementStatus = pgEnum('refund_disbursement_status', [
   'pending',
   'succeeded',
   'failed',
+]);
+/** Who physically handed the cash for a `cash` disbursement. */
+export const refundCashChannel = pgEnum('refund_cash_channel', [
+  'driver_reverse_pickup',
+  'store_counter',
+]);
+
+// ===== Orphaned gateway captures =====
+/** Why a captured payment had no order to attach to. */
+export const gatewayCaptureOrphanReason = pgEnum('gateway_capture_orphan_reason', [
+  'already_paid',
+  'order_not_awaiting_payment',
+  'duplicate_capture',
+  'superseded_attempt',
+  'order_terminal',
+]);
+export const gatewayCaptureOrphanStatus = pgEnum('gateway_capture_orphan_status', [
+  'open',
+  'refund_initiated',
+  'refunded',
+  'refund_failed',
+  'resolved_manually',
 ]);
 
 // ===== Money =====

@@ -7,13 +7,16 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import {
+  actorType,
   refundDisbursementDestination,
   refundDisbursementStatus,
   refundStatus,
 } from './enums.js';
 import { orderItems, orders, payments } from './orders.js';
+import { refundCashHandovers } from './refund-cash.js';
 
 /**
  * Three-table refund split. Cardinality the spec demands:
@@ -66,6 +69,11 @@ export const refundLines = pgTable(
   (t) => ({
     refundIdx: index('refund_lines_refund_idx').on(t.refundId),
     orderItemIdx: index('refund_lines_order_item_idx').on(t.orderItemId),
+    // An order item may be refunded at most once, globally. Both production writers
+    // treat a line as a whole-item refund, and re-refunding after a failure goes
+    // through the disbursement retry chain — never a second refund row. This is the
+    // hard backstop behind the idempotency check in loadRefundBasis.
+    orderItemUniq: uniqueIndex('refund_lines_order_item_uniq').on(t.orderItemId),
   }),
 );
 
@@ -87,6 +95,12 @@ export const refundDisbursements = pgTable(
     status: refundDisbursementStatus('status').notNull().default('pending'),
     gatewayRef: text('gateway_ref'),
     previousDisbursementId: text('previous_disbursement_id'),
+    /** The physical cash handover this leg was settled against (`cash` legs only). */
+    cashHandoverId: text('cash_handover_id').references(() => refundCashHandovers.id),
+    /** Who closed the leg — set by the counter and admin-desk paths, null for automatic ones. */
+    settledByActorType: actorType('settled_by_actor_type'),
+    settledByActorId: text('settled_by_actor_id'),
+    settlementNote: text('settlement_note'),
     initiatedAt: timestamp('initiated_at', { withTimezone: true, mode: 'date' })
       .notNull()
       .defaultNow(),
@@ -99,12 +113,42 @@ export const refundDisbursements = pgTable(
       foreignColumns: [t.id],
       name: 'refund_disbursements_previous_disbursement_id_fk',
     }),
-    // Wallet refunds have no source payment; original-tender refunds must point to one.
+    // Wallet refunds have no source payment; every other rail must name the payment
+    // it is refunding — cash and manual payouts always reverse a real COD/prepaid row.
     destinationGuard: check(
       'refund_disbursements_destination_guard',
       sql`(${t.destination} = 'wallet' AND ${t.sourcePaymentId} IS NULL)
-        OR (${t.destination} = 'original_tender' AND ${t.sourcePaymentId} IS NOT NULL)`,
+        OR (${t.destination} IN ('original_tender','cash','manual_payout') AND ${t.sourcePaymentId} IS NOT NULL)`,
     ),
+    /**
+     * "Succeeded with nothing behind it" is refused by the database. This is what makes
+     * the old COD failure — a refund marked complete with a fabricated ref and no money
+     * moved — structurally impossible rather than merely fixed in one code path.
+     * Wallet legs are exempt: their proof is the wallet_transactions row.
+     */
+    settledProofGuard: check(
+      'refund_disbursements_settled_proof_guard',
+      sql`${t.status} <> 'succeeded'
+        OR (${t.settledAt} IS NOT NULL AND (${t.destination} = 'wallet' OR ${t.gatewayRef} IS NOT NULL))`,
+    ),
+    cashHandoverGuard: check(
+      'refund_disbursements_cash_handover_guard',
+      sql`${t.cashHandoverId} IS NULL OR ${t.destination} = 'cash'`,
+    ),
+    payoutDeskIdx: index('refund_disbursements_payout_desk_idx')
+      .on(t.destination, t.initiatedAt)
+      .where(sql`${t.status} = 'pending'`),
+    pendingSweepIdx: index('refund_disbursements_pending_sweep_idx')
+      .on(t.initiatedAt)
+      .where(sql`${t.status} = 'pending'`),
+    cashHandoverIdx: index('refund_disbursements_cash_handover_idx')
+      .on(t.cashHandoverId)
+      .where(sql`${t.cashHandoverId} IS NOT NULL`),
+    // Makes the refund.failed webhook's lookup provably single-row, so a replay cannot
+    // re-fire admin alerts or stamp over an admin retry that already succeeded.
+    gatewayRefUniq: uniqueIndex('refund_disbursements_gateway_ref_uniq')
+      .on(t.gatewayRef)
+      .where(sql`${t.gatewayRef} IS NOT NULL`),
   }),
 );
 
@@ -134,5 +178,9 @@ export const refundDisbursementsRelations = relations(refundDisbursements, ({ on
     fields: [refundDisbursements.previousDisbursementId],
     references: [refundDisbursements.id],
     relationName: 'refundRetryChain',
+  }),
+  cashHandover: one(refundCashHandovers, {
+    fields: [refundDisbursements.cashHandoverId],
+    references: [refundCashHandovers.id],
   }),
 }));

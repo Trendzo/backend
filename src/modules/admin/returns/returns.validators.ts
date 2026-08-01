@@ -52,3 +52,22 @@ export const ForceDisposeBody = z.object({
   disposition: z.enum(['restocked', 'forfeited_to_store', 'written_off']),
   reason: z.string().trim().min(3).max(500),
 });
+
+/** Payout desk: refund legs that need a human to move real money. */
+export const PayoutDeskQuery = z.object({
+  destination: z.enum(['manual_payout', 'cash']).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+});
+
+/**
+ * `reference` is mandatory — the settled-proof CHECK refuses a succeeded non-wallet leg
+ * with no gatewayRef, so an admin cannot close a payout without naming it.
+ */
+export const SettleManualBody = z.object({
+  reference: z.string().trim().min(4).max(120),
+  note: z.string().trim().max(500).optional(),
+});
+
+export const RedirectToWalletBody = z
+  .object({ note: z.string().trim().max(500).optional() })
+  .default({});

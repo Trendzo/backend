@@ -512,6 +512,34 @@
       "when": 1786400000000,
       "tag": "0072_brand_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1786500000000,
+      "tag": "0073_money_truth_enums",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1786600000000,
+      "tag": "0074_refund_cash_rail",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1786700000000,
+      "tag": "0075_payment_truth",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0076_return_custody_and_gates",
+      "breakpoints": true
     }
   ]
 }

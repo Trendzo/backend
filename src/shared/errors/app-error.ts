@@ -94,6 +94,10 @@ export const ErrorCode = {
   ReturnWindowExpired: 'return_window_expired',
   ReturnInvalidState: 'return_invalid_state',
   ReturnAlreadyDecided: 'return_already_decided',
+  /** An open return already exists for this order item (or one was opened concurrently). */
+  ReturnAlreadyOpen: 'return_already_open',
+  PickupCodeLocked: 'pickup_code_locked',
+  PickupOutsideSlot: 'pickup_outside_slot',
 
   // Refunds
   RefundNotFound: 'refund_not_found',

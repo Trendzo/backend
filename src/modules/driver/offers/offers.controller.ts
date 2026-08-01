@@ -4,7 +4,7 @@
  * to dismiss it from their own feed. Accepting mints the store→driver handoff code and
  * leaves the order `packed`; the store then verifies the code at pickup (unchanged flow).
  */
-import { and, asc, eq, isNull, notInArray } from 'drizzle-orm';
+import { and, asc, eq, isNull, ne, notInArray } from 'drizzle-orm';
 import { db } from '@/db/client.js';
 import { driverOfferRejections, orders } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
@@ -27,7 +27,16 @@ async function queryOffers(driverId: string) {
     .where(eq(driverOfferRejections.driverId, driverId));
   const rejectedIds = rejected.map((r) => r.orderId);
 
-  const conds = [eq(orders.status, 'packed'), isNull(orders.assignedAgentId)];
+  // Pickup orders are collected by the customer at the store and legitimately park in
+  // 'packed' for days — exactly the offer predicate. Without this filter they were
+  // broadcast to every driver, and a claim silently turned an in-store collection into
+  // a courier delivery (and hid it from the pickup no-show sweep, which matches 'packed'
+  // with no agent).
+  const conds = [
+    eq(orders.status, 'packed'),
+    isNull(orders.assignedAgentId),
+    ne(orders.deliveryMethod, 'pickup'),
+  ];
   if (rejectedIds.length) conds.push(notInArray(orders.id, rejectedIds));
 
   return db.query.orders.findMany({
@@ -102,9 +111,29 @@ export async function acceptOffer(input: { auth: Auth; id: string }) {
   const claimed = await db
     .update(orders)
     .set({ assignedAgentId: driverId, agentHandoffCode: code, agentAssignedAt: new Date() })
-    .where(and(eq(orders.id, input.id), eq(orders.status, 'packed'), isNull(orders.assignedAgentId)))
+    .where(
+      and(
+        eq(orders.id, input.id),
+        eq(orders.status, 'packed'),
+        isNull(orders.assignedAgentId),
+        ne(orders.deliveryMethod, 'pickup'),
+      ),
+    )
     .returning({ id: orders.id });
   if (claimed.length === 0) {
+    // Distinguish the two ways to lose, so the driver app can say something true
+    // instead of blaming a phantom competing driver.
+    const order = await db.query.orders.findFirst({
+      where: eq(orders.id, input.id),
+      columns: { deliveryMethod: true },
+    });
+    if (order?.deliveryMethod === 'pickup') {
+      throw new AppError(
+        409,
+        ErrorCode.PickupCodeNotApplicable,
+        'This is a store-pickup order — the customer collects it at the counter',
+      );
+    }
     throw new AppError(409, ErrorCode.InvalidState, 'Order already taken by another driver');
   }
   notifyOffersChanged(); // order left the pool — wake other parked drivers to re-query

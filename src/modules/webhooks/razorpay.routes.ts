@@ -18,7 +18,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { and, eq, like } from 'drizzle-orm';
 import { db } from '@/db/client.js';
-import { refundDisbursements, refunds } from '@/db/schema/index.js';
+import { refundDisbursements } from '@/db/schema/index.js';
 import { verifyWebhookSignature } from '@/shared/payments/razorpay.js';
 import { notifyAllAdmins } from '@/shared/notify-admins.js';
 import {
@@ -74,11 +74,15 @@ const razorpayWebhookRoutes: FastifyPluginAsync = async (app) => {
               gatewayOrderId: p.order_id,
               razorpayPaymentId: p.id,
             });
-            if (r.settledOrderIds.length === 0) {
-              // Late capture against rows we no longer hold pending (e.g. the
-              // abandonment sweep cancelled the order) — recon owns it.
+            if (r.orphans.length > 0) {
+              // Captured money with nowhere to go (e.g. the abandonment sweep already
+              // cancelled and refunded the order). recordOrphanCapture has already
+              // logged it, alerted admins and — on a live gateway — pushed the money
+              // back. This used to be a bare console.error and nothing else.
               console.error(
-                `[razorpay-webhook] capture ${p.id} matched no pending rows (order ${p.order_id})`,
+                `[razorpay-webhook] capture ${p.id} orphaned: ${r.orphans
+                  .map((o) => `${o.paymentId}=${o.reason}`)
+                  .join(', ')}`,
               );
             }
           }
@@ -104,37 +108,54 @@ const razorpayWebhookRoutes: FastifyPluginAsync = async (app) => {
             /**
              * A refund Razorpay accepted and then failed asynchronously.
              *
-             * This used to flip only the disbursement, leaving the parent refund at
+             * This once flipped only the disbursement, leaving the parent refund at
              * 'succeeded' and telling nobody — so the customer kept reading "Refund
-             * complete · back on your original payment method" while the money had
-             * bounced. Mirror what the synchronous failure path in
-             * shared/refunds/disburse-tender.ts does: roll the refund back to
-             * partially_disbursed and put it on the admin retry desk.
+             * complete · back on your original payment method" for money that had
+             * bounced. It now goes through the same force-fail path an admin would use,
+             * which fails the leg, chains a retryable successor, and re-derives the
+             * parent status from the legs.
              */
-            const [row] = await db
-              .update(refundDisbursements)
-              .set({ status: 'failed' })
-              .where(
-                and(
-                  eq(refundDisbursements.gatewayRef, r.id),
-                  like(refundDisbursements.gatewayRef, 'rfnd_%'),
-                ),
-              )
-              .returning({ id: refundDisbursements.id, refundId: refundDisbursements.refundId });
+            // Backed by the partial unique on gateway_ref, so this is provably one row.
+            const row = await db.query.refundDisbursements.findFirst({
+              where: and(
+                eq(refundDisbursements.gatewayRef, r.id),
+                like(refundDisbursements.gatewayRef, 'rfnd_%'),
+              ),
+              columns: { id: true, refundId: true },
+            });
 
-            if (row) {
-              await db
-                .update(refunds)
-                .set({ status: 'partially_disbursed' })
-                .where(eq(refunds.id, row.refundId));
-              await notifyAllAdmins({
-                kind: 'system',
-                title: 'Gateway refund failed — needs retry',
-                body: `Refund ${row.refundId}: Razorpay reported refund ${r.id} as failed`,
-                payload: { refundId: row.refundId, disbursementId: row.id, gatewayRefundId: r.id },
-              }).catch(() => undefined);
-            } else {
+            if (!row) {
               console.error(`[razorpay-webhook] refund.failed ${r.id} matched no disbursement`);
+            } else {
+              try {
+                // Route through force-fail rather than flipping the row by hand: it
+                // chains a fresh PENDING retry leg, so the admin retry desk can actually
+                // act on it. The old hand-rolled flip left the leg 'failed' with no
+                // successor, and retryDisbursement only accepts 'pending' — so a
+                // webhook-failed refund was unretryable. Force-fail also 409s on an
+                // already-failed leg, which makes a webhook replay a clean no-op: no
+                // duplicate admin alert, and no stamping over an admin retry that
+                // already reached 'succeeded'.
+                const { forceFailDisbursement } = await import('@/shared/refunds/force-fail.js');
+                await forceFailDisbursement(db, {
+                  disbursementId: row.id,
+                  reason: `razorpay refund.failed ${r.id}`,
+                  actor: { type: 'system', id: 'razorpay-webhook' },
+                });
+                await notifyAllAdmins({
+                  kind: 'system',
+                  title: 'Gateway refund failed — needs retry',
+                  body: `Refund ${row.refundId}: Razorpay reported refund ${r.id} as failed`,
+                  payload: { refundId: row.refundId, disbursementId: row.id, gatewayRefundId: r.id },
+                }).catch(() => undefined);
+              } catch (err) {
+                const code = (err as { code?: string }).code;
+                if (code === 'disbursement_already_terminal') {
+                  console.info(`[razorpay-webhook] refund.failed ${r.id} replay — already handled`);
+                } else {
+                  throw err;
+                }
+              }
             }
           }
           // refund.processed: our row was already marked succeeded at creation.

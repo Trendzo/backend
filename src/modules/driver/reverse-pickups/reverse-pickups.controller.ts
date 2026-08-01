@@ -15,14 +15,18 @@ import { env } from '@/config/env.js';
 import { db } from '@/db/client.js';
 import {
   deliveryAgents,
-  platformConfig,
-  returns,
+  driverCashLedger,
+  refundCashHandovers,
   reversePickupRejections,
   reversePickups,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
+import {
+  markReturnsGoodsReceived,
+  verificationWindowHours,
+} from '@/shared/returns/mark-goods-received.js';
 import { notifyOffersChanged } from '@/shared/orders/offers-bus.js';
 import { recordDriverEarnings } from '@/shared/orders/driver-earnings.js';
 import { notifyConsumer } from '@/shared/notify-consumer.js';
@@ -69,6 +73,9 @@ const taskShape = {
     addressLng: true,
     itemsLabel: true,
     collectedPhotos: true,
+    // Cash the driver must hand over at collection (COD refunds). 0 for prepaid orders.
+    cashRefundDuePaise: true,
+    cashHandedPaise: true,
     createdAt: true,
     assignedAt: true,
     collectedAt: true,
@@ -162,7 +169,16 @@ export async function collectTask(input: {
   const driverId = await getDriverId(input.auth);
   const task = await db.query.reversePickups.findFirst({
     where: eq(reversePickups.id, input.id),
-    columns: { id: true, status: true, assignedDriverId: true, collectOtp: true, consumerId: true },
+    columns: {
+      id: true,
+      orderId: true,
+      returnIds: true,
+      status: true,
+      assignedDriverId: true,
+      collectOtp: true,
+      consumerId: true,
+      cashRefundDuePaise: true,
+    },
   });
   if (!task || task.assignedDriverId !== driverId) {
     throw new AppError(404, ErrorCode.NotFound, 'Task is not assigned to you');
@@ -170,27 +186,85 @@ export async function collectTask(input: {
   if (!otpOk(task.collectOtp, input.body.otp)) {
     throw new AppError(403, ErrorCode.ValidationError, 'Collection OTP missing or incorrect');
   }
-  const [flipped] = await db
-    .update(reversePickups)
-    .set({ status: 'collected', collectedAt: new Date(), collectedPhotos: input.body.photos })
-    .where(
-      and(
-        eq(reversePickups.id, input.id),
-        eq(reversePickups.status, 'assigned'),
-        eq(reversePickups.assignedDriverId, driverId),
-      ),
-    )
-    .returning({ id: reversePickups.id });
-  if (!flipped) {
-    throw new AppError(409, ErrorCode.InvalidState, 'Task is not in a collectable state');
+
+  // Cash refunds are settled at the doorstep: a COD order was paid in notes, so it is
+  // refunded in notes, handed over at the same visit that collects the goods. The
+  // driver confirms the exact server-computed amount — never names it.
+  const due = task.cashRefundDuePaise;
+  if (due > 0) {
+    if (input.body.cashHandedPaise !== due) {
+      throw AppError.validation(
+        `Hand ₹${(due / 100).toFixed(2)} in cash to the customer and confirm the exact amount`,
+      );
+    }
+  } else if (input.body.cashHandedPaise) {
+    throw AppError.validation('No cash refund is due on this pickup');
   }
+
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    const [flipped] = await tx
+      .update(reversePickups)
+      .set({
+        status: 'collected',
+        collectedAt: now,
+        collectedPhotos: input.body.photos,
+        ...(due > 0 ? { cashHandedPaise: due, cashHandedAt: now } : {}),
+      })
+      .where(
+        and(
+          eq(reversePickups.id, input.id),
+          eq(reversePickups.status, 'assigned'),
+          eq(reversePickups.assignedDriverId, driverId),
+        ),
+      )
+      .returning({ id: reversePickups.id });
+    if (!flipped) {
+      throw new AppError(409, ErrorCode.InvalidState, 'Task is not in a collectable state');
+    }
+    if (due > 0) {
+      // The handover is recorded now, unallocated — the refund does not exist yet (the
+      // store has not verified the return). It is CLAIMED when the refund is created.
+      await tx.insert(refundCashHandovers).values({
+        id: newId(IdPrefix.RefundCashHandover),
+        orderId: task.orderId,
+        returnIds: task.returnIds,
+        amountPaise: due,
+        channel: 'driver_reverse_pickup',
+        reversePickupId: task.id,
+        driverId,
+        recordedByActorType: 'delivery_agent',
+        recordedByActorId: driverId,
+        proofPhotos: input.body.photos,
+        handedAt: now,
+      });
+      // Subtractive ledger entry: the driver's cash-in-hand and his liability both fall.
+      await tx.insert(driverCashLedger).values({
+        id: newId(IdPrefix.DriverCashLedger),
+        driverId,
+        entryKind: 'refund_paid',
+        amountPaise: due,
+        orderId: task.orderId,
+        reversePickupId: task.id,
+        note: `Cash refund handed at reverse pickup ${task.id}`,
+      });
+    }
+  });
+
   await notifyConsumer({
     consumerId: task.consumerId,
-    kind: 'order',
-    title: 'Driver collected your return items',
-    body: 'They are on their way back to the store.',
+    kind: due > 0 ? 'refund' : 'order',
+    title: due > 0 ? 'Return collected — cash refund handed over' : 'Driver collected your return items',
+    body:
+      due > 0
+        ? `₹${(due / 100).toFixed(2)} in cash was handed to you. Your items are on their way back to the store.`
+        : 'They are on their way back to the store.',
   }).catch(() => undefined);
-  return ok({ reversePickupId: input.id, status: 'collected' });
+  return ok({
+    reversePickupId: input.id,
+    status: 'collected',
+    ...(due > 0 ? { cashHandedPaise: due } : {}),
+  });
 }
 
 /**
@@ -221,26 +295,15 @@ export async function deliverToStore(input: { auth: Auth; id: string }) {
     throw new AppError(409, ErrorCode.InvalidState, 'Task is not in a deliverable state');
   }
 
-  // Start the verification clock on the returns this task carried. Guarded to
-  // still-pending + windowless rows: returns decided at the counter meanwhile
-  // no-op (the driver still gets paid — the leg happened).
-  const cfg = await db.query.platformConfig.findFirst({
-    where: eq(platformConfig.key, 'verification_window_hours'),
-  });
-  const verHours = cfg && typeof cfg.value === 'number' ? cfg.value : 24;
-  const expiresAt = new Date(Date.now() + verHours * 3_600_000);
-  if (task.returnIds.length > 0) {
-    await db
-      .update(returns)
-      .set({ verificationWindowExpiresAt: expiresAt })
-      .where(
-        and(
-          inArray(returns.id, task.returnIds),
-          eq(returns.storeDecision, 'pending'),
-          isNull(returns.verificationWindowExpiresAt),
-        ),
-      );
-  }
+  // The goods are now at the store: record custody and start the decision clock on the
+  // returns this task carried. Guarded to still-pending, not-yet-received rows, so
+  // returns decided at the counter meanwhile no-op (the driver still gets paid — the
+  // leg happened).
+  const verHours = await verificationWindowHours(db);
+  const { verificationWindowExpiresAt: expiresAt } = await markReturnsGoodsReceived(
+    db,
+    task.returnIds,
+  );
 
   await recordDriverEarnings(db, {
     orderId: task.orderId,

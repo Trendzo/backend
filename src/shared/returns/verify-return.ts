@@ -17,7 +17,10 @@ import { heldItems, orderItems, platformConfig, returns } from '@/db/schema/inde
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { ActorType } from '@/shared/orders/state-machine.js';
-import { createRefundForReturns } from '@/shared/refunds/create-refund.js';
+import {
+  createRefundForReturnsTx,
+  settleRefundPostCommit,
+} from '@/shared/refunds/create-refund.js';
 import { applyAcceptedReturnStockEffect } from '@/shared/returns/restock.js';
 import { recomputeAfterPartialReturn } from '@/shared/orders/recompute-on-return.js';
 import { finalizeReturnedOrder } from '@/shared/orders/finalize-return.js';
@@ -52,11 +55,30 @@ export async function verifyReturn(
   if (input.expectedStoreId && order.storeId !== input.expectedStoreId) {
     throw new AppError(403, ErrorCode.Forbidden, 'Return does not belong to your store');
   }
+  /**
+   * Accepting a return refunds the customer AND puts the item back on the shelf, so it
+   * may only happen once the goods are actually in hand. Without this a store could do
+   * both while the item was still in the customer's house.
+   *
+   * Deliberately no override flag: the escape hatch is `mark-received` itself, which IS
+   * the human assertion of custody and is audited. An `allowUnreceived` boolean would
+   * just recreate the hole behind a parameter name.
+   */
+  if (input.decision === 'accepted' && !ret.goodsReceivedAt) {
+    throw new AppError(
+      409,
+      ErrorCode.ReturnInvalidState,
+      'Goods have not been received at the store yet — mark the return received first',
+    );
+  }
 
   const now = new Date();
 
   if (input.decision === 'accepted') {
-    await database.transaction(async (tx) => {
+    // The accept, the restock AND the refund all commit together. Splitting them —
+    // which is what this used to do — could leave a return permanently accepted and
+    // restocked with no refund, recoverable only by hand.
+    const post = await database.transaction(async (tx) => {
       // Conditional flip = the double-application guard for the stock effect
       // (a concurrent decline/accept loses here and the 409 surfaces).
       const [flipped] = await tx
@@ -79,16 +101,24 @@ export async function verifyReturn(
         variantId: ret.orderItem.variantId,
         qty: ret.orderItem.qty,
       });
+      return createRefundForReturnsTx(tx, {
+        orderId: order.id,
+        returnIds: [input.returnId],
+        reason: input.reasonNote ?? `Accepted return ${input.returnId}`,
+        actor: input.actor,
+      });
     });
-    const refund = await createRefundForReturns(database, {
-      orderId: order.id,
-      returnIds: [input.returnId],
-      reason: input.reasonNote ?? `Accepted return ${input.returnId}`,
-      actor: input.actor,
-    });
+    // Network + cross-module effects only — never throws, so a gateway hiccup cannot
+    // undo an accept that is already durable.
+    if (post) await settleRefundPostCommit(database, post);
     await recomputeAfterPartialReturn(database, order.id).catch(() => undefined);
     await finalizeReturnedOrder(database, order.id, input.actor).catch(() => undefined);
-    return { returnId: input.returnId, decision: 'accepted', refundId: refund.refundId, heldItemId: null };
+    return {
+      returnId: input.returnId,
+      decision: 'accepted',
+      refundId: post?.refundId ?? null,
+      heldItemId: null,
+    };
   }
 
   // Rejected (admin path): shelve the goods, no refund.

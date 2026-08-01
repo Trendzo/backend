@@ -9,7 +9,7 @@
  *        deliver-to-store window handoff, driver earnings coexistence.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 
 import { db, pool } from '@/db/client.js';
 import {
@@ -27,11 +27,13 @@ import {
   orderItems,
   orders,
   payments,
+  payoutAdjustments,
   platformConfig,
   productListings,
   promotionRedemptions,
   promotions,
   refundDisbursements,
+  refundCashHandovers,
   refunds,
   retailerAccounts,
   retailerStores,
@@ -42,6 +44,8 @@ import {
 } from '@/db/schema/index.js';
 import { signAccessToken } from '@/shared/auth/jwt.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
+import { computeDriverCashTotals } from '@/shared/driver-cash/balance.js';
+import { openReturn } from '@/shared/returns/open-return.js';
 import { createRefundForCancellation } from '@/shared/refunds/create-cancellation-refund.js';
 import {
   sweepAutoCloseDelivered,
@@ -49,6 +53,8 @@ import {
   sweepHeldItems,
   sweepPickupNoShows,
   sweepStalePayments,
+  sweepReturnLegRot,
+  sweepStuckReturns,
   sweepVerificationWindows,
 } from '@/shared/orders/lifecycle-sweeps.js';
 import {
@@ -76,6 +82,10 @@ let addressId: string;
 let driverId: string;
 let driverToken: string;
 let driver2Token: string;
+// Used ONLY by the COD cash-refund block. Handing cash back is a subtractive ledger
+// entry, so sharing driver one would move the balance the cash-ledger tests assert on.
+let driver3Id: string;
+let driver3Token: string;
 let variantId: string;
 
 async function variantRow() {
@@ -143,6 +153,15 @@ async function placeOrder(opts: {
   expect(res.statusCode).toBe(200);
   return data(res) as { orderId: string; status: string };
 }
+
+/** Retailer POST to an absolute path (returns/refunds live outside /retailer/orders). */
+const retailerPostRaw = (url: string, payload?: unknown) =>
+  app.inject({
+    method: 'POST',
+    url,
+    headers: auth(retailerToken),
+    ...(payload !== undefined ? { payload } : { payload: {} }),
+  });
 
 const retailerPost = (path: string, payload?: unknown) =>
   app.inject({
@@ -256,6 +275,9 @@ beforeAll(async () => {
   const driver2Id = newId(IdPrefix.Driver);
   await db.insert(deliveryAgents).values({ id: driver2Id, phone: '+919000000004', name: 'Driver Two' });
   driver2Token = signAccessToken({ sub: driver2Id, kind: 'driver' });
+  driver3Id = newId(IdPrefix.Driver);
+  await db.insert(deliveryAgents).values({ id: driver3Id, phone: '+919000000005', name: 'Driver Three' });
+  driver3Token = signAccessToken({ sub: driver3Id, kind: 'driver' });
 
   // catalog: category → listing (active, returnable) → default group → variant
   const categoryId = newId(IdPrefix.Category);
@@ -530,7 +552,7 @@ describe('WS1 — standard return restock', () => {
     expect((await retailerPost(`/${orderId}/pack`)).statusCode).toBe(200);
     expect((await retailerPost(`/${orderId}/handover`, { agentName: 'Ext', agentPhone: '+911111111111' })).statusCode).toBe(200);
     expect((await retailerPost(`/${orderId}/depart`)).statusCode).toBe(200);
-    expect((await retailerPost(`/${orderId}/mark-delivered`, {})).statusCode).toBe(200);
+    expect((await retailerPost(`/${orderId}/mark-delivered`, { otp: '1111' })).statusCode).toBe(200);
     const afterDeliver = await variantRow();
 
     const open = await app.inject({
@@ -546,6 +568,29 @@ describe('WS1 — standard return restock', () => {
     });
     expect(open.statusCode).toBe(200);
     const returnId = (data(open).returnIds as string[])[0]!;
+
+    // Accepting refunds AND restocks, so it is gated on the goods actually being in
+    // hand. Without custody the store would be paying out for an item still at the
+    // customer's house.
+    const premature = await app.inject({
+      method: 'POST',
+      url: `/api/v1/retailer/returns/${returnId}/verify`,
+      headers: auth(retailerToken),
+      payload: { decision: 'accepted' },
+    });
+    expect(premature.statusCode).toBe(409);
+    expect(await db.query.refunds.findFirst({ where: eq(refunds.orderId, orderId) })).toBeFalsy();
+    expect((await variantRow()).stock).toBe(afterDeliver.stock);
+
+    const received = await app.inject({
+      method: 'POST',
+      url: `/api/v1/retailer/returns/${returnId}/mark-received`,
+      headers: auth(retailerToken),
+    });
+    expect(received.statusCode).toBe(200);
+    const custody = await db.query.returns.findFirst({ where: eq(returns.id, returnId) });
+    expect(custody?.goodsReceivedAt).toBeTruthy();
+    expect(custody?.verificationWindowExpiresAt).toBeTruthy();
 
     const verify = await app.inject({
       method: 'POST',
@@ -572,7 +617,7 @@ describe('WS2 — sweeps', () => {
     await retailerPost(`/${a.orderId}/pack`);
     await retailerPost(`/${a.orderId}/handover`, { agentName: 'Ext', agentPhone: '+911111111111' });
     await retailerPost(`/${a.orderId}/depart`);
-    await retailerPost(`/${a.orderId}/mark-delivered`, {});
+    await retailerPost(`/${a.orderId}/mark-delivered`, { otp: '1111' });
     await db
       .update(orders)
       .set({ deliveredAt: new Date(Date.now() - 8 * 86_400_000) })
@@ -584,7 +629,7 @@ describe('WS2 — sweeps', () => {
     await retailerPost(`/${b.orderId}/pack`);
     await retailerPost(`/${b.orderId}/handover`, { agentName: 'Ext', agentPhone: '+911111111111' });
     await retailerPost(`/${b.orderId}/depart`);
-    await retailerPost(`/${b.orderId}/mark-delivered`, {});
+    await retailerPost(`/${b.orderId}/mark-delivered`, { otp: '1111' });
     const bItem = await db.query.orderItems.findFirst({ where: eq(orderItems.orderId, b.orderId) });
     await app.inject({
       method: 'POST',
@@ -639,7 +684,7 @@ describe('WS2 — sweeps', () => {
     await retailerPost(`/${orderId}/pack`);
     await retailerPost(`/${orderId}/handover`, { agentName: 'Ext', agentPhone: '+911111111111' });
     await retailerPost(`/${orderId}/depart`);
-    await retailerPost(`/${orderId}/mark-delivered`, {});
+    await retailerPost(`/${orderId}/mark-delivered`, { otp: '1111' });
     const item = await db.query.orderItems.findFirst({ where: eq(orderItems.orderId, orderId) });
     const open = await app.inject({
       method: 'POST',
@@ -678,7 +723,7 @@ describe('WS2 — sweeps', () => {
     await retailerPost(`/${orderId}/pack`);
     await retailerPost(`/${orderId}/handover`, { agentName: 'Ext', agentPhone: '+911111111111' });
     await retailerPost(`/${orderId}/depart`);
-    await retailerPost(`/${orderId}/mark-delivered`, {});
+    await retailerPost(`/${orderId}/mark-delivered`, { otp: '1111' });
     const item = await db.query.orderItems.findFirst({ where: eq(orderItems.orderId, orderId) });
     const rid = newId(IdPrefix.Return);
     await db.insert(returns).values({
@@ -870,6 +915,476 @@ describe('WS3 — reverse pickup', () => {
     expect(ret!.storeDecision).toBe('accepted');
     const refund = await db.query.refunds.findFirst({ where: eq(refunds.orderId, rpOrderId) });
     expect(refund).toBeTruthy();
+  });
+});
+
+/* ═══ WS4 — COD cash refund rail ══════════════════════════════════════════ */
+
+/**
+ * A cash-on-delivery order has no card payment to reverse, so its refund is paid back as
+ * physical cash. Before this rail existed the refund was marked 'succeeded' with a
+ * fabricated `REFUND-TEST-…` reference and not one rupee moved.
+ *
+ * Every test here asserts either that money actually moved, or that the system refused to
+ * claim it had.
+ */
+describe('WS4 — COD cash refund rail', () => {
+  /** A COD order delivered by a driver, so real cash has been collected against it. */
+  async function deliveredCodOrder() {
+    const { orderId } = await placeOrder({ deliveryMethod: 'standard', paymentMethod: 'cod' });
+    await packAndPickUp(orderId);
+    expect((await driverPost(driverToken, `/deliveries/${orderId}/depart`)).statusCode).toBe(200);
+    expect(
+      (await driverPost(driverToken, `/deliveries/${orderId}/deliver`, { otp: '1111' })).statusCode,
+    ).toBe(200);
+    const pay = await db.query.payments.findFirst({ where: eq(payments.orderId, orderId) });
+    expect(pay!.status).toBe('succeeded');
+    expect(pay!.gatewayRef).toMatch(/^COD-/);
+    return { orderId, paidPaise: pay!.amountPaise };
+  }
+
+  async function openConsumerReturn(orderId: string) {
+    const item = await db.query.orderItems.findFirst({ where: eq(orderItems.orderId, orderId) });
+    const open = await app.inject({
+      method: 'POST',
+      url: '/api/v1/consumer/returns',
+      headers: auth(consumerToken),
+      payload: { orderId, items: [{ orderItemId: item!.id }] },
+    });
+    expect(open.statusCode).toBe(200);
+    return {
+      taskId: data(open).reversePickupId as string,
+      returnId: (data(open).returnIds as string[])[0]!,
+    };
+  }
+
+  it('driver hands cash at collection; the refund binds it and never fakes a reference', async () => {
+    const { orderId, paidPaise } = await deliveredCodOrder();
+    const { taskId, returnId } = await openConsumerReturn(orderId);
+
+    // The task carries the amount, computed server-side and capped at the cash collected.
+    const task = await db.query.reversePickups.findFirst({ where: eq(reversePickups.id, taskId) });
+    const due = task!.cashRefundDuePaise;
+    expect(due).toBeGreaterThan(0);
+    expect(due).toBeLessThanOrEqual(paidPaise);
+
+    expect((await driverPost(driver3Token, `/reverse-pickups/${taskId}/accept`)).statusCode).toBe(200);
+
+    // Omitting the amount is refused — the driver must consciously hand the money over.
+    const noCash = await driverPost(driver3Token, `/reverse-pickups/${taskId}/collect`, {
+      otp: '1111',
+      photos: ['https://example.com/a.jpg'],
+    });
+    expect(noCash.statusCode).toBe(422);
+
+    // A driver-chosen figure is refused too: that would be a skimming surface.
+    const wrongCash = await driverPost(driver3Token, `/reverse-pickups/${taskId}/collect`, {
+      otp: '1111',
+      photos: ['https://example.com/a.jpg'],
+      cashHandedPaise: due - 100,
+    });
+    expect(wrongCash.statusCode).toBe(422);
+    expect(
+      (await db.query.reversePickups.findFirst({ where: eq(reversePickups.id, taskId) }))!.status,
+    ).toBe('assigned');
+    expect(
+      await db.query.refundCashHandovers.findFirst({
+        where: eq(refundCashHandovers.orderId, orderId),
+      }),
+    ).toBeFalsy();
+
+    const okCollect = await driverPost(driver3Token, `/reverse-pickups/${taskId}/collect`, {
+      otp: '1111',
+      photos: ['https://example.com/a.jpg'],
+      cashHandedPaise: due,
+    });
+    expect(okCollect.statusCode).toBe(200);
+
+    const handover = await db.query.refundCashHandovers.findFirst({
+      where: eq(refundCashHandovers.orderId, orderId),
+    });
+    expect(handover!.channel).toBe('driver_reverse_pickup');
+    expect(handover!.amountPaise).toBe(due);
+    expect(handover!.reversePickupId).toBe(taskId);
+
+    // Subtractive ledger: cash left the driver's pocket. Driver three collected nothing,
+    // so his outstanding goes NEGATIVE — which correctly means the platform owes him.
+    const ledger = await db.query.driverCashLedger.findMany({
+      where: eq(driverCashLedger.driverId, driver3Id),
+    });
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]!.entryKind).toBe('refund_paid');
+    expect(ledger[0]!.amountPaise).toBe(due);
+    const totals = await computeDriverCashTotals(db, driver3Id);
+    expect(totals.refundPaidTotalPaise).toBe(due);
+    expect(totals.outstandingPaise).toBe(-due);
+
+    // A replayed collect cannot pay twice.
+    const replay = await driverPost(driver3Token, `/reverse-pickups/${taskId}/collect`, {
+      otp: '1111',
+      photos: ['https://example.com/a.jpg'],
+      cashHandedPaise: due,
+    });
+    expect(replay.statusCode).toBe(409);
+    expect(
+      await db.query.refundCashHandovers.findMany({
+        where: eq(refundCashHandovers.orderId, orderId),
+      }),
+    ).toHaveLength(1);
+    expect(
+      await db.query.driverCashLedger.findMany({ where: eq(driverCashLedger.driverId, driver3Id) }),
+    ).toHaveLength(1);
+
+    // Goods reach the store and the store accepts — only NOW does the refund exist. It
+    // claims the cash handed over earlier and dates the leg to when the money moved.
+    expect(
+      (await driverPost(driver3Token, `/reverse-pickups/${taskId}/deliver-to-store`)).statusCode,
+    ).toBe(200);
+    const verify = await app.inject({
+      method: 'POST',
+      url: `/api/v1/retailer/returns/${returnId}/verify`,
+      headers: auth(retailerToken),
+      payload: { decision: 'accepted' },
+    });
+    expect(verify.statusCode).toBe(200);
+
+    const refund = await db.query.refunds.findFirst({ where: eq(refunds.orderId, orderId) });
+    const legs = await db.query.refundDisbursements.findMany({
+      where: eq(refundDisbursements.refundId, refund!.id),
+    });
+    const cashLeg = legs.find((d) => d.destination === 'cash');
+    expect(cashLeg!.status).toBe('succeeded');
+    expect(cashLeg!.gatewayRef).toMatch(/^CASH-/);
+    expect(cashLeg!.cashHandoverId).toBe(handover!.id);
+    expect(cashLeg!.settledAt!.getTime()).toBe(handover!.handedAt.getTime());
+
+    // THE regression: the fabricated reference must appear nowhere on this order.
+    expect(legs.some((d) => (d.gatewayRef ?? '').startsWith('REFUND-TEST-'))).toBe(false);
+  });
+
+  it('counter return: the store hands the cash and is repaid on its payout', async () => {
+    const { orderId } = await deliveredCodOrder();
+    const item = await db.query.orderItems.findFirst({ where: eq(orderItems.orderId, orderId) });
+
+    const opened = await retailerPostRaw(
+      `/api/v1/retailer/orders/${orderId}/returns/open-counter`,
+      { items: [{ orderItemId: item!.id }] },
+    );
+    expect(opened.statusCode).toBe(200);
+    const returnId = (data(opened).returnIds as string[])[0]!;
+
+    // At the counter the customer is present, so the return is verified FIRST and the
+    // cash leg is born pending — the mirror image of the driver ordering.
+    const verify = await app.inject({
+      method: 'POST',
+      url: `/api/v1/retailer/returns/${returnId}/verify`,
+      headers: auth(retailerToken),
+      payload: { decision: 'accepted' },
+    });
+    expect(verify.statusCode).toBe(200);
+
+    const refund = await db.query.refunds.findFirst({ where: eq(refunds.orderId, orderId) });
+    const cashLeg = (
+      await db.query.refundDisbursements.findMany({
+        where: eq(refundDisbursements.refundId, refund!.id),
+      })
+    ).find((d) => d.destination === 'cash')!;
+    expect(cashLeg.status).toBe('pending');
+    expect(refund!.status).not.toBe('succeeded'); // nothing has moved yet
+
+    // The portal can now DISCOVER the leg. Before this it could not, which made the
+    // pay-cash route unreachable — the disbursement id was undiscoverable.
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/v1/retailer/returns/${returnId}`,
+      headers: auth(retailerToken),
+    });
+    expect(data(detail).cashRefundDue.disbursementId).toBe(cashLeg.id);
+
+    const wrong = await retailerPostRaw(
+      `/api/v1/retailer/refunds/${refund!.id}/disbursements/${cashLeg.id}/pay-cash`,
+      { amountPaise: cashLeg.amountPaise - 1 },
+    );
+    expect(wrong.statusCode).toBe(422);
+
+    const paid = await retailerPostRaw(
+      `/api/v1/retailer/refunds/${refund!.id}/disbursements/${cashLeg.id}/pay-cash`,
+      { amountPaise: cashLeg.amountPaise },
+    );
+    expect(paid.statusCode).toBe(200);
+
+    const after = await db.query.refundDisbursements.findFirst({
+      where: eq(refundDisbursements.id, cashLeg.id),
+    });
+    expect(after!.status).toBe('succeeded');
+    expect(after!.gatewayRef).toMatch(/^CASH-/);
+    const handover = await db.query.refundCashHandovers.findFirst({
+      where: eq(refundCashHandovers.id, after!.cashHandoverId!),
+    });
+    expect(handover!.channel).toBe('store_counter');
+
+    // The store fronted platform money, so it is credited back on the next cycle.
+    const adjustments = await db.query.payoutAdjustments.findMany({
+      where: eq(payoutAdjustments.storeId, storeId),
+    });
+    expect(
+      adjustments.some(
+        (a) => a.direction === 'credit' && Number(a.amountPaise) === cashLeg.amountPaise,
+      ),
+    ).toBe(true);
+
+    const replay = await retailerPostRaw(
+      `/api/v1/retailer/refunds/${refund!.id}/disbursements/${cashLeg.id}/pay-cash`,
+      { amountPaise: cashLeg.amountPaise },
+    );
+    expect(replay.statusCode).toBe(409);
+  });
+
+  it('a COD cancellation parks on the payout desk and never auto-completes', async () => {
+    const { orderId } = await deliveredCodOrder();
+
+    // Nobody is visiting the customer, so no cash channel exists — the money must wait
+    // for a human rather than being declared paid.
+    const refund = await createRefundForCancellation(db, {
+      orderId,
+      reason: 'admin cancelled after delivery',
+      actor: { type: 'admin', id: 'admin' },
+    });
+    expect(refund).toBeTruthy();
+
+    const legs = await db.query.refundDisbursements.findMany({
+      where: eq(refundDisbursements.refundId, refund!.refundId),
+    });
+    const leg = legs.find((d) => d.destination === 'manual_payout')!;
+    expect(leg.status).toBe('pending');
+    expect(leg.gatewayRef).toBeNull();
+    expect(legs.some((d) => (d.gatewayRef ?? '').startsWith('REFUND-TEST-'))).toBe(false);
+
+    const desk = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/refunds/payout-desk',
+      headers: auth(adminToken),
+    });
+    expect(desk.statusCode).toBe(200);
+    expect(
+      (data(desk) as Array<{ disbursementId: string }>).some((r) => r.disbursementId === leg.id),
+    ).toBe(true);
+
+    const settleUrl = `/api/v1/admin/refunds/${refund!.refundId}/disbursements/${leg.id}/settle-manual`;
+    const settle = await app.inject({
+      method: 'POST',
+      url: settleUrl,
+      headers: auth(adminToken),
+      payload: { reference: 'NEFT-12345678' },
+    });
+    expect(settle.statusCode).toBe(200);
+    const settled = await db.query.refundDisbursements.findFirst({
+      where: eq(refundDisbursements.id, leg.id),
+    });
+    expect(settled!.status).toBe('succeeded');
+    expect(settled!.gatewayRef).toBe('MANUAL-NEFT-12345678');
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: settleUrl,
+      headers: auth(adminToken),
+      payload: { reference: 'NEFT-12345678' },
+    });
+    expect(replay.statusCode).toBe(409);
+  });
+
+  it('a parked payout can be redirected to the wallet instead', async () => {
+    const { orderId } = await deliveredCodOrder();
+    const refund = await createRefundForCancellation(db, {
+      orderId,
+      reason: 'redirect test',
+      actor: { type: 'admin', id: 'admin' },
+    });
+    const leg = (
+      await db.query.refundDisbursements.findMany({
+        where: eq(refundDisbursements.refundId, refund!.refundId),
+      })
+    ).find((d) => d.destination === 'manual_payout')!;
+
+    const before = await db.query.consumerWallets.findFirst({
+      where: eq(consumerWallets.consumerId, consumerId),
+    });
+    const redirect = await app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/refunds/${refund!.refundId}/disbursements/${leg.id}/redirect-to-wallet`,
+      headers: auth(adminToken),
+      payload: {},
+    });
+    expect(redirect.statusCode).toBe(200);
+
+    const after = await db.query.consumerWallets.findFirst({
+      where: eq(consumerWallets.consumerId, consumerId),
+    });
+    expect(after!.balancePaise).toBe((before?.balancePaise ?? 0) + leg.amountPaise);
+
+    const legs = await db.query.refundDisbursements.findMany({
+      where: eq(refundDisbursements.refundId, refund!.refundId),
+    });
+    const walletLeg = legs.find(
+      (d) => d.destination === 'wallet' && d.previousDisbursementId === leg.id,
+    );
+    expect(walletLeg!.status).toBe('succeeded');
+    expect(legs.find((d) => d.id === leg.id)!.status).toBe('failed');
+    const parent = await db.query.refunds.findFirst({ where: eq(refunds.id, refund!.refundId) });
+    expect(parent!.status).toBe('succeeded');
+  });
+});
+
+/* ═══ WS5 — double-refund proofing + stuck-state recovery ═════════════════ */
+
+describe('WS5 — returns cannot double-refund, and cannot silently strand', () => {
+  async function deliveredPrepaidOrder() {
+    const { orderId } = await placeOrder({ deliveryMethod: 'standard', paymentMethod: 'upi' });
+    await packAndPickUp(orderId);
+    expect((await driverPost(driverToken, `/deliveries/${orderId}/depart`)).statusCode).toBe(200);
+    expect(
+      (await driverPost(driverToken, `/deliveries/${orderId}/deliver`, { otp: '1111' })).statusCode,
+    ).toBe(200);
+    const item = await db.query.orderItems.findFirst({ where: eq(orderItems.orderId, orderId) });
+    return { orderId, orderItemId: item!.id };
+  }
+
+  it('two concurrent openReturn calls on one item: exactly one wins', async () => {
+    const { orderId, orderItemId } = await deliveredPrepaidOrder();
+
+    // Both requests read the same pre-flip item outcome. Only the row lock plus the
+    // partial unique index stop them both inserting — which would have meant two
+    // returns, and later two refunds, for one physical item.
+    const results = await Promise.allSettled([
+      openReturn(db, {
+        orderId,
+        items: [{ orderItemId }],
+        counterReturn: false,
+        actor: { type: 'consumer', id: consumerId },
+      }),
+      openReturn(db, {
+        orderId,
+        items: [{ orderItemId }],
+        counterReturn: false,
+        actor: { type: 'consumer', id: consumerId },
+      }),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const loser = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect((loser.reason as { code?: string }).code).toBe('return_already_open');
+
+    const open = await db.query.returns.findMany({
+      where: and(eq(returns.orderItemId, orderItemId), eq(returns.storeDecision, 'pending')),
+    });
+    expect(open).toHaveLength(1);
+  });
+
+  it('an uncollected return is withdrawn — no refund, no restock', async () => {
+    const { orderId, orderItemId } = await deliveredPrepaidOrder();
+    const stockBefore = (await variantRow()).stock;
+    const opened = await openReturn(db, {
+      orderId,
+      items: [{ orderItemId }],
+      counterReturn: false,
+      actor: { type: 'consumer', id: consumerId },
+    });
+    const returnId = opened.returnIds[0]!;
+
+    // No custody and no clock — invisible to the verification sweep, and it blocks
+    // auto-close forever. This is exactly the state that stranded refunds.
+    const before = await db.query.returns.findFirst({ where: eq(returns.id, returnId) });
+    expect(before!.goodsReceivedAt).toBeNull();
+    expect(before!.verificationWindowExpiresAt).toBeNull();
+    expect(await sweepVerificationWindows(db)).toBe(0);
+
+    await db
+      .update(returns)
+      .set({ openedAt: new Date(Date.now() - 8 * 86_400_000) })
+      .where(eq(returns.id, returnId));
+    const swept = await sweepStuckReturns(db);
+    expect(swept.returnsWithdrawn).toBeGreaterThanOrEqual(1);
+
+    const after = await db.query.returns.findFirst({ where: eq(returns.id, returnId) });
+    expect(after!.storeDecision).toBe('withdrawn');
+    // The goods never left the customer, so the item goes back to what it was.
+    const item = await db.query.orderItems.findFirst({ where: eq(orderItems.id, orderItemId) });
+    expect(item!.outcome).toBe('delivered_kept');
+    // The money assertion is the point of this test.
+    expect(await db.query.refunds.findFirst({ where: eq(refunds.orderId, orderId) })).toBeFalsy();
+    expect((await variantRow()).stock).toBe(stockBefore);
+  });
+
+  it('a return whose goods we ALREADY hold is alerted, never withdrawn', async () => {
+    const { orderId, orderItemId } = await deliveredPrepaidOrder();
+    const opened = await openReturn(db, {
+      orderId,
+      items: [{ orderItemId }],
+      counterReturn: false,
+      actor: { type: 'consumer', id: consumerId },
+    });
+    const returnId = opened.returnIds[0]!;
+    const taskId = opened.reversePickupId!;
+
+    // Driver collected but never delivered: the goods are in platform custody and a
+    // refund may be owed. Withdrawing here would be a lie, so the sweep only escalates.
+    expect((await driverPost(driver2Token, `/reverse-pickups/${taskId}/accept`)).statusCode).toBe(200);
+    expect(
+      (
+        await driverPost(driver2Token, `/reverse-pickups/${taskId}/collect`, {
+          otp: '1111',
+          photos: ['https://example.com/b.jpg'],
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    await db
+      .update(returns)
+      .set({ openedAt: new Date(Date.now() - 8 * 86_400_000) })
+      .where(eq(returns.id, returnId));
+    await db
+      .update(reversePickups)
+      .set({ createdAt: new Date(Date.now() - 24 * 3_600_000) })
+      .where(eq(reversePickups.id, taskId));
+
+    const swept = await sweepStuckReturns(db);
+    expect(swept.pickupAlerted).toBeGreaterThanOrEqual(1);
+    expect(
+      (await db.query.returns.findFirst({ where: eq(returns.id, returnId) }))!.storeDecision,
+    ).toBe('pending');
+
+    // One alert only, however many times it runs.
+    const again = await sweepStuckReturns(db);
+    expect(again.pickupAlerted).toBe(0);
+  });
+
+  it('an order stuck on its way back to the store alerts, and refunds nothing', async () => {
+    const { orderId } = await placeOrder({ deliveryMethod: 'try_and_buy', paymentMethod: 'upi' });
+    await packAndPickUp(orderId);
+    expect((await driverPost(driverToken, `/deliveries/${orderId}/depart`)).statusCode).toBe(200);
+    expect((await driverPost(driverToken, `/deliveries/${orderId}/door/open`)).statusCode).toBe(200);
+    const items = await db.query.orderItems.findMany({ where: eq(orderItems.orderId, orderId) });
+    const close = await driverPost(driverToken, `/deliveries/${orderId}/door/close`, {
+      otp: '1111',
+      items: items.map((i) => ({ orderItemId: i.id, decision: 'returned' })),
+    });
+    expect(close.statusCode).toBe(200);
+    expect((await orderRow(orderId)).status).toBe('returning_to_store');
+    // Goods left with the driver, so no decision clock may be running on them yet.
+    const rets = await db.query.returns.findMany({
+      where: inArray(returns.orderItemId, items.map((i) => i.id)),
+    });
+    expect(rets.every((r) => r.verificationWindowExpiresAt === null)).toBe(true);
+
+    await db
+      .update(orders)
+      .set({ returningToStoreAt: new Date(Date.now() - 30 * 3_600_000) })
+      .where(eq(orders.id, orderId));
+    expect(await sweepReturnLegRot(db)).toBeGreaterThanOrEqual(1);
+
+    // Alert-only: arrival is a refund trigger, so only a human may assert it.
+    expect((await orderRow(orderId)).status).toBe('returning_to_store');
+    expect(await db.query.refunds.findFirst({ where: eq(refunds.orderId, orderId) })).toBeFalsy();
+    expect(await sweepReturnLegRot(db)).toBe(0); // one alert per order
   });
 });
 
@@ -1241,6 +1756,11 @@ describe('getOrder — consumer-safe shaper', () => {
     expect(o).toHaveProperty('status');
     expect(o).toHaveProperty('deliveryOtp'); // standard delivery carries one (may be a string)
     expect(o).toHaveProperty('grandTotalPaise');
+    // Authoritative "was the shopper charged": the mock gateway succeeds the
+    // prepaid charge at placement, so the full total is captured. The app gates
+    // its refund copy on this, never on order status.
+    expect(o).toHaveProperty('amountPaidPaise');
+    expect(o.amountPaidPaise).toBe(o.grandTotalPaise);
     expect(Array.isArray(o.items)).toBe(true);
     // item internals stripped
     expect(o.items[0]).not.toHaveProperty('couponAllocPaise');
@@ -1316,6 +1836,19 @@ describe('gateway settle/fail — pending checkout lifecycle', () => {
     expect((await orderRow(orderId)).status).toBe('payment_failed');
     let pay = await db.query.payments.findFirst({ where: eq(payments.orderId, orderId) });
     expect(pay!.status).toBe('failed');
+
+    // A failed payment means NOTHING was captured — the consumer order must
+    // report amountPaidPaise === 0 so the app never claims a refund that cannot
+    // exist. (Regression guard for the "refunded to original method" copy shown
+    // on a never-charged cancelled/returned order.)
+    {
+      const gres = await app.inject({
+        method: 'GET',
+        url: `/api/v1/consumer/checkout/orders/${orderId}`,
+        headers: auth(consumerToken),
+      });
+      expect((data(gres) as { amountPaidPaise: number }).amountPaidPaise).toBe(0);
+    }
 
     // Late webhook capture on the SAME gateway order: payment row is already
     // failed (no flip) but the ORDER recovers payment_failed→pending→routing.
@@ -1437,8 +1970,62 @@ describe('razorpay webhook — refund.failed rolls the refund back', () => {
     });
     expect(afterDisb?.status).toBe('failed');
 
+    // The failed leg is superseded by a fresh PENDING retry leg, so the admin retry
+    // desk can actually act on it — retryDisbursement only accepts 'pending', which
+    // used to make a webhook-failed refund unretryable.
+    const legs = await db.query.refundDisbursements.findMany({
+      where: eq(refundDisbursements.refundId, refundRow!.id),
+    });
+    const retryLeg = legs.find((d) => d.previousDisbursementId === disb!.id);
+    expect(retryLeg?.status).toBe('pending');
+
+    // 'processing', not 'partially_disbursed': ZERO rupees landed. The old value said
+    // "part of your money is back" for a refund where none of it was.
     const afterRefund = await db.query.refunds.findFirst({ where: eq(refunds.id, refundRow!.id) });
-    expect(afterRefund?.status).toBe('partially_disbursed');
+    expect(afterRefund?.status).toBe('processing');
+    expect(afterRefund?.completedAt).toBeNull();
+  });
+
+  it('a replayed refund.failed webhook does not re-fire or re-open anything', async () => {
+    const { orderId } = await placeOrder({ deliveryMethod: 'standard', paymentMethod: 'upi' });
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/consumer/checkout/orders/${orderId}/cancel`,
+      headers: auth(consumerToken),
+      payload: { reason: 'webhook replay test' },
+    });
+    const refundRow = await db.query.refunds.findFirst({ where: eq(refunds.orderId, orderId) });
+    const gatewayRefundId = `rfnd_replay_${Date.now()}`;
+    const [disb] = await db
+      .update(refundDisbursements)
+      .set({ gatewayRef: gatewayRefundId })
+      .where(eq(refundDisbursements.refundId, refundRow!.id))
+      .returning({ id: refundDisbursements.id });
+
+    const fire = async () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/webhooks/razorpay',
+        headers: { 'content-type': 'application/json', 'x-razorpay-signature': 'skipped-in-dev' },
+        payload: {
+          event: 'refund.failed',
+          payload: { refund: { entity: { id: gatewayRefundId, status: 'failed' } } },
+        },
+      });
+
+    expect((await fire()).statusCode).toBe(200);
+    const afterFirst = await db.query.refundDisbursements.findMany({
+      where: eq(refundDisbursements.refundId, refundRow!.id),
+    });
+
+    // Replay: force-fail 409s on an already-failed leg, so nothing moves and no second
+    // retry leg is minted.
+    expect((await fire()).statusCode).toBe(200);
+    const afterReplay = await db.query.refundDisbursements.findMany({
+      where: eq(refundDisbursements.refundId, refundRow!.id),
+    });
+    expect(afterReplay).toHaveLength(afterFirst.length);
+    expect(afterReplay.find((d) => d.id === disb!.id)?.status).toBe('failed');
   });
 });
 

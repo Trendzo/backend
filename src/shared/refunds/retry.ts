@@ -3,18 +3,13 @@
  * Wallet legs credit immediately; original-tender legs go through the active
  * gateway (real Razorpay refund when configured, simulated otherwise).
  */
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
-import {
-  consumerWallets,
-  payments,
-  refundDisbursements,
-  refunds,
-  walletTransactions,
-} from '@/db/schema/index.js';
+import { payments, refundDisbursements } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
-import { IdPrefix, newId } from '@/shared/ids.js';
 import { settleTenderDisbursement } from '@/shared/refunds/disburse-tender.js';
+import { rollUpRefundStatus } from '@/shared/refunds/rollup.js';
+import { applyWalletDelta } from '@/shared/wallet/apply-delta.js';
 import type { ActorType } from '@/shared/orders/state-machine.js';
 
 export async function retryDisbursement(
@@ -39,65 +34,23 @@ export async function retryDisbursement(
 
   await database.transaction(async (tx) => {
     if (d.destination === 'wallet') {
-      // Credit wallet now.
-      let attempt = 0;
-      while (attempt < 3) {
-        const wallet = await tx.query.consumerWallets.findFirst({
-          where: eq(consumerWallets.consumerId, d.refund.order.consumerId),
-        });
-        if (!wallet) throw new AppError(500, ErrorCode.InternalError, 'Wallet vanished');
-        const newBalance = wallet.balancePaise + d.amountPaise;
-        const newVersion = wallet.version + 1;
-        const [updated] = await tx
-          .update(consumerWallets)
-          .set({ balancePaise: newBalance, version: newVersion, updatedAt: new Date() })
-          .where(and(eq(consumerWallets.id, wallet.id), eq(consumerWallets.version, wallet.version)))
-          .returning();
-        if (updated) {
-          await tx.insert(walletTransactions).values({
-            id: newId(IdPrefix.WalletTx),
-            walletId: wallet.id,
-            kind: 'refund_credit',
-            amountPaise: d.amountPaise,
-            balanceAfterPaise: newBalance,
-            walletVersionAfter: newVersion,
-            refOrderId: d.refund.orderId,
-            note: `Refund retry ${d.id}`,
-          });
-          break;
-        }
-        attempt += 1;
-      }
-      if (attempt >= 3) {
-        throw new AppError(503, ErrorCode.InternalError, 'Wallet CAS retries exhausted');
-      }
-    }
-    if (d.destination === 'wallet') {
+      await applyWalletDelta(tx, {
+        consumerId: d.refund.order.consumerId,
+        deltaPaise: d.amountPaise,
+        kind: 'refund_credit',
+        refOrderId: d.refund.orderId,
+        refRefundId: d.refundId,
+        note: `Refund retry ${d.id}`,
+      });
       await tx
         .update(refundDisbursements)
         .set({ status: 'succeeded', settledAt: new Date() })
         .where(eq(refundDisbursements.id, input.disbursementId));
     }
 
-    // Roll up: are all *leaf* disbursements for this refund succeeded?
-    // A leaf is one that is not superseded by a later retry in the chain.
+    // Roll up over the leaf disbursements, which now sees the flip above.
     // (Tender legs settle post-tx via the gateway; their own settle re-rolls-up.)
-    const allDisb = await tx.query.refundDisbursements.findMany({
-      where: eq(refundDisbursements.refundId, d.refundId),
-    });
-    const supersededIds = new Set(
-      allDisb.map((x) => x.previousDisbursementId).filter(Boolean),
-    );
-    const leafDisb = allDisb.filter((x) => !supersededIds.has(x.id));
-    const allSucceeded = leafDisb.every(
-      (x) => x.status === 'succeeded' || (x.id === d.id && d.destination === 'wallet'),
-    );
-    if (allSucceeded) {
-      await tx
-        .update(refunds)
-        .set({ status: 'succeeded', completedAt: new Date() })
-        .where(eq(refunds.id, d.refundId));
-    }
+    await rollUpRefundStatus(tx, d.refundId);
   });
 
   // Original-tender leg: real gateway refund when active (simulated otherwise).

@@ -14,6 +14,10 @@ import {
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
+import {
+  computeDriverCashTotals,
+  computeDriverCashTotalsByDriver,
+} from '@/shared/driver-cash/balance.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { OrderStatus } from '@/shared/orders/state-machine.js';
 import type { DecideDepositBody, ListDepositsQuery, ListDriversQuery } from './drivers.validators.js';
@@ -26,19 +30,13 @@ const ACTIVE_DELIVERY_STATUSES: OrderStatus[] = [
   'returning_to_store',
 ];
 
-/** Per-driver ledger totals: outstanding = Σcollected − Σdeposited(confirmed). */
+/**
+ * Per-driver outstanding cash. A driver who has handed back more in COD refunds than
+ * he collected goes NEGATIVE — correct, and it means the platform owes him.
+ */
 async function cashOutstandingByDriver(): Promise<Map<string, number>> {
-  const rows = await db
-    .select({
-      driverId: driverCashLedger.driverId,
-      outstanding: sql<number>`(
-        coalesce(sum(${driverCashLedger.amountPaise}) filter (where ${driverCashLedger.entryKind} = 'collected'), 0)
-        - coalesce(sum(${driverCashLedger.amountPaise}) filter (where ${driverCashLedger.entryKind} = 'deposited'), 0)
-      )::int`,
-    })
-    .from(driverCashLedger)
-    .groupBy(driverCashLedger.driverId);
-  return new Map(rows.map((r) => [r.driverId, Number(r.outstanding)]));
+  const totals = await computeDriverCashTotalsByDriver(db);
+  return new Map([...totals].map(([driverId, t]) => [driverId, t.outstandingPaise]));
 }
 
 export async function listDrivers(input: { query: z.infer<typeof ListDriversQuery> }) {
@@ -100,13 +98,7 @@ export async function getDriverDetail(input: { id: string }) {
   const d = await db.query.deliveryAgents.findFirst({ where: eq(deliveryAgents.id, input.id) });
   if (!d) throw new AppError(404, ErrorCode.NotFound, 'Driver not found');
 
-  const [ledger] = await db
-    .select({
-      collected: sql<number>`coalesce(sum(${driverCashLedger.amountPaise}) filter (where ${driverCashLedger.entryKind} = 'collected'), 0)::int`,
-      deposited: sql<number>`coalesce(sum(${driverCashLedger.amountPaise}) filter (where ${driverCashLedger.entryKind} = 'deposited'), 0)::int`,
-    })
-    .from(driverCashLedger)
-    .where(eq(driverCashLedger.driverId, input.id));
+  const cash = await computeDriverCashTotals(db, input.id);
   const [earn] = await db
     .select({
       total: sql<number>`coalesce(sum(${driverEarnings.totalPaise}), 0)::int`,
@@ -124,15 +116,9 @@ export async function getDriverDetail(input: { id: string }) {
     limit: 10,
   });
 
-  const collected = ledger?.collected ?? 0;
-  const deposited = ledger?.deposited ?? 0;
   return ok({
     driver: d,
-    cash: {
-      collectedTotalPaise: collected,
-      depositedTotalPaise: deposited,
-      outstandingPaise: collected - deposited,
-    },
+    cash,
     earnings: { totalPaise: earn?.total ?? 0, legs: earn?.legs ?? 0 },
     activeDeliveries: Number(active?.n ?? 0),
     deposits,

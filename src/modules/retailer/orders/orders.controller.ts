@@ -13,6 +13,7 @@ import {
   orders,
   payments,
   payoutHolds,
+  platformConfig,
   refundDisbursements,
   refunds,
   retailerAccounts,
@@ -21,6 +22,7 @@ import {
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
+import { assertDeliveryOtp } from '@/shared/orders/delivery-otp.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { logTransitionMarker, transitionOrder } from '@/shared/orders/transition.js';
 import { rerouteOrder } from '@/shared/orders/routing.js';
@@ -65,6 +67,12 @@ async function getOwnStoreId(auth: Auth): Promise<string> {
     );
   }
   return retailer.storeId;
+}
+
+/** Pickup-handover tunables, with the same code-fallback pattern the sweeps use. */
+async function readPickupConfig(key: string, fallback: number): Promise<number> {
+  const row = await db.query.platformConfig.findFirst({ where: eq(platformConfig.key, key) });
+  return row && typeof row.value === 'number' ? row.value : fallback;
 }
 
 async function loadOwnedOrder(orderId: string, storeId: string) {
@@ -339,10 +347,85 @@ export async function pickupHandover(input: {
   if (!order.pickupCode) {
     throw new AppError(500, ErrorCode.InternalError, 'Pickup order is missing its handover code');
   }
+
+  const now = new Date();
+  if (order.pickupCodeLockedUntil && order.pickupCodeLockedUntil > now) {
+    throw new AppError(
+      423,
+      ErrorCode.PickupCodeLocked,
+      `Too many incorrect codes — try again after ${order.pickupCodeLockedUntil.toISOString()}`,
+    );
+  }
+
+  /**
+   * The slot was captured at placement and, until now, read only by the no-show sweep.
+   *
+   * Only the LATE bound is enforced. Reaching this handler means the order is `packed`
+   * — the state machine allows no other source status — so the goods are ready, and
+   * refusing a customer who turned up early would be hostile for no gain. Collecting
+   * long AFTER the slot is the case that signals an abandoned pickup, and it is the one
+   * the no-show sweep would otherwise cancel out from under the counter.
+   *
+   * NULL slots (admin test placements; a real consumer pickup always carries one) skip
+   * the check rather than being rejected.
+   */
+  if (order.pickupSlotEnd) {
+    const graceAfter = await readPickupConfig('pickup_slot_grace_after_minutes', 240);
+    const closesAt = new Date(order.pickupSlotEnd.getTime() + graceAfter * 60_000);
+    if (now > closesAt) {
+      throw new AppError(
+        409,
+        ErrorCode.PickupOutsideSlot,
+        `The collection window closed at ${closesAt.toISOString()} — reschedule this pickup`,
+      );
+    }
+  }
+
   const submitted = input.body.pickupCode.trim().toUpperCase();
   if (submitted !== order.pickupCode) {
-    throw new AppError(400, ErrorCode.InvalidPickupCode, 'Incorrect pickup code');
+    // One atomic statement: parallel guesses cannot each get a free attempt.
+    const maxAttempts = await readPickupConfig('pickup_code_max_attempts', 5);
+    const lockoutMinutes = await readPickupConfig('pickup_code_lockout_minutes', 15);
+    const [bumped] = await db
+      .update(orders)
+      .set({
+        pickupCodeAttempts: sql`${orders.pickupCodeAttempts} + 1`,
+        pickupCodeLockedUntil: sql`CASE WHEN ${orders.pickupCodeAttempts} + 1 >= ${maxAttempts}
+          THEN now() + (${lockoutMinutes} || ' minutes')::interval
+          ELSE ${orders.pickupCodeLockedUntil} END`,
+      })
+      .where(eq(orders.id, order.id))
+      .returning({
+        attempts: orders.pickupCodeAttempts,
+        lockedUntil: orders.pickupCodeLockedUntil,
+      });
+    const remaining = Math.max(maxAttempts - (bumped?.attempts ?? 0), 0);
+    throw new AppError(
+      400,
+      ErrorCode.InvalidPickupCode,
+      remaining > 0
+        ? `Incorrect pickup code — ${remaining} attempt(s) left`
+        : 'Incorrect pickup code — the code is now locked',
+    );
   }
+
+  /**
+   * CONSUME the code before touching stock.
+   *
+   * The stock finalize used to run BEFORE the transitionOrder that would reject a
+   * second call, so two concurrent correct-code submissions decremented `variants.stock`
+   * twice. Nulling the code under a CAS makes the handover single-shot — the same
+   * discipline `handover()` already applied to the agent handoff code.
+   */
+  const [consumed] = await db
+    .update(orders)
+    .set({ pickupCode: null, pickupCodeAttempts: 0, pickupCodeLockedUntil: null })
+    .where(and(eq(orders.id, order.id), eq(orders.pickupCode, order.pickupCode)))
+    .returning({ id: orders.id });
+  if (!consumed) {
+    throw new AppError(409, ErrorCode.InvalidState, 'This order has already been collected');
+  }
+
   // Customer collected the goods — finalize stock exactly like a delivery (no
   // delivery_attempts row: pickups have no courier leg; the transition is the audit).
   await db.transaction(async (tx) => {
@@ -483,7 +566,20 @@ export async function markDelivered(input: {
   body: z.infer<typeof MarkDeliveredBody>;
 }) {
   const storeId = await getOwnStoreId(input.auth);
-  await loadOwnedOrder(input.id, storeId);
+  const order = await loadOwnedOrder(input.id, storeId);
+
+  // The state machine's own comment claimed this route enforced pickup-only. It did
+  // not — which is how a packed express order could be marked delivered without ever
+  // leaving the store. Pickup orders go through pickupHandover with the pickup code.
+  if (order.deliveryMethod === 'pickup') {
+    throw new AppError(
+      400,
+      ErrorCode.PickupCodeNotApplicable,
+      'Pickup orders are completed with the pickup handover, not mark-delivered',
+    );
+  }
+  // Same proof the driver path demands: the consumer's delivery OTP.
+  const otpVerified = assertDeliveryOtp(order, input.body.otp);
 
   const result = await db.transaction(async (tx) => {
     const items = await tx
@@ -526,6 +622,9 @@ export async function markDelivered(input: {
     reason: 'delivery_confirmed',
     metadata: {
       attemptNumber: result.nextAttempt,
+      // false only for legacy orders minted before delivery OTPs existed — recorded so
+      // an audit can find the handovers that carry no cryptographic proof.
+      otpVerified,
       ...(input.auth.impersonating
         ? { impersonatingAdminSessionId: input.auth.impersonating.sessionId }
         : {}),

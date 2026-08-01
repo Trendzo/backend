@@ -25,7 +25,10 @@ import {
   ListRefundsQuery,
   ListReturnsQuery,
   OpenReturnBody,
+  PayoutDeskQuery,
+  RedirectToWalletBody,
   RefundDisbParam,
+  SettleManualBody,
   VerifyBody,
 } from './returns.validators.js';
 
@@ -120,6 +123,50 @@ const adminReturnsRoutes: FastifyPluginAsyncZod = async (app) => {
       ctrl.retryDisb({
         dId: req.params.dId,
         adminId: req.auth?.sub ?? 'admin',
+      }),
+  );
+
+  /**
+   * Payout desk — refund legs with no automatic rail (COD cancellations, and cash
+   * nobody has handed over yet). They are born PENDING and stay there until a human
+   * moves real money, which is the deliberate counterpart to no longer fabricating a
+   * "succeeded" for them. Reuses the existing refunds.view / refunds.force permissions,
+   * so `support` stays read-only for free.
+   */
+  app.get(
+    '/refunds/payout-desk',
+    {
+      preHandler: requirePermission('refunds.view'),
+      schema: { querystring: PayoutDeskQuery },
+    },
+    async (req) => ctrl.payoutDesk({ query: req.query }),
+  );
+
+  app.post(
+    '/refunds/:id/disbursements/:dId/settle-manual',
+    {
+      preHandler: requirePermission('refunds.force'),
+      schema: { params: RefundDisbParam, body: SettleManualBody },
+    },
+    async (req) =>
+      ctrl.settleManual({
+        dId: req.params.dId,
+        adminId: req.auth?.sub ?? 'admin',
+        body: req.body,
+      }),
+  );
+
+  app.post(
+    '/refunds/:id/disbursements/:dId/redirect-to-wallet',
+    {
+      preHandler: requirePermission('refunds.force'),
+      schema: { params: RefundDisbParam, body: RedirectToWalletBody },
+    },
+    async (req) =>
+      ctrl.redirectToWallet({
+        dId: req.params.dId,
+        adminId: req.auth?.sub ?? 'admin',
+        body: req.body,
       }),
   );
 

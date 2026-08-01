@@ -47,6 +47,8 @@ import {
 import { applyLoyaltyDelta } from '@/shared/loyalty/apply-delta.js';
 import { ensureWallet } from '@/shared/wallet/ensure-wallet.js';
 import { createRazorpayOrder, isRazorpayActive, razorpayKeyId } from '@/shared/payments/razorpay.js';
+import { simulatedMoneyAllowed } from '@/shared/payments/simulation-guard.js';
+import { notifyAllAdmins } from '@/shared/notify-admins.js';
 import { computeQuote, resolveWalletApplyPaise } from './compute-quote.js';
 import { generateDeliveryOtp, generatePickupCode } from './pickup-code.js';
 import { transitionOrder } from './transition.js';
@@ -206,6 +208,32 @@ export async function placeOrder(
     );
   }
   const snapshotConsumer = { name: consumerName, email: consumerEmail, phone: consumer.phone };
+
+  /**
+   * Prepaid checkout requires a live gateway.
+   *
+   * With Razorpay unconfigured the MOCK gateway "succeeds", which is exactly right in
+   * dev and test and catastrophic in production, where every prepaid order would ship
+   * for free. Refuse the order outright — before the transaction, so nothing is
+   * reserved — and page the admins. Leaving it 'pending' instead would be worse: it
+   * can never be captured, so it would just rot until the abandonment sweep kills it
+   * an hour later, hiding the misconfiguration behind a bad customer experience.
+   */
+  const wantsGatewayCharge =
+    input.placedByActorType === 'consumer' &&
+    (input.paymentMethod === 'upi' || input.paymentMethod === 'card');
+  if (wantsGatewayCharge && !isRazorpayActive() && !simulatedMoneyAllowed()) {
+    void notifyAllAdmins({
+      kind: 'system',
+      title: 'Prepaid checkout blocked — payment gateway not configured',
+      body: `Consumer ${input.consumerId} tried to pay by ${input.paymentMethod}; RAZORPAY_KEY_ID/SECRET are unset.`,
+    }).catch(() => undefined);
+    throw new AppError(
+      503,
+      ErrorCode.PaymentFailed,
+      'Online payment is unavailable right now — please choose Cash on Delivery.',
+    );
+  }
 
   // ── Transactional write ──
   // The pre-tx idempotency check above is advisory; two requests with the same key can both
@@ -540,7 +568,8 @@ export async function placeOrder(
      * the request: dev and test keep their network-free green path, and a caller
      * still has no way to influence whether a payment counts as received.
      */
-    const isMockCardCharge = isConsumerCardCharge && !isRazorpayActive();
+    const isMockCardCharge =
+      isConsumerCardCharge && !isRazorpayActive() && simulatedMoneyAllowed();
     /**
      * The server decides. Nothing a caller says can mark money as received.
      *
@@ -572,10 +601,15 @@ export async function placeOrder(
       method: input.paymentMethod,
       amountPaise: amountChargedPaise,
       status: effectiveOutcome,
+      // A zero-charge payment is REAL — the wallet debit was the money movement — so it
+      // gets its own prefix. `MOCK-` marks a simulated charge and is greppable; both
+      // are recognised by isSimulatedPaymentRef, which keeps them off the gateway.
       gatewayRef:
-        effectiveOutcome === 'succeeded'
-          ? `TEST-${input.idempotencyKey.slice(0, 12)}`
-          : null,
+        effectiveOutcome !== 'succeeded'
+          ? null
+          : amountChargedPaise === 0
+            ? `WALLET-${paymentId.slice(4, 16)}`
+            : `MOCK-${paymentId.slice(4, 16)}`,
       idempotencyKey: `${input.idempotencyKey}#pay`,
       ...(settledAt && { settledAt }),
     });

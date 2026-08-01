@@ -17,6 +17,7 @@ import type { db as Db } from '@/db/client.js';
 import { orders } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { autoAcceptDoorReturnsOnArrival } from '@/shared/returns/auto-accept-door-returns.js';
+import { markOrderReturnsGoodsReceived } from '@/shared/returns/mark-goods-received.js';
 import { finalizeReturnedOrder } from './finalize-return.js';
 import { transitionOrder } from './transition.js';
 import type { ActorType, OrderStatus } from './state-machine.js';
@@ -45,6 +46,13 @@ export async function arriveOrderAtStore(
   }
 
   if (status === 'returned_to_store') {
+    // Custody FIRST: the parcel landing is the assertion that the goods are at the
+    // store. Stamping before auto-accept means a failure below leaves the return
+    // recoverable by the verification sweep at window expiry, instead of stranded
+    // forever with no clock and no custody.
+    await markOrderReturnsGoodsReceived(database, orderId).catch((err) => {
+      console.error(`[arrive-at-store] mark-received ${orderId}: ${(err as Error).message}`);
+    });
     await autoAcceptDoorReturnsOnArrival(database, orderId).catch((err) => {
       console.error(`[arrive-at-store] auto-accept ${orderId}: ${(err as Error).message}`);
     });

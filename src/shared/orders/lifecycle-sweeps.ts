@@ -1,17 +1,29 @@
 /**
- * Lifecycle janitors — six idempotent sweeps that end every order/return/held-item
- * state nothing else ends. Wired as one 60s setInterval in server.ts (same pattern
- * as the acceptance + door-window sweeps). All batched (limit 100/tick, backlog
- * drains across ticks), per-row try/catch (one bad row never starves the rest),
- * and every mutation is UPDATE-guarded so an overlapping run loses cleanly.
+ * Lifecycle janitors — idempotent sweeps that end every order/return/held-item state
+ * nothing else ends. Wired as one 60s setInterval in server.ts (same pattern as the
+ * acceptance + door-window sweeps). All batched (limit 100/tick, backlog drains across
+ * ticks), per-row try/catch (one bad row never starves the rest), and every mutation is
+ * UPDATE-guarded so an overlapping run loses cleanly.
  *
- *   1. auto-close        delivered → closed after the return window
- *   2. stale payments    pending/payment_failed abandoned → cancelled (+refund of
- *                        any wallet portion via cancelOrder's refund helper)
- *   3. verify window     standard returns the store sat on → auto-accept + refund
- *   4. held items        pre-expiry warning + holding → expired
- *   5. dispatch rot      unassigned-packed admin alert; stale driver claim auto-unassign
- *   6. pickup no-show    uncollected pickup orders → cancelled
+ * Each sweep is either an ACTOR or an ALERTER, and the distinction is deliberate: a
+ * janitor may only act on a fact the data already proves. It must never infer that
+ * money is owed, or that goods it has not seen have arrived.
+ *
+ *   1. auto-close        ACTS   delivered → closed after the return window
+ *   2. stale payments    ACTS   pending/payment_failed abandoned → cancelled (+refund of
+ *                               any wallet portion via cancelOrder's refund helper)
+ *   3. verify window     ACTS   returns WITH CUSTODY the store sat on → accept + refund
+ *   4. held items        MIXED  pre-expiry warning (alert) + holding → expired (acts)
+ *   5. dispatch rot      MIXED  unassigned-packed alert; stale driver claim auto-unassign
+ *   6. pickup no-show    ACTS   uncollected pickup orders → cancelled
+ *   7. auto-reopen       ACTS   stores whose pause window lapsed
+ *   8. stuck returns     MIXED  release stale pickup claims (acts), alert on unclaimed /
+ *                               in-custody tasks, withdraw never-collected returns (acts —
+ *                               moves zero money and zero stock)
+ *   9. return-leg rot    ALERTS order stuck in returning_to_store; arrival is a refund
+ *                               trigger, so only a human may assert it
+ *  10. refund integrity  MIXED  alert on accepted-but-unrefunded, retry stalled tender legs
+ *  11. paid-not-routed   ACTS   finish an advance a captured payment already earned
  *
  * Ordering note (sweep 2): the wallet portion is debited inside the placement tx
  * even when the gateway remainder never succeeds — cancelOrder restores it. A
@@ -19,7 +31,7 @@
  * discrepancy; `payment_abandon_minutes` (default 30) comfortably exceeds real
  * gateway pending windows.
  */
-import { and, eq, inArray, isNull, isNotNull, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, lt, ne, sql } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
 import {
   customerIssues,
@@ -29,10 +41,16 @@ import {
   orders,
   payments,
   platformConfig,
+  refundDisbursements,
+  refundLines,
   retailerStores,
   returns,
+  reversePickups,
 } from '@/db/schema/index.js';
 import { markExpired } from '@/shared/held-items/dispositions.js';
+import { orderPaidPaise } from '@/shared/payments/payment-truth.js';
+import { advanceOrderAfterCapture } from '@/shared/payments/settle-gateway.js';
+import { settleTenderDisbursement } from '@/shared/refunds/disburse-tender.js';
 import { sweepKycDeadlines } from '@/shared/kyc/sweep.js';
 import { notifyAllAdmins } from '@/shared/notify-admins.js';
 import { notifyConsumer } from '@/shared/notify-consumer.js';
@@ -225,16 +243,21 @@ export async function sweepStalePayments(
 /* ── 3. Standard-return verification window ──────────────────────────────── */
 
 /**
- * A store that sits on a pending standard return past its verification window
- * forfeits the decision: auto-accept (refund fires inside verifyReturn). Door
- * returns are excluded — they auto-accept on arrival at the store.
+ * A store that sits on a pending return past its verification window forfeits the
+ * decision: auto-accept (refund fires inside verifyReturn).
+ *
+ * Gated on CUSTODY (`goodsReceivedAt`), not on return kind. Filtering by
+ * `kind='standard_return'` used to exclude door returns entirely, so a door return
+ * whose auto-accept-on-arrival threw had no timer at all and was stranded forever.
+ * Custody is the correct gate — it is exactly the fact that makes auto-accepting safe,
+ * and it can never be true for goods still in transit.
  */
 export async function sweepVerificationWindows(database: typeof Db): Promise<number> {
   const now = new Date();
   const expired = await database.query.returns.findMany({
     where: and(
-      eq(returns.kind, 'standard_return'),
       eq(returns.storeDecision, 'pending'),
+      isNotNull(returns.goodsReceivedAt),
       isNotNull(returns.verificationWindowExpiresAt),
       lt(returns.verificationWindowExpiresAt, now),
     ),
@@ -388,6 +411,10 @@ export async function sweepDispatchRot(
     where: and(
       eq(orders.status, 'packed'),
       isNull(orders.assignedAgentId),
+      // Pickup orders wait in 'packed' for the CUSTOMER, for days (see
+      // sweepPickupNoShows), so alerting "no driver for N minutes" on them was pure
+      // noise — one alert per pickup order, every time.
+      ne(orders.deliveryMethod, 'pickup'),
       isNull(orders.dispatchAlertNotifiedAt),
       sql`COALESCE(${orders.packedAt}, ${orders.placedAt}) < ${alertCutoff}`,
     ),
@@ -549,6 +576,372 @@ export async function sweepAutoReopenStores(database: typeof Db): Promise<number
   return due.length;
 }
 
+/* ── 8. Stuck returns — uncollected reverse pickups + stranded returns ───── */
+
+/**
+ * A consumer-opened return has no custody and no deadline until the goods physically
+ * arrive, so before this sweep existed NOTHING watched it: if no driver ever collected
+ * the parcel (or an admin cancelled the task), the return sat `pending` forever, the
+ * verification sweep could not see it (no window), the auto-close sweep skipped the
+ * order (pending return), and the customer never got a refund unless a human noticed.
+ *
+ * Phase A — task rot. Phase B — the return itself.
+ */
+export async function sweepStuckReturns(database: typeof Db): Promise<{
+  pickupReleased: number;
+  pickupAlerted: number;
+  returnsWithdrawn: number;
+}> {
+  const staleHours = await readConfigNumber(database, 'reverse_pickup_stale_hours', 12);
+  const abandonDays = await readConfigNumber(database, 'return_uncollected_abandon_days', 7);
+  const staleCutoff = new Date(Date.now() - staleHours * 3_600_000);
+  let pickupReleased = 0;
+  let pickupAlerted = 0;
+  let returnsWithdrawn = 0;
+
+  // (A1) Claimed but never collected → release back to the pool. Pure dispatch
+  // bookkeeping: no money, no goods movement. Mirrors the forward stale-claim release.
+  const staleAssigned = await database.query.reversePickups.findMany({
+    where: and(
+      eq(reversePickups.status, 'assigned'),
+      lt(reversePickups.assignedAt, staleCutoff),
+    ),
+    columns: { id: true, assignedDriverId: true },
+    limit: BATCH,
+  });
+  for (const t of staleAssigned) {
+    try {
+      if (!t.assignedDriverId) continue;
+      const [released] = await database
+        .update(reversePickups)
+        .set({ status: 'pending', assignedDriverId: null, assignedAt: null })
+        .where(
+          and(
+            eq(reversePickups.id, t.id),
+            eq(reversePickups.status, 'assigned'),
+            eq(reversePickups.assignedDriverId, t.assignedDriverId),
+          ),
+        )
+        .returning({ id: reversePickups.id });
+      if (released) pickupReleased += 1;
+    } catch (e) {
+      console.error(`[lifecycle-sweep] rp-release ${t.id}: ${(e as Error).message}`);
+    }
+  }
+
+  // (A2/A3) Nobody claimed it, or the driver collected and never delivered.
+  // ALERT ONLY — a janitor cannot conjure a driver, and goods sitting in a driver's
+  // van are in platform custody with a refund possibly owed. Guessing either way
+  // would be a money error, so the job here is to make sure a human is asked.
+  const rotting = await database.query.reversePickups.findMany({
+    where: and(
+      inArray(reversePickups.status, ['pending', 'collected']),
+      lt(reversePickups.createdAt, staleCutoff),
+      isNull(reversePickups.staleAlertNotifiedAt),
+    ),
+    columns: { id: true, status: true, orderId: true, itemsLabel: true },
+    limit: BATCH,
+  });
+  for (const t of rotting) {
+    try {
+      const [stamped] = await database
+        .update(reversePickups)
+        .set({ staleAlertNotifiedAt: new Date() })
+        .where(and(eq(reversePickups.id, t.id), isNull(reversePickups.staleAlertNotifiedAt)))
+        .returning({ id: reversePickups.id });
+      if (!stamped) continue;
+      pickupAlerted += 1;
+      await notifyAllAdmins({
+        kind: 'system',
+        title:
+          t.status === 'collected'
+            ? 'Return in driver custody — never delivered to the store'
+            : `Return pickup unclaimed for >${staleHours}h`,
+        body: t.itemsLabel,
+        deepLink: '/admin/dispatch',
+        payload: { reversePickupId: t.id, orderId: t.orderId, status: t.status },
+      }).catch(() => undefined);
+    } catch (e) {
+      console.error(`[lifecycle-sweep] rp-alert ${t.id}: ${(e as Error).message}`);
+    }
+  }
+  if (pickupReleased > 0) notifyOffersChanged();
+
+  // (B) The return itself was never collected. Withdraw it — which moves ZERO money
+  // and ZERO stock, and asserts only what the data already proves: the goods never
+  // left the customer. That releases the order for auto-close without either sweep
+  // being touched. A task that reached 'collected' is deliberately skipped: we hold
+  // those goods, so withdrawing would be a lie.
+  const abandonCutoff = new Date(Date.now() - abandonDays * 86_400_000);
+  const stranded = await database.query.returns.findMany({
+    where: and(
+      eq(returns.kind, 'standard_return'),
+      eq(returns.storeDecision, 'pending'),
+      isNull(returns.goodsReceivedAt),
+      lt(returns.openedAt, abandonCutoff),
+    ),
+    columns: { id: true, orderItemId: true, priorItemOutcome: true },
+    with: { orderItem: { columns: { orderId: true } } },
+    limit: BATCH,
+  });
+  if (stranded.length > 0) {
+    const orderIds = [...new Set(stranded.map((r) => r.orderItem.orderId))];
+    const tasks = await database.query.reversePickups.findMany({
+      where: inArray(reversePickups.orderId, orderIds),
+      columns: { id: true, status: true, returnIds: true },
+    });
+    let cancelledTask = false;
+    for (const ret of stranded) {
+      try {
+        const task = tasks.find((t) => (t.returnIds ?? []).includes(ret.id));
+        // Goods are with us (or were) — never withdraw.
+        if (task && (task.status === 'collected' || task.status === 'delivered_to_store')) continue;
+
+        await database.transaction(async (tx) => {
+          const [flipped] = await tx
+            .update(returns)
+            .set({ storeDecision: 'withdrawn', storeDecidedAt: new Date() })
+            .where(
+              and(
+                eq(returns.id, ret.id),
+                eq(returns.storeDecision, 'pending'),
+                isNull(returns.goodsReceivedAt),
+              ),
+            )
+            .returning({ id: returns.id });
+          if (!flipped) return;
+          await tx
+            .update(orderItems)
+            .set({ outcome: ret.priorItemOutcome ?? 'delivered_kept' })
+            .where(eq(orderItems.id, ret.orderItemId));
+          if (task && (task.status === 'pending' || task.status === 'assigned')) {
+            await tx
+              .update(reversePickups)
+              .set({
+                status: 'cancelled',
+                cancelledAt: new Date(),
+                assignedDriverId: null,
+                assignedAt: null,
+              })
+              .where(
+                and(
+                  eq(reversePickups.id, task.id),
+                  inArray(reversePickups.status, ['pending', 'assigned']),
+                ),
+              );
+            cancelledTask = true;
+          }
+          returnsWithdrawn += 1;
+        });
+      } catch (e) {
+        console.error(`[lifecycle-sweep] withdraw-return ${ret.id}: ${(e as Error).message}`);
+      }
+    }
+    if (cancelledTask) notifyOffersChanged();
+  }
+
+  return { pickupReleased, pickupAlerted, returnsWithdrawn };
+}
+
+/* ── 9. Return leg rot — order stuck in returning_to_store ───────────────── */
+
+/**
+ * ALERT ONLY, categorically.
+ *
+ * The single action that would unstick this order is `arriveOrderAtStore`, and arrival
+ * IS a refund trigger — it stamps custody on every pending door return and auto-accepts
+ * them. A janitor asserting "the goods arrived" would be a janitor issuing refunds for
+ * goods it has never seen. Physical arrival is a human fact; this sweep's whole job is
+ * to make sure a human is asked about it.
+ */
+export async function sweepReturnLegRot(database: typeof Db): Promise<number> {
+  const staleHours = await readConfigNumber(database, 'return_leg_stale_hours', 24);
+  const cutoff = new Date(Date.now() - staleHours * 3_600_000);
+  const stuck = await database.query.orders.findMany({
+    where: and(
+      eq(orders.status, 'returning_to_store'),
+      isNull(orders.returnLegAlertNotifiedAt),
+      sql`COALESCE(${orders.returningToStoreAt}, ${orders.placedAt}) < ${cutoff}`,
+    ),
+    columns: { id: true, storeId: true, consumerId: true, storeNameSnap: true },
+    limit: BATCH,
+  });
+  let alerted = 0;
+  for (const o of stuck) {
+    try {
+      const [stamped] = await database
+        .update(orders)
+        .set({ returnLegAlertNotifiedAt: new Date() })
+        .where(and(eq(orders.id, o.id), isNull(orders.returnLegAlertNotifiedAt)))
+        .returning({ id: orders.id });
+      if (!stamped) continue;
+      alerted += 1;
+      await notifyAllAdmins({
+        kind: 'order',
+        title: `Return leg stuck >${staleHours}h — goods never reached the store`,
+        body: `${o.storeNameSnap}: the order is still 'returning_to_store'. Nothing refunds until arrival is confirmed.`,
+        deepLink: `/orders/${o.id}`,
+        payload: { orderId: o.id },
+      }).catch(() => undefined);
+      await notifyStoreAccounts({
+        storeId: o.storeId,
+        kind: 'order',
+        title: 'A return has not reached you yet',
+        body: 'If the goods are already with you, mark the return received so the refund can proceed.',
+        deepLink: '/retailer/returns',
+        payload: { orderId: o.id },
+      }).catch(() => undefined);
+      await notifyConsumer({
+        consumerId: o.consumerId,
+        kind: 'order',
+        title: 'Your return is taking longer than expected',
+        body: 'We are chasing it up — your refund follows as soon as the store receives the items.',
+        deepLink: `/orders/${o.id}`,
+      }).catch(() => undefined);
+    } catch (e) {
+      console.error(`[lifecycle-sweep] return-leg ${o.id}: ${(e as Error).message}`);
+    }
+  }
+  return alerted;
+}
+
+/* ── 10. Refund integrity ────────────────────────────────────────────────── */
+
+/**
+ * Two safety nets behind the refund machinery.
+ *
+ * Phase A — a return accepted with no refund line. ALERT ONLY: whether a refund is
+ * owed depends on whether a cancellation refund already covered the item, and a
+ * duplicate refund is a worse failure than a late one. Since refund creation now
+ * commits inside the accept transaction this can only fire on pre-fix rows — which is
+ * exactly what a watchdog is for.
+ *
+ * Phase B — a tender leg still `pending` long after it was raised. ACTS: the refund
+ * decision is already persisted, so this only completes it, and the settler passes
+ * `idempotencyKey = disbursementId` so a gateway retry cannot double-pay. Cash and
+ * manual-payout legs are deliberately excluded — they wait for a human.
+ */
+export async function sweepRefundIntegrity(database: typeof Db): Promise<{
+  missingRefundAlerts: number;
+  disbursementsRetried: number;
+}> {
+  let missingRefundAlerts = 0;
+  let disbursementsRetried = 0;
+
+  const acceptedCutoff = new Date(Date.now() - 15 * 60_000);
+  const accepted = await database.query.returns.findMany({
+    where: and(
+      eq(returns.storeDecision, 'accepted'),
+      lt(returns.storeDecidedAt, acceptedCutoff),
+      isNull(returns.stuckAlertNotifiedAt),
+    ),
+    columns: { id: true, orderItemId: true },
+    limit: BATCH,
+  });
+  if (accepted.length > 0) {
+    const lines = await database.query.refundLines.findMany({
+      where: inArray(
+        refundLines.orderItemId,
+        accepted.map((r) => r.orderItemId),
+      ),
+      columns: { orderItemId: true },
+    });
+    const refunded = new Set(lines.map((l) => l.orderItemId));
+    for (const ret of accepted) {
+      if (refunded.has(ret.orderItemId)) continue;
+      try {
+        const [stamped] = await database
+          .update(returns)
+          .set({ stuckAlertNotifiedAt: new Date() })
+          .where(and(eq(returns.id, ret.id), isNull(returns.stuckAlertNotifiedAt)))
+          .returning({ id: returns.id });
+        if (!stamped) continue;
+        missingRefundAlerts += 1;
+        await notifyAllAdmins({
+          kind: 'refund',
+          title: 'Return accepted but never refunded',
+          body: `Return ${ret.id} was accepted and restocked with no refund line — needs a manual refund.`,
+          deepLink: '/admin/refunds',
+          payload: { returnId: ret.id, orderItemId: ret.orderItemId },
+        }).catch(() => undefined);
+      } catch (e) {
+        console.error(`[lifecycle-sweep] refund-missing ${ret.id}: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  const staleMinutes = await readConfigNumber(database, 'refund_disbursement_stale_minutes', 15);
+  const stalled = await database.query.refundDisbursements.findMany({
+    where: and(
+      eq(refundDisbursements.status, 'pending'),
+      eq(refundDisbursements.destination, 'original_tender'),
+      lt(refundDisbursements.initiatedAt, new Date(Date.now() - staleMinutes * 60_000)),
+    ),
+    columns: {
+      id: true,
+      refundId: true,
+      amountPaise: true,
+      sourcePaymentId: true,
+      destination: true,
+    },
+    limit: BATCH,
+  });
+  for (const d of stalled) {
+    try {
+      const source = d.sourcePaymentId
+        ? await database.query.payments.findFirst({
+            where: eq(payments.id, d.sourcePaymentId),
+            columns: { gatewayRef: true },
+          })
+        : null;
+      await settleTenderDisbursement(database, {
+        refundId: d.refundId,
+        disbursementId: d.id,
+        amountPaise: d.amountPaise,
+        sourceGatewayRef: source?.gatewayRef ?? null,
+        destination: 'original_tender',
+      });
+      disbursementsRetried += 1;
+    } catch (e) {
+      console.error(`[lifecycle-sweep] refund-retry ${d.id}: ${(e as Error).message}`);
+    }
+  }
+
+  return { missingRefundAlerts, disbursementsRetried };
+}
+
+/* ── 11. Paid but not routed ─────────────────────────────────────────────── */
+
+/**
+ * Backstop for the capture path: an order whose payment is genuinely captured must
+ * reach `routing`. If the advance threw partway (a gateway blip, a dispatch error),
+ * nothing else would ever finish it. Safe to act — it only completes an advance the
+ * money already earned, and `advanceOrderAfterCapture` is idempotent and resumable.
+ */
+export async function sweepPaidNotRouted(database: typeof Db): Promise<number> {
+  const staleMinutes = await readConfigNumber(database, 'paid_not_routed_minutes', 5);
+  const cutoff = new Date(Date.now() - staleMinutes * 60_000);
+  const candidates = await database.query.orders.findMany({
+    where: and(inArray(orders.status, ['pending', 'confirmed']), lt(orders.placedAt, cutoff)),
+    columns: { id: true, grandTotalPaise: true },
+    limit: BATCH,
+  });
+  let advanced = 0;
+  for (const o of candidates) {
+    try {
+      const entered = await lastEnteredStatusAt(database, o.id, 'confirmed');
+      if (entered && entered.getTime() > cutoff.getTime()) continue;
+      const paid = await orderPaidPaise(database, o.id);
+      if (paid < o.grandTotalPaise) continue;
+      const moved = await advanceOrderAfterCapture(database, { orderId: o.id });
+      if (moved) advanced += 1;
+    } catch (e) {
+      console.error(`[lifecycle-sweep] paid-not-routed ${o.id}: ${(e as Error).message}`);
+    }
+  }
+  return advanced;
+}
+
 export type SweepCounts = {
   autoClosed: number;
   pendingCancelled: number;
@@ -562,6 +955,13 @@ export type SweepCounts = {
   kycMarkedOverdue: number;
   kycStoresPaused: number;
   storesAutoReopened: number;
+  reversePickupReleased: number;
+  reversePickupAlerted: number;
+  returnsWithdrawn: number;
+  returnLegAlerted: number;
+  refundMissingAlerts: number;
+  disbursementsRetried: number;
+  paidNotRouted: number;
 };
 
 const ZERO_COUNTS: SweepCounts = {
@@ -577,12 +977,19 @@ const ZERO_COUNTS: SweepCounts = {
   kycMarkedOverdue: 0,
   kycStoresPaused: 0,
   storesAutoReopened: 0,
+  reversePickupReleased: 0,
+  reversePickupAlerted: 0,
+  returnsWithdrawn: 0,
+  returnLegAlerted: 0,
+  refundMissingAlerts: 0,
+  disbursementsRetried: 0,
+  paidNotRouted: 0,
 };
 
 let running = false;
 
 /**
- * Run all six sweeps sequentially. Re-entrancy-guarded: if a prior tick is still
+ * Run every sweep sequentially. Re-entrancy-guarded: if a prior tick is still
  * draining a backlog, this tick returns zeros instead of stacking.
  */
 export async function runLifecycleSweeps(database: typeof Db): Promise<SweepCounts> {
@@ -637,6 +1044,31 @@ export async function runLifecycleSweeps(database: typeof Db): Promise<SweepCoun
       counts.storesAutoReopened = await sweepAutoReopenStores(database);
     } catch (e) {
       console.error(`[lifecycle-sweep] auto-reopen failed: ${(e as Error).message}`);
+    }
+    try {
+      const r = await sweepStuckReturns(database);
+      counts.reversePickupReleased = r.pickupReleased;
+      counts.reversePickupAlerted = r.pickupAlerted;
+      counts.returnsWithdrawn = r.returnsWithdrawn;
+    } catch (e) {
+      console.error(`[lifecycle-sweep] stuck-returns failed: ${(e as Error).message}`);
+    }
+    try {
+      counts.returnLegAlerted = await sweepReturnLegRot(database);
+    } catch (e) {
+      console.error(`[lifecycle-sweep] return-leg failed: ${(e as Error).message}`);
+    }
+    try {
+      const r = await sweepRefundIntegrity(database);
+      counts.refundMissingAlerts = r.missingRefundAlerts;
+      counts.disbursementsRetried = r.disbursementsRetried;
+    } catch (e) {
+      console.error(`[lifecycle-sweep] refund-integrity failed: ${(e as Error).message}`);
+    }
+    try {
+      counts.paidNotRouted = await sweepPaidNotRouted(database);
+    } catch (e) {
+      console.error(`[lifecycle-sweep] paid-not-routed failed: ${(e as Error).message}`);
     }
   } finally {
     running = false;

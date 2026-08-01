@@ -1,19 +1,24 @@
 /**
  * Retailer-side returns + held-items. Scoped to the authenticated retailer's store.
  */
-import { and, desc, eq, inArray, isNull, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, type SQL } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
   heldItems,
   orderItems,
   orders,
-  platformConfig,
   retailerAccounts,
   returns,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
+import {
+  cashRefundDueByOrder,
+  cashRefundDueForOrder,
+} from '@/shared/refunds/cash-due.js';
+import { markReturnGoodsReceived } from '@/shared/returns/mark-goods-received.js';
+import { settleCashAtCounter } from '@/shared/refunds/counter-cash.js';
 import { openReturn } from '@/shared/returns/open-return.js';
 import { verifyReturn } from '@/shared/returns/verify-return.js';
 import { declineReturn } from '@/shared/returns/decline-return.js';
@@ -28,6 +33,7 @@ import type {
   ListHeldQuery,
   ListReturnsQuery,
   OpenCounterBody,
+  PayCashBody,
   RecordDispositionBody,
   StandardReturnBody,
   VerifyBody,
@@ -79,7 +85,15 @@ export async function listReturns(input: {
     limit: input.query.limit,
     with: { orderItem: { with: { order: true } } },
   });
-  return ok(rows);
+  // Cash the store still owes on each of these orders, so the list can badge the
+  // obligation without opening every return. One batched lookup for the whole page.
+  const dueByOrder = await cashRefundDueByOrder(
+    db,
+    [...new Set(rows.map((r) => r.orderItem.orderId))],
+  );
+  return ok(
+    rows.map((r) => ({ ...r, cashRefundDue: dueByOrder.get(r.orderItem.orderId) ?? null })),
+  );
 }
 
 export async function openCounter(input: {
@@ -142,26 +156,13 @@ export async function markReceived(input: { auth: Auth; id: string }) {
   if (ret.storeDecision !== 'pending') {
     throw new AppError(409, ErrorCode.ReturnAlreadyDecided, `Return is '${ret.storeDecision}'`);
   }
-  const cfg = await db.query.platformConfig.findFirst({
-    where: eq(platformConfig.key, 'verification_window_hours'),
-  });
-  const verHours = cfg && typeof cfg.value === 'number' ? cfg.value : 24;
-  const expiresAt = new Date(Date.now() + verHours * 3_600_000);
-  const [stamped] = await db
-    .update(returns)
-    .set({ verificationWindowExpiresAt: expiresAt })
-    .where(
-      and(
-        eq(returns.id, input.id),
-        eq(returns.storeDecision, 'pending'),
-        isNull(returns.verificationWindowExpiresAt),
-      ),
-    )
-    .returning({ id: returns.id });
+  // Pressing "received" IS the custody assertion — it stamps both goodsReceivedAt and
+  // the decision deadline, which together unlock accept and the verification sweep.
+  const { stamped, verificationWindowExpiresAt } = await markReturnGoodsReceived(db, input.id);
   if (!stamped) {
     throw new AppError(409, ErrorCode.InvalidState, 'Verification window already running');
   }
-  return ok({ returnId: input.id, verificationWindowExpiresAt: expiresAt });
+  return ok({ returnId: input.id, verificationWindowExpiresAt });
 }
 
 /** Decline a return — opens a dispute and holds funds until an admin decides. */
@@ -177,6 +178,30 @@ export async function declineReturnHandler(input: {
     rejectPhotos: input.body.rejectPhotos,
     actor: { type: 'retailer', id: input.auth.sub },
     expectedStoreId: storeId,
+  });
+  return ok(r);
+}
+
+/**
+ * Counter cash refund. Mirror image of the driver channel: at the counter the return is
+ * verified while the customer stands there, so the refund exists FIRST and its cash leg
+ * is born pending; this records the notes actually going across.
+ *
+ * Gated on the existing `returns.accept` permission — the same counter operator who
+ * accepted the return hands the cash, and it is already granted to retailer staff.
+ */
+export async function payCashRefund(input: {
+  auth: Auth;
+  dId: string;
+  body: z.infer<typeof PayCashBody>;
+}) {
+  const storeId = await getOwnStoreId(input.auth);
+  const r = await settleCashAtCounter(db, {
+    disbursementId: input.dId,
+    amountPaise: input.body.amountPaise,
+    ...(input.body.note ? { note: input.body.note } : {}),
+    storeId,
+    actorId: input.auth.sub,
   });
   return ok(r);
 }
@@ -277,7 +302,10 @@ export async function getReturn(input: { auth: Auth; id: string }) {
   if (row.orderItem.order.storeId !== storeId) {
     throw new AppError(403, ErrorCode.Forbidden, 'Return does not belong to your store');
   }
-  return ok(row);
+  // The pending cash leg, if the customer is still owed notes. Without this the portal
+  // has no way to discover the disbursement id that `pay-cash` needs.
+  const cashRefundDue = await cashRefundDueForOrder(db, row.orderItem.orderId);
+  return ok({ ...row, cashRefundDue });
 }
 
 export async function recordDisposition(input: {

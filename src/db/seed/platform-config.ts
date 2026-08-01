@@ -203,6 +203,54 @@ export const PLATFORM_CONFIG_DEFAULTS: readonly ConfigRow[] = [
     value: 3,
     description: 'Cancel pickup orders not collected this long after the slot/packing',
   },
+  {
+    key: 'reverse_pickup_stale_hours',
+    value: 12,
+    description:
+      'Release a stale reverse-pickup claim back to the pool, and alert admins about tasks nobody collected',
+  },
+  {
+    key: 'return_uncollected_abandon_days',
+    value: 7,
+    description:
+      'Withdraw a standard return whose goods were never collected (moves no money and no stock)',
+  },
+  {
+    key: 'return_leg_stale_hours',
+    value: 24,
+    description: 'Alert when an order sits in returning_to_store this long without arriving',
+  },
+  {
+    key: 'refund_disbursement_stale_minutes',
+    value: 15,
+    description: 'Retry an original-tender refund disbursement stuck in pending',
+  },
+  {
+    key: 'paid_not_routed_minutes',
+    value: 5,
+    description: 'Finish routing an order whose payment is captured but which never advanced',
+  },
+  {
+    key: 'orphan_capture_retry_minutes',
+    value: 60,
+    description: 'Re-attempt the gateway refund for a captured payment with no order to accept it',
+  },
+  {
+    key: 'pickup_slot_grace_after_minutes',
+    value: 240,
+    description:
+      'How late a customer may still collect a pickup order after their slot ends (early collection is always allowed — a packed order is ready)',
+  },
+  {
+    key: 'pickup_code_max_attempts',
+    value: 5,
+    description: 'Wrong pickup-code attempts before the code locks out',
+  },
+  {
+    key: 'pickup_code_lockout_minutes',
+    value: 15,
+    description: 'How long a pickup code stays locked after too many wrong attempts',
+  },
 ];
 
 /**

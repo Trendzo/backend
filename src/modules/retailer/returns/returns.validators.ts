@@ -58,3 +58,11 @@ export const RecordDispositionBody = z.object({
   disposition: z.enum(['restocked', 'forfeited_to_store', 'written_off']),
   note: z.string().trim().max(500).optional(),
 });
+
+/** Counter cash refund: the retailer confirms the exact amount handed across. */
+export const PayCashBody = z.object({
+  amountPaise: z.number().int().positive(),
+  note: z.string().trim().max(300).optional(),
+});
+
+export const RefundDisbParam = z.object({ id: z.string(), dId: z.string() });

@@ -16,6 +16,12 @@ import { db } from '@/db/client.js';
 import { orders } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
+import { leavesOf } from '@/shared/refunds/rollup.js';
+import {
+  RETURN_WINDOW_DAYS,
+  isReturnableOutcome,
+  type OrderItemOutcome,
+} from '@/shared/returns/returnable.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import { placeOrder } from '@/shared/orders/place-order.js';
@@ -388,12 +394,6 @@ export async function retryGroupPayment(input: { auth: Auth; groupId: string }) 
 
 /* ── Return eligibility ───────────────────────────────────────────────────── */
 
-/** Mirrors shared/returns/open-return.ts RETURN_WINDOW_DAYS. */
-const RETURN_WINDOW_DAYS = 7;
-
-/** Item outcomes that leave the goods with the customer, so a return is possible. */
-const RETURNABLE_OUTCOMES = new Set(['delivered_kept', 'at_door_kept', 'pending_delivery']);
-
 /**
  * Whether this order can still be returned, and until when.
  *
@@ -421,7 +421,7 @@ function returnPolicyFor(o: {
   // instead of hiding them or failing at submit.
   const items = o.items.map((it) => {
     const finalSale = it.listingPolicySnap === 'final_sale';
-    const outcomeOk = RETURNABLE_OUTCOMES.has(it.outcome);
+    const outcomeOk = isReturnableOutcome(it.outcome as OrderItemOutcome);
     return {
       orderItemId: it.id,
       eligible: !expired && !finalSale && outcomeOk,
@@ -476,10 +476,50 @@ function shapeOrderDetail(
   o: OrderRow & {
     items: Parameters<typeof shapeOrderItem>[0][];
     store?: { lat: number; lng: number; contactPhone: string | null } | null;
-    refunds?: { id: string; totalRefundPaise: number; status: string; reason: string | null; createdAt: Date; completedAt: Date | null }[];
+    refunds?: {
+      id: string;
+      totalRefundPaise: number;
+      status: string;
+      reason: string | null;
+      createdAt: Date;
+      completedAt: Date | null;
+      disbursements?: {
+        id: string;
+        destination: string;
+        amountPaise: number;
+        status: 'pending' | 'succeeded' | 'failed';
+        settledAt: Date | null;
+        previousDisbursementId: string | null;
+        cashHandover?: { channel: string; handedAt: Date } | null;
+      }[];
+    }[];
+    payments?: { status: string; amountPaise: number }[];
   },
 ) {
+  /**
+   * How much money the shopper has actually put toward this order.
+   *
+   * The authoritative "was the shopper charged" signal, used to word
+   * cancellation/return copy honestly: amountPaidPaise === 0 means nothing was
+   * ever taken, so promising a refund is a lie.
+   *
+   * TWO sources, because a shopper can pay two ways at once:
+   *   • SUCCEEDED gateway/COD payments (pending/failed/superseded are not money
+   *     in hand), PLUS
+   *   • the wallet balance applied at placement (`walletAppliedPaise`) — real
+   *     money that came out of the shopper's wallet and gets refunded on a
+   *     cancel/return. Omitting it made a FULLY WALLET-FUNDED order (₹0 gateway
+   *     payment) read as "nothing was charged" while a wallet refund existed.
+   * The two are disjoint (wallet portion + gateway portion = total), so summing
+   * them never double-counts. Refund amounts/status are shown separately via the
+   * `refunds` array; this is only the "did any money move in" gate.
+   */
+  const amountPaidPaise =
+    (o.payments ?? [])
+      .filter((p) => p.status === 'succeeded')
+      .reduce((sum, p) => sum + p.amountPaise, 0) + (o.walletAppliedPaise ?? 0);
   return {
+    amountPaidPaise,
     id: o.id,
     groupId: o.groupId,
     storeId: o.storeId,
@@ -548,14 +588,38 @@ function shapeOrderDetail(
      * the customer had no way to see that it existed, its amount or its status —
      * the app could only say "you will be refunded" and hope.
      */
-    refunds: (o.refunds ?? []).map((r) => ({
-      id: r.id,
-      amountPaise: r.totalRefundPaise,
-      status: r.status,
-      reason: r.reason,
-      createdAt: r.createdAt,
-      completedAt: r.completedAt,
-    })),
+    refunds: (o.refunds ?? []).map((r) => {
+      // Leaves only — never show a leg a retry has already superseded.
+      const legs = leavesOf(r.disbursements ?? []);
+      const primary = [...legs].sort((a, b) => b.amountPaise - a.amountPaise)[0] ?? null;
+      return {
+        id: r.id,
+        amountPaise: r.totalRefundPaise,
+        status: r.status,
+        reason: r.reason,
+        createdAt: r.createdAt,
+        completedAt: r.completedAt,
+        /**
+         * WHERE the money is actually going, per leg.
+         *
+         * Without this the app hard-coded "back on your original payment method" for
+         * every refund — untrue for a wallet credit, and outright false for a COD
+         * refund that is handed over as cash. `gatewayRef` is deliberately NOT
+         * projected: it carries pay_/rfnd_/MANUAL-<bank ref> internals.
+         */
+        disbursements: legs.map((d) => ({
+          id: d.id,
+          destination: d.destination,
+          amountPaise: d.amountPaise,
+          status: d.status,
+          settledAt: d.settledAt,
+          cashChannel: d.cashHandover?.channel ?? null,
+        })),
+        /** Largest leg — drives the single-line copy. */
+        primaryDestination: primary?.destination ?? null,
+        primaryCashChannel: primary?.cashHandover?.channel ?? null,
+      };
+    }),
     // timestamps
     placedAt: o.placedAt,
     acceptedAt: o.acceptedAt,
@@ -577,7 +641,21 @@ export async function getOrder(input: { auth: Auth; id: string }) {
           id: true, totalRefundPaise: true, status: true,
           reason: true, createdAt: true, completedAt: true,
         },
+        with: {
+          disbursements: {
+            columns: {
+              id: true, destination: true, amountPaise: true,
+              status: true, settledAt: true, previousDisbursementId: true,
+            },
+            with: { cashHandover: { columns: { channel: true, handedAt: true } } },
+          },
+        },
       },
+      // Payment rows, so the shaper can tell the app whether the shopper was
+      // ACTUALLY charged. Without this the app inferred "money moved" from status
+      // alone and told a cancelled/returned shopper "you've been refunded" even
+      // when the payment failed and nothing was ever captured.
+      payments: { columns: { status: true, amountPaise: true } },
     },
   });
   if (!order) throw new AppError(404, ErrorCode.NotFound, 'Order not found');

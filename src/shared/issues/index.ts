@@ -496,12 +496,29 @@ async function settleDisputedReturn(
   const orderId = ret.orderItem.orderId;
 
   if (refundConsumer) {
-    await createRefundForReturns(db, {
-      orderId,
-      returnIds: [returnId],
-      reason: `Dispute resolved — refund for return ${returnId}`,
-      actor: { type: 'admin', id: adminId },
-    }).catch(() => undefined);
+    // A failure here is money the platform owes and has not paid. Swallowing it (which
+    // is what this used to do) turned that into a silent loss — the held item still got
+    // marked resolved below, so nothing anywhere recorded that the refund never
+    // happened. Surface it as a ticket instead.
+    try {
+      await createRefundForReturns(db, {
+        orderId,
+        returnIds: [returnId],
+        reason: `Dispute resolved — refund for return ${returnId}`,
+        actor: { type: 'admin', id: adminId },
+      });
+    } catch (err) {
+      console.error(
+        `[issues] dispute refund failed for return ${returnId}: ${(err as Error).message}`,
+      );
+      await notifyAllAdmins({
+        kind: 'refund',
+        title: 'Dispute refund failed — manual refund required',
+        body: `Return ${returnId} was decided in the customer's favour but the refund could not be created: ${(err as Error).message}`,
+        deepLink: '/admin/refunds',
+        payload: { returnId, orderId },
+      }).catch(() => undefined);
+    }
   }
   // Resolve the shelved goods. Guarded flip (only while 'holding') so a prior
   // disposition never double-applies the inventory effect.

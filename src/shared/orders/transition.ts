@@ -3,11 +3,12 @@
  * writes the audit row, updates the timestamp column matched to the destination status,
  * and recomputes the parent group's rollup. Inside one transaction.
  */
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
-import { orders, orderTransitions } from '@/db/schema/index.js';
+import { orderItems, orders, orderTransitions } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
+import { assertCapturedBeforeConfirm } from '@/shared/payments/payment-truth.js';
 import { recomputeGroupStatus } from './rollup.js';
 import { assertTransition, type ActorType, type OrderStatus } from './state-machine.js';
 
@@ -54,6 +55,18 @@ export async function transitionOrder(
     );
   }
 
+  /**
+   * Money invariant, enforced at the single funnel every status mutation passes
+   * through: an order is only ever confirmed once a captured payment covers it.
+   *
+   * This lives here rather than in the two callers because the whole class of bug it
+   * prevents — advancing on a gateway EVENT instead of a settled ROW — was possible
+   * precisely because no central place could ask the question.
+   */
+  if (input.toStatus === 'confirmed') {
+    await assertCapturedBeforeConfirm(database, input.orderId);
+  }
+
   // Write the new status + the matching timestamp column.
   const now = new Date();
   const update: Partial<typeof orders.$inferInsert> = { status: input.toStatus };
@@ -61,8 +74,24 @@ export async function transitionOrder(
   if (input.toStatus === 'packed') update.packedAt = now;
   if (input.toStatus === 'delivered') update.deliveredAt = now;
   if (input.toStatus === 'closed') update.closedAt = now;
+  if (input.toStatus === 'returning_to_store') update.returningToStoreAt = now;
 
   await database.update(orders).set(update).where(eq(orders.id, input.orderId));
+
+  /**
+   * Delivery is where an item's outcome becomes true. Nothing else stamped it, so a
+   * delivered standard order's items sat at 'pending_delivery' forever — which is the
+   * only reason that value had to be treated as returnable. Door visits set their own
+   * outcomes before transitioning, and the predicate leaves those alone.
+   */
+  if (input.toStatus === 'delivered') {
+    await database
+      .update(orderItems)
+      .set({ outcome: 'delivered_kept' })
+      .where(
+        and(eq(orderItems.orderId, input.orderId), eq(orderItems.outcome, 'pending_delivery')),
+      );
+  }
 
   const transitionId = newId(IdPrefix.OrderTransition);
   await database.insert(orderTransitions).values({

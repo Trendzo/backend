@@ -112,7 +112,7 @@ expect 200 'handover'
 hit POST "/api/v1/retailer/orders/$OID/depart" '' "$RTOKEN"; expect 200 'depart'
 [[ "$(jget '.data.toStatus')" == 'out_for_delivery' ]] && pass 'now out_for_delivery' || fail 'not OFD'
 
-hit POST "/api/v1/retailer/orders/$OID/mark-delivered" '{"note":"Smoke handover"}' "$RTOKEN"
+hit POST "/api/v1/retailer/orders/$OID/mark-delivered" '{"otp":"1111","note":"Smoke handover"}' "$RTOKEN"
 expect 200 'mark delivered'
 [[ "$(jget '.data.toStatus')" == 'delivered' ]] && pass 'now delivered' || fail 'not delivered'
 
@@ -318,7 +318,7 @@ hit POST "/api/v1/retailer/orders/$COUNTER_OID/accept" '' "$RTOKEN" >/dev/null
 hit POST "/api/v1/retailer/orders/$COUNTER_OID/pack" '' "$RTOKEN" >/dev/null
 hit POST "/api/v1/retailer/orders/$COUNTER_OID/handover" '{}' "$RTOKEN" >/dev/null
 hit POST "/api/v1/retailer/orders/$COUNTER_OID/depart" '' "$RTOKEN" >/dev/null
-hit POST "/api/v1/retailer/orders/$COUNTER_OID/mark-delivered" '{}' "$RTOKEN" >/dev/null
+hit POST "/api/v1/retailer/orders/$COUNTER_OID/mark-delivered" '{"otp":"1111"}' "$RTOKEN" >/dev/null
 
 hit GET "/api/v1/admin/orders/$COUNTER_OID" '' "$ADMIN"
 COUNTER_ITEM=$(jget '.data.items[0].id')

@@ -7,7 +7,7 @@
  * The handoff code is NEVER returned to the admin — it must be read off the driver's
  * screen at the physical handover (that is the whole point of the proof).
  */
-import { and, asc, count, eq, inArray } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import { deliveryAgents, orders, reversePickups } from '@/db/schema/index.js';
@@ -69,7 +69,10 @@ export async function listDrivers() {
  */
 export async function listPackedOrders() {
   const rows = await db.query.orders.findMany({
-    where: eq(orders.status, 'packed'),
+    // Pickup orders sit in 'packed' waiting for the customer, not for a driver. This is
+    // a driver-assignment surface, so showing them here only invites the mistake the
+    // orders_pickup_no_agent_guard now refuses at the database.
+    where: and(eq(orders.status, 'packed'), ne(orders.deliveryMethod, 'pickup')),
     orderBy: asc(orders.placedAt),
     limit: 200,
     columns: {
@@ -125,7 +128,13 @@ async function loadActiveDriver(driverId: string) {
 export async function assignDriver(input: { id: string; body: z.infer<typeof AssignDriverBody> }) {
   const order = await db.query.orders.findFirst({
     where: eq(orders.id, input.id),
-    columns: { id: true, status: true, assignedAgentId: true, agentHandoffCode: true },
+    columns: {
+      id: true,
+      status: true,
+      deliveryMethod: true,
+      assignedAgentId: true,
+      agentHandoffCode: true,
+    },
   });
   if (!order) throw new AppError(404, ErrorCode.OrderNotFound, 'Order not found');
   if (order.status !== 'packed') {
@@ -135,15 +144,42 @@ export async function assignDriver(input: { id: string; body: z.infer<typeof Ass
       `Order is ${order.status} — only a packed order can be dispatched`,
     );
   }
+  if (order.deliveryMethod === 'pickup') {
+    throw new AppError(
+      409,
+      ErrorCode.PickupCodeNotApplicable,
+      'Pickup orders are collected by the customer at the store — they take no driver',
+    );
+  }
   const driver = await loadActiveDriver(input.body.driverId);
   const code =
     order.assignedAgentId === driver.id && order.agentHandoffCode
       ? order.agentHandoffCode
       : generatePickupCode();
-  await db
+  // CAS on the state we read: a driver claiming through the offers feed between the
+  // read above and this write used to be silently overwritten. Pinning the OBSERVED
+  // assignee keeps admin reassignment working while making the write atomic.
+  const [assigned] = await db
     .update(orders)
     .set({ assignedAgentId: driver.id, agentHandoffCode: code, agentAssignedAt: new Date() })
-    .where(eq(orders.id, input.id));
+    .where(
+      and(
+        eq(orders.id, input.id),
+        eq(orders.status, 'packed'),
+        ne(orders.deliveryMethod, 'pickup'),
+        order.assignedAgentId
+          ? eq(orders.assignedAgentId, order.assignedAgentId)
+          : isNull(orders.assignedAgentId),
+      ),
+    )
+    .returning({ id: orders.id });
+  if (!assigned) {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      'Order changed since it was loaded — reload the dispatch board',
+    );
+  }
   notifyOffersChanged(); // order left the broadcast pool
   // Never echo the code.
   return ok({ orderId: input.id, driverId: driver.id, driverName: driver.name });
@@ -153,7 +189,7 @@ export async function assignDriver(input: { id: string; body: z.infer<typeof Ass
 export async function unassignDriver(input: { id: string }) {
   const order = await db.query.orders.findFirst({
     where: eq(orders.id, input.id),
-    columns: { id: true, status: true },
+    columns: { id: true, status: true, assignedAgentId: true },
   });
   if (!order) throw new AppError(404, ErrorCode.OrderNotFound, 'Order not found');
   if (order.status !== 'packed') {
@@ -163,10 +199,27 @@ export async function unassignDriver(input: { id: string }) {
       `Order is ${order.status} — only a packed order can be unassigned`,
     );
   }
-  await db
+  // Same CAS discipline as assign: never clear an assignment that changed underneath us.
+  const [cleared] = await db
     .update(orders)
     .set({ assignedAgentId: null, agentHandoffCode: null, agentAssignedAt: null })
-    .where(eq(orders.id, input.id));
+    .where(
+      and(
+        eq(orders.id, input.id),
+        eq(orders.status, 'packed'),
+        order.assignedAgentId
+          ? eq(orders.assignedAgentId, order.assignedAgentId)
+          : isNull(orders.assignedAgentId),
+      ),
+    )
+    .returning({ id: orders.id });
+  if (!cleared) {
+    throw new AppError(
+      409,
+      ErrorCode.InvalidState,
+      'Order changed since it was loaded — reload the dispatch board',
+    );
+  }
   notifyOffersChanged(); // order returned to the broadcast pool
   return ok({ orderId: input.id });
 }

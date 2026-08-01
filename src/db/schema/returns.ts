@@ -1,5 +1,5 @@
 import { relations, sql } from 'drizzle-orm';
-import { check, index, jsonb, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { check, index, jsonb, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import {
   actorType,
   agentDisposition,
@@ -7,6 +7,7 @@ import {
   disputeStatus,
   heldItemDisposition,
   heldItemStatus,
+  orderItemOutcome,
   returnKind,
   returnReasonCategory,
   storeReturnDecision,
@@ -48,7 +49,25 @@ export const returns = pgTable(
     // Store verification (door-returns and rejected post-delivery returns)
     storeDecision: storeReturnDecision('store_decision').notNull().default('pending'),
     storeDecidedAt: timestamp('store_decided_at', { withTimezone: true, mode: 'date' }),
+    /**
+     * CUSTODY — the goods are physically at the store, right now.
+     *
+     * Split out from `verificationWindowExpiresAt`, which used to mean both "the goods
+     * arrived" and "the decision clock is running". As one nullable column, a return
+     * with no clock looked identical to a return with no goods, so every sweep keyed
+     * off it was blind to both: an uncollected pickup stranded the refund forever, and
+     * a store could accept + restock + refund goods still in the customer's house.
+     */
+    goodsReceivedAt: timestamp('goods_received_at', { withTimezone: true, mode: 'date' }),
+    /** DEADLINE — the store's decision clock. Only ever set together with custody. */
     verificationWindowExpiresAt: timestamp('verification_window_expires_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
+    /** The item's outcome before the return opened, so a withdrawal restores the truth. */
+    priorItemOutcome: orderItemOutcome('prior_item_outcome'),
+    /** One-shot dedupe for the accepted-but-unrefunded watchdog alert. */
+    stuckAlertNotifiedAt: timestamp('stuck_alert_notified_at', {
       withTimezone: true,
       mode: 'date',
     }),
@@ -56,6 +75,29 @@ export const returns = pgTable(
   (t) => ({
     orderItemIdx: index('returns_order_item_idx').on(t.orderItemId),
     storeDecisionIdx: index('returns_store_decision_idx').on(t.storeDecision),
+    /**
+     * At most one OPEN return per order item. This is the real serializer for two
+     * concurrent openReturn calls: the second INSERT blocks on the uncommitted index
+     * tuple and then raises 23505, so no snapshot race can produce two returns — and
+     * therefore two refunds — for one item.
+     */
+    openPerOrderItemUniq: uniqueIndex('returns_open_per_order_item_uniq')
+      .on(t.orderItemId)
+      .where(sql`${t.storeDecision} = 'pending'`),
+    verifyWindowSweepIdx: index('returns_verify_window_sweep_idx')
+      .on(t.verificationWindowExpiresAt)
+      .where(sql`${t.storeDecision} = 'pending' AND ${t.goodsReceivedAt} IS NOT NULL`),
+    strandedSweepIdx: index('returns_stranded_sweep_idx')
+      .on(t.openedAt)
+      .where(sql`${t.storeDecision} = 'pending' AND ${t.goodsReceivedAt} IS NULL`),
+    acceptedSweepIdx: index('returns_accepted_sweep_idx')
+      .on(t.storeDecidedAt)
+      .where(sql`${t.storeDecision} = 'accepted' AND ${t.stuckAlertNotifiedAt} IS NULL`),
+    // A decision clock may only run once custody is a fact.
+    windowRequiresCustodyGuard: check(
+      'returns_window_requires_custody_guard',
+      sql`${t.verificationWindowExpiresAt} IS NULL OR ${t.goodsReceivedAt} IS NOT NULL`,
+    ),
     // Door returns must record the agent's call; standard returns leave the field NULL.
     doorAgentDispositionGuard: check(
       'returns_door_agent_disposition_guard',

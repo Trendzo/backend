@@ -22,7 +22,9 @@ import {
   ListHeldQuery,
   ListReturnsQuery,
   OpenCounterBody,
+  PayCashBody,
   RecordDispositionBody,
+  RefundDisbParam,
   StandardReturnBody,
   VerifyBody,
 } from './returns.validators.js';
@@ -152,6 +154,20 @@ const retailerReturnsRoutes: FastifyPluginAsyncZod = async (app) => {
         id: req.params.id,
         body: req.body,
       }),
+  );
+
+  /**
+   * Cash handed to the customer at the counter for a COD refund. The exactly-once guard
+   * is the CAS inside settleCashAtCounter — a replay 409s rather than paying twice.
+   */
+  app.post(
+    '/refunds/:id/disbursements/:dId/pay-cash',
+    {
+      preHandler: requirePermission('returns.accept'),
+      schema: { params: RefundDisbParam, body: PayCashBody },
+    },
+    async (req) =>
+      ctrl.payCashRefund({ auth: getAuth(req), dId: req.params.dId, body: req.body }),
   );
 };
 

@@ -200,7 +200,7 @@ say 'SECTION 20 — Returns: lists, detail, duplicate guards, invalid-state guar
 # Setup: a delivered order for return tests
 STD_OID=$(place_standard "$VID1" 1)
 walk_to_ofd "$STD_OID"
-hit POST "/api/v1/retailer/orders/$STD_OID/mark-delivered" '{}' "$RTOKEN" >/dev/null
+hit POST "/api/v1/retailer/orders/$STD_OID/mark-delivered" '{"otp":"1111"}' "$RTOKEN" >/dev/null
 
 hit GET "/api/v1/admin/orders/$STD_OID" '' "$ADMIN"
 STD_ITEM_ID=$(jget '.data.items[0].id')
@@ -325,7 +325,7 @@ make_held_item() {
   local oid
   oid=$(place_standard "$vid" 1)
   walk_to_ofd "$oid"
-  hit POST "/api/v1/retailer/orders/$oid/mark-delivered" '{}' "$RTOKEN" >/dev/null
+  hit POST "/api/v1/retailer/orders/$oid/mark-delivered" '{"otp":"1111"}' "$RTOKEN" >/dev/null
   hit GET "/api/v1/admin/orders/$oid" '' "$ADMIN"
   local iid; iid=$(jget '.data.items[0].id')
   hit POST "/api/v1/admin/orders/$oid/returns/open" \

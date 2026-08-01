@@ -4,12 +4,16 @@
  * A deposit REQUEST moves nothing — the ledger entry lands only when the ops
  * desk confirms receipt of the physical cash (admin drivers module).
  */
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
-import { deliveryAgents, driverCashDeposits, driverCashLedger } from '@/db/schema/index.js';
+import { deliveryAgents, driverCashDeposits } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
+import {
+  computeDriverCashTotals,
+  type DriverCashTotals,
+} from '@/shared/driver-cash/balance.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type { RequestDepositBody } from './cash.validators.js';
@@ -28,31 +32,20 @@ async function getDriverId(auth: Auth): Promise<string> {
   return driver.id;
 }
 
-/** Ledger truth for one driver: collected / deposited totals + outstanding. */
-export async function computeCashBalance(driverId: string): Promise<{
-  collectedTotalPaise: number;
-  depositedTotalPaise: number;
-  outstandingPaise: number;
-  pendingDepositPaise: number;
-  pendingDepositId: string | null;
-}> {
-  const [totals] = await db
-    .select({
-      collected: sql<number>`coalesce(sum(${driverCashLedger.amountPaise}) filter (where ${driverCashLedger.entryKind} = 'collected'), 0)::int`,
-      deposited: sql<number>`coalesce(sum(${driverCashLedger.amountPaise}) filter (where ${driverCashLedger.entryKind} = 'deposited'), 0)::int`,
-    })
-    .from(driverCashLedger)
-    .where(eq(driverCashLedger.driverId, driverId));
-  const collected = totals?.collected ?? 0;
-  const deposited = totals?.deposited ?? 0;
+/** Ledger truth for one driver: collected / deposited / refunded totals + outstanding. */
+export async function computeCashBalance(driverId: string): Promise<
+  DriverCashTotals & {
+    pendingDepositPaise: number;
+    pendingDepositId: string | null;
+  }
+> {
+  const totals = await computeDriverCashTotals(db, driverId);
   const pending = await db.query.driverCashDeposits.findFirst({
     where: and(eq(driverCashDeposits.driverId, driverId), eq(driverCashDeposits.status, 'pending')),
     columns: { id: true, amountPaise: true },
   });
   return {
-    collectedTotalPaise: collected,
-    depositedTotalPaise: deposited,
-    outstandingPaise: collected - deposited,
+    ...totals,
     pendingDepositPaise: pending?.amountPaise ?? 0,
     pendingDepositId: pending?.id ?? null,
   };

@@ -11,15 +11,16 @@
  */
 import { and, eq, inArray } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
-import {
-  orderItems,
-  orders,
-  platformConfig,
-  returns,
-} from '@/db/schema/index.js';
+import { orderItems, orders, returns } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { ActorType } from '@/shared/orders/state-machine.js';
+import { verificationWindowHours } from '@/shared/returns/mark-goods-received.js';
+import {
+  RETURN_WINDOW_DAYS,
+  isReturnableOutcome,
+  returnDeadline,
+} from '@/shared/returns/returnable.js';
 
 export type OpenReturnItemInput = {
   orderItemId: string;
@@ -30,8 +31,6 @@ export type OpenReturnItemInput = {
   /** Consumer-submitted evidence photos (stored separately from store-side photos). */
   consumerPhotos?: string[] | undefined;
 };
-
-const RETURN_WINDOW_DAYS = 7;
 
 export async function openReturn(
   database: typeof Db,
@@ -51,95 +50,124 @@ export async function openReturn(
     where: eq(orders.id, input.orderId),
   });
   if (!order) throw new AppError(404, ErrorCode.OrderNotFound, 'Order not found');
-  if (order.status !== 'delivered') {
-    throw new AppError(
-      409,
-      ErrorCode.ReturnInvalidState,
-      `Order must be 'delivered' to open a return (current: '${order.status}')`,
-    );
-  }
-  if (!order.deliveredAt) {
-    throw new AppError(
-      409,
-      ErrorCode.ReturnInvalidState,
-      'Order has no deliveredAt timestamp',
-    );
-  }
-  // Return window check.
-  const windowExpiry = new Date(
-    order.deliveredAt.getTime() + RETURN_WINDOW_DAYS * 24 * 60 * 60 * 1000,
-  );
-  if (Date.now() > windowExpiry.getTime()) {
-    throw new AppError(
-      409,
-      ErrorCode.ReturnWindowExpired,
-      `Return window of ${RETURN_WINDOW_DAYS} days has passed`,
-    );
-  }
 
-  // Validate every item belongs to this order + isn't already returned.
-  const itemRows = await database.query.orderItems.findMany({
-    where: and(
-      eq(orderItems.orderId, input.orderId),
-      inArray(
-        orderItems.id,
-        input.items.map((i) => i.orderItemId),
-      ),
-    ),
-  });
-  if (itemRows.length !== input.items.length) {
-    throw new AppError(
-      422,
-      ErrorCode.ValidationError,
-      'One or more items do not belong to this order',
-    );
-  }
-  for (const it of itemRows) {
-    if (it.outcome !== 'delivered_kept' && it.outcome !== 'pending_delivery' && it.outcome !== 'at_door_kept') {
-      throw new AppError(
-        409,
-        ErrorCode.ReturnInvalidState,
-        `Item ${it.id} is in outcome '${it.outcome}', cannot return`,
-      );
-    }
-    // US-5.5.1: returns are gated by the policy snapshot frozen at order placement,
-    // so future policy changes don't retroactively block (or unblock) past orders.
-    if (it.listingPolicySnap === 'final_sale') {
-      throw new AppError(
-        409,
-        ErrorCode.ReturnInvalidState,
-        `Item ${it.id} was sold as final sale — no returns or replacements`,
-      );
-    }
-  }
-
-  const cfg = await database.query.platformConfig.findFirst({
-    where: eq(platformConfig.key, 'verification_window_hours'),
-  });
-  const verHours = cfg && typeof cfg.value === 'number' ? cfg.value : 24;
-  const verExpires = new Date(Date.now() + verHours * 60 * 60 * 1000);
-
+  const verHours = await verificationWindowHours(database);
   const returnIds: string[] = [];
 
+  /**
+   * Everything is validated INSIDE the transaction, behind a row lock on the order
+   * items.
+   *
+   * The old shape read `order_items.outcome` outside the transaction and only then
+   * inserted. Under READ COMMITTED two concurrent requests both saw the pre-flip
+   * outcome, both passed, and both inserted — two returns for one item, and later two
+   * refunds. Locking the items (ids sorted, so two multi-item requests cannot deadlock)
+   * makes the loser block, re-read the flipped outcome, and fail cleanly; the partial
+   * unique index `returns_open_per_order_item_uniq` is the hard backstop underneath.
+   */
   await database.transaction(async (tx) => {
+    const [locked] = await tx
+      .select({ status: orders.status, deliveredAt: orders.deliveredAt })
+      .from(orders)
+      .where(eq(orders.id, input.orderId))
+      .for('update');
+    if (!locked) throw new AppError(404, ErrorCode.OrderNotFound, 'Order not found');
+    if (locked.status !== 'delivered') {
+      throw new AppError(
+        409,
+        ErrorCode.ReturnInvalidState,
+        `Order must be 'delivered' to open a return (current: '${locked.status}')`,
+      );
+    }
+    if (!locked.deliveredAt) {
+      throw new AppError(409, ErrorCode.ReturnInvalidState, 'Order has no deliveredAt timestamp');
+    }
+    if (Date.now() > returnDeadline(locked.deliveredAt).getTime()) {
+      throw new AppError(
+        409,
+        ErrorCode.ReturnWindowExpired,
+        `Return window of ${RETURN_WINDOW_DAYS} days has passed`,
+      );
+    }
+
+    const wantedIds = [...new Set(input.items.map((i) => i.orderItemId))].sort();
+    const itemRows = await tx
+      .select()
+      .from(orderItems)
+      .where(and(eq(orderItems.orderId, input.orderId), inArray(orderItems.id, wantedIds)))
+      .orderBy(orderItems.id)
+      .for('update');
+    if (itemRows.length !== wantedIds.length || wantedIds.length !== input.items.length) {
+      throw new AppError(
+        422,
+        ErrorCode.ValidationError,
+        'One or more items do not belong to this order',
+      );
+    }
+
+    const byId = new Map(itemRows.map((it) => [it.id, it]));
+    for (const it of itemRows) {
+      if (it.outcome === 'at_store_pending_verification') {
+        throw new AppError(
+          409,
+          ErrorCode.ReturnAlreadyOpen,
+          'A return is already open for this item',
+        );
+      }
+      if (!isReturnableOutcome(it.outcome)) {
+        throw new AppError(
+          409,
+          ErrorCode.ReturnInvalidState,
+          `Item ${it.id} is in outcome '${it.outcome}', cannot return`,
+        );
+      }
+      // US-5.5.1: returns are gated by the policy snapshot frozen at order placement,
+      // so future policy changes don't retroactively block (or unblock) past orders.
+      if (it.listingPolicySnap === 'final_sale') {
+        throw new AppError(
+          409,
+          ErrorCode.ReturnInvalidState,
+          `Item ${it.id} was sold as final sale — no returns or replacements`,
+        );
+      }
+    }
+
+    const now = new Date();
+    const verExpires = new Date(now.getTime() + verHours * 60 * 60 * 1000);
+
     for (const it of input.items) {
       const rid = newId(IdPrefix.Return);
-      await tx.insert(returns).values({
-        id: rid,
-        orderItemId: it.orderItemId,
-        kind: 'standard_return',
-        reasonText: it.reasonText ?? null,
-        reasonCategory: it.reasonCategory ?? null,
-        photos: it.photos ?? [],
-        consumerPhotos: it.consumerPhotos ?? [],
-        agentDisposition: null,
-        // Counter returns are immediately at the store; consumer-app returns wait for the
-        // bag to physically arrive before verification can begin. Both states carry
-        // storeDecision='pending' until the retailer verifies.
-        storeDecision: 'pending',
-        verificationWindowExpiresAt: input.counterReturn ? verExpires : null,
-      });
-      // Mark the order item as awaiting verification.
+      try {
+        await tx.insert(returns).values({
+          id: rid,
+          orderItemId: it.orderItemId,
+          kind: 'standard_return',
+          reasonText: it.reasonText ?? null,
+          reasonCategory: it.reasonCategory ?? null,
+          photos: it.photos ?? [],
+          consumerPhotos: it.consumerPhotos ?? [],
+          agentDisposition: null,
+          // Counter returns are immediately at the store — custody and the decision clock
+          // both start now. Consumer-app returns carry neither until the bag physically
+          // arrives (driver drop-off, or the retailer pressing "received").
+          storeDecision: 'pending',
+          goodsReceivedAt: input.counterReturn ? now : null,
+          verificationWindowExpiresAt: input.counterReturn ? verExpires : null,
+          // Remember what the item was, so withdrawing an uncollected return restores
+          // the truth (delivered_kept vs at_door_kept) instead of guessing.
+          priorItemOutcome: byId.get(it.orderItemId)?.outcome ?? null,
+        });
+      } catch (err) {
+        // 23505 on returns_open_per_order_item_uniq — a concurrent request won the race.
+        if ((err as { code?: string }).code === '23505') {
+          throw new AppError(
+            409,
+            ErrorCode.ReturnAlreadyOpen,
+            'A return is already open for this item',
+          );
+        }
+        throw err;
+      }
       await tx
         .update(orderItems)
         .set({ outcome: 'at_store_pending_verification' })
