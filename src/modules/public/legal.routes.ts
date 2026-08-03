@@ -68,14 +68,17 @@ const publicLegalRoutes: FastifyPluginAsync = async (app) => {
 
   // Both legal pages render the CURRENT admin-published document (retailer_terms
   // table via currentLegalDoc) — publishing from /admin/terms updates these too.
+  // NOTE: these handlers are async, so they must RETURN the reply. Resolving an
+  // async handler with undefined makes Fastify send an empty payload, which is
+  // how both pages ended up serving `Content-Length: 0` in production.
   app.get('/privacy', async (_req, reply) => {
-    void reply
+    return reply
       .type('text/html; charset=utf-8')
       .send(layout('Privacy Policy', await legalDocContent('privacy')));
   });
 
   app.get('/terms', async (_req, reply) => {
-    void reply
+    return reply
       .type('text/html; charset=utf-8')
       .send(layout('Terms of Service', await legalDocContent('terms')));
   });
