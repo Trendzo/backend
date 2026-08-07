@@ -41,6 +41,51 @@ function isRateLimitError(err: unknown): boolean {
 }
 
 /**
+ * Server-suggested retry delay from a 429 body (RetryInfo.retryDelay, e.g.
+ * "34s"), in ms. Null when the SDK wrapper stripped the body.
+ */
+function parseRetryDelayMs(err: unknown): number | null {
+  const msg = err instanceof Error ? err.message : String(err);
+  const m = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(msg);
+  const secs = m?.[1];
+  return secs ? Math.round(parseFloat(secs) * 1000) : null;
+}
+
+/**
+ * True when the 429 names a PER-DAY quota (QuotaFailure violation id contains
+ * "PerDay"). Retrying inside one request is pointless then — the bucket resets
+ * at midnight PT, not within our timeout.
+ */
+function isDailyQuotaError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return msg.includes('perday') || msg.includes('per day');
+}
+
+/**
+ * The wrapper text ("Retryable HTTP Error: Too Many Requests") hides which
+ * quota tripped and on which project. Dump every field the SDK error carries so
+ * a production 429 names its cause in one log line.
+ */
+function logGeminiErrorDetail(err: unknown, attempt: number): void {
+  const anyErr = err as {
+    status?: unknown;
+    code?: unknown;
+    message?: string;
+    cause?: unknown;
+  };
+  // eslint-disable-next-line no-console
+  console.error('[gemini] error detail', {
+    attempt,
+    status: anyErr?.status ?? anyErr?.code,
+    message: anyErr?.message,
+    cause:
+      anyErr?.cause instanceof Error
+        ? { message: anyErr.cause.message, cause: String((anyErr.cause as Error & { cause?: unknown }).cause ?? '') }
+        : anyErr?.cause,
+  });
+}
+
+/**
  * All catalog mockups are generated 3:4 portrait (Instagram feed format).
  * Must be set via the API's imageConfig — prompt-text hints alone are ignored
  * when reference images are attached (the model then mirrors the reference
@@ -146,18 +191,31 @@ export async function generateCatalogImage(input: GenerateInput): Promise<Genera
       });
       break;
     } catch (err) {
+      logGeminiErrorDetail(err, attempt);
       // Retry only on rate limits (safe: nothing generated/billed). Everything
-      // else fails fast.
-      if (isRateLimitError(err) && attempt < RATE_LIMIT_MAX_ATTEMPTS) {
-        const delay = Math.min(
-          RATE_LIMIT_BASE_DELAY_MS * 2 ** (attempt - 1) + Math.floor(Math.random() * 400),
-          RATE_LIMIT_MAX_DELAY_MS,
-        );
-        console.warn(
-          `[gemini] 429 rate limit (attempt ${attempt}/${RATE_LIMIT_MAX_ATTEMPTS}) — retrying in ${delay}ms`,
-        );
-        await sleep(delay);
-        continue;
+      // else fails fast — including per-day quota exhaustion, where any retry
+      // inside this request is guaranteed to fail again.
+      if (isRateLimitError(err)) {
+        if (isDailyQuotaError(err)) {
+          throw new AppError(
+            502,
+            ErrorCode.InternalError,
+            'Gemini daily image quota exhausted for this API key — switch AI_IMAGE_PROVIDER (openrouter/vertex) or use a key from a paid-tier project.',
+          );
+        }
+        if (attempt < RATE_LIMIT_MAX_ATTEMPTS) {
+          // Prefer the server's suggested delay when the body survived the SDK
+          // wrapper; cap it so the whole submission stays inside the request
+          // timeout.
+          const backoff =
+            RATE_LIMIT_BASE_DELAY_MS * 2 ** (attempt - 1) + Math.floor(Math.random() * 400);
+          const delay = Math.min(parseRetryDelayMs(err) ?? backoff, RATE_LIMIT_MAX_DELAY_MS);
+          console.warn(
+            `[gemini] 429 rate limit (attempt ${attempt}/${RATE_LIMIT_MAX_ATTEMPTS}) — retrying in ${delay}ms`,
+          );
+          await sleep(delay);
+          continue;
+        }
       }
       const message = err instanceof Error ? err.message : 'Unknown Gemini error';
       throw new AppError(502, ErrorCode.InternalError, `Gemini call failed: ${message}`);
