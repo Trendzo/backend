@@ -55,6 +55,9 @@ import { fetchReferenceImage } from '@/shared/gemini.js';
 
 const VTO_MODEL = 'virtual-try-on-001';
 
+/** Cloudinary rejects images above 10 MB; stay just inside it. */
+const MAX_RESULT_BYTES = 10 * 1024 * 1024;
+
 export async function virtualTryOn(
   personImageUrl: string,
   garmentImageUrl: string,
@@ -73,7 +76,14 @@ export async function virtualTryOn(
           { productImage: { imageBytes: garment.data, mimeType: garment.mimeType } },
         ],
       },
-      config: { numberOfImages: 1, outputMimeType: 'image/png' },
+      // JPEG, not PNG. A try-on result is a photograph, so PNG's lossless encoding
+      // buys nothing visible and costs ~10x the bytes: real results came back at
+      // ~14 MB, over Cloudinary's 10 MB image limit, so EVERY try-on died at the
+      // upload step with "File size too large" — after the model had already run
+      // and been paid for. It presented as intermittent because the size varies
+      // with how detailed the photo is. JPEG lands around 1-2 MB and is also far
+      // quicker for a shopper to pull down over mobile data.
+      config: { numberOfImages: 1, outputMimeType: 'image/jpeg' },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown Vertex VTO error';
@@ -84,5 +94,21 @@ export async function virtualTryOn(
   if (!img?.imageBytes) {
     throw new AppError(502, ErrorCode.InternalError, 'Virtual try-on returned no image.');
   }
-  return { base64: img.imageBytes, mimeType: img.mimeType ?? 'image/png' };
+
+  // Guard the storage limit HERE rather than letting the upload reject it later.
+  // Cloudinary caps images at 10 MB; a result over that used to surface as an
+  // opaque "upload failed" long after the model had run, which read as "try-on is
+  // broken" instead of "this one result was too big". Named explicitly so the
+  // next size regression is obvious in the logs.
+  const bytes = Math.floor((img.imageBytes.length * 3) / 4);
+  if (bytes > MAX_RESULT_BYTES) {
+    throw new AppError(
+      502,
+      ErrorCode.InternalError,
+      `Virtual try-on produced a ${(bytes / 1024 / 1024).toFixed(1)} MB image, over the ` +
+        `${MAX_RESULT_BYTES / 1024 / 1024} MB storage limit.`,
+    );
+  }
+
+  return { base64: img.imageBytes, mimeType: img.mimeType ?? 'image/jpeg' };
 }

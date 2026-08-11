@@ -58,10 +58,12 @@ export async function tryOn(input: { auth: Auth; body: z.infer<typeof ConsumerTr
   const buffer = Buffer.from(out.base64, 'base64');
   // Result must be publicly reachable — both the app and (for any future
   // layering) Vertex fetch it server-side. uploadObject yields a public URL.
+  // Content type comes from what the model actually returned; hardcoding
+  // 'image/png' here mislabelled the JPEG the model now produces.
   const uploaded = await uploadObject(buffer, {
     folder: TRYON_FOLDER,
     resourceType: 'image',
-    contentType: 'image/png',
+    contentType: out.mimeType,
   });
   return ok({ result: uploaded.url, steps: [uploaded.url] });
 }
