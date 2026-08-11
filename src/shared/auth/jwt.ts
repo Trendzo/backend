@@ -2,11 +2,16 @@ import jwt from 'jsonwebtoken';
 import { env } from '@/config/env.js';
 
 /**
- * Three completely separate identity domains. The token's `kind` field is the discriminator;
+ * Completely separate identity domains. The token's `kind` field is the discriminator;
  * middleware that protects a route asserts the expected kind so an admin token can't be used
  * on a retailer route (and vice versa) even though the underlying signing secret is shared.
+ *
+ * `crm` is the field-sales identity behind the retailer CRM — a salesperson authenticated by
+ * phone OTP whose account lives in the CRM's own MongoDB, not in Postgres. Its account-status
+ * check therefore lives in the CRM module (`requireSalesAuth`) rather than in the generic
+ * `requireAuth` below, which only knows about Postgres-backed principals.
  */
-export type TokenKind = 'admin' | 'retailer' | 'consumer' | 'driver';
+export type TokenKind = 'admin' | 'retailer' | 'consumer' | 'driver' | 'crm';
 
 export type AccessTokenPayload = {
   sub: string;
@@ -19,6 +24,11 @@ export type AccessTokenPayload = {
   // Set on retailer-kind impersonation tokens — identifies the originating admin
   // so per-action audit logs can attribute the actor correctly.
   impersonator?: { adminId: string; sessionId: string } | undefined;
+  // Token version, currently only minted for `kind: 'crm'`. There is no server-side session
+  // table for these, so revocation works by bumping the counter on the user record: any token
+  // carrying an older `ver` stops validating. That is what makes "reset access" and
+  // "deactivate salesperson" take effect immediately rather than at token expiry.
+  ver?: number | undefined;
 };
 
 type DecodedAccessTokenPayload = AccessTokenPayload & {

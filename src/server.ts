@@ -5,6 +5,7 @@ import { processAcceptanceWindowSweep } from './shared/orders/routing.js';
 import { processDoorWindowSweep } from './shared/orders/door-visit.js';
 import { runLifecycleSweeps } from './shared/orders/lifecycle-sweeps.js';
 import { processBulkMockupQueue } from './shared/bulk-mockups/worker.js';
+import { closeCrmDb } from './crm/db/client.js';
 
 const app = buildApp();
 
@@ -68,6 +69,8 @@ const shutdown = async (signal: string): Promise<void> => {
     if (bulkMockupHandle) clearInterval(bulkMockupHandle);
     await app.close();
     await pool.end();
+    // The CRM's Mongo pool is lazy — this is a no-op when no CRM route was ever hit.
+    await closeCrmDb();
     process.exit(0);
   } catch (err) {
     app.log.error({ err }, 'shutdown error');

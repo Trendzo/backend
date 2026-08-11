@@ -139,6 +139,38 @@ const EnvSchema = z
     // endpoint is OPEN (dev/test). When set, third-party MCP clients must send
     // `Authorization: Bearer <key>`. The check is dormant until this is set.
     MCP_API_KEY: optionalSecret(16),
+
+    // ── Field-sales CRM (retailer-crm) ──────────────────────────────────────
+    // The CRM keeps a COMPLETELY SEPARATE datastore from the platform's Postgres.
+    // Nothing is shared between them except admin identity: admins sign in through
+    // the existing Postgres `admin_accounts` and carry a normal `kind: 'admin'`
+    // token into the CRM routes. Every CRM record — leads, visits, follow-ups,
+    // sales users — lives only in this MongoDB and has no link to the onboarded
+    // retailers in Postgres.
+    // Optional at boot so the rest of the API runs without Mongo; the /crm routes
+    // 503 until it is set.
+    CRM_MONGODB_URI: z.string().optional(),
+    CRM_MONGODB_DB: z.string().default('trendzo_field_crm'),
+
+    // Reporting timezone for the CRM. A field rep's "today" is a wall-clock day, so daily
+    // targets, visit counts and date-range reports all bucket on the local calendar day —
+    // NOT on UTC, which would roll over mid-evening in India and split a working day in two.
+    // Any IANA zone; the server's own TZ is irrelevant.
+    CRM_TIMEZONE: z.string().default('Asia/Kolkata'),
+
+    // Sales-executive sessions are long-lived — phone-OTP re-login is high-friction
+    // in the field, matching the driver/consumer stance.
+    JWT_CRM_ACCESS_EXPIRES_IN: z.string().default('30d'),
+
+    // Dev/test OTP escape hatch for the sales login. When 'true', the CRM exposes
+    // request-otp/verify-otp endpoints that mint a local code instead of going
+    // through MSG91 — this is what the Playwright suite drives. MUST stay false in
+    // production; the guard in crm/auth refuses to enable it when NODE_ENV=production.
+    CRM_DEV_OTP: z.enum(['true', 'false']).default('false'),
+
+    // Seed defaults for the CRM sales users (`npm run crm:seed`).
+    CRM_SEED_ADMIN_PHONE: z.string().default('9000000001'),
+    CRM_SEED_EXEC_PHONE: z.string().default('9000000011'),
   });
 
 const parsed = EnvSchema.safeParse(process.env);

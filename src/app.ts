@@ -136,6 +136,7 @@ import adminSpinWheelRoutes from '@/modules/admin/spin-wheel/spin-wheel.routes.j
 import publicLegalRoutes from '@/modules/public/legal.routes.js';
 import publicLegalApiRoutes from '@/modules/public/legal-api.routes.js';
 import mcpRoutes from '@/modules/mcp/mcp.routes.js';
+import crmRoutes from '@/crm/routes.js';
 
 /**
  * Build a Fastify app with strict TypeScript routing via the Zod type provider.
@@ -421,6 +422,10 @@ export function buildApp() {
       await api.register(retailerBannersRoutes, { prefix: '/retailer/banners' });
       // §22 Daily digest
       await api.register(adminDigestRoutes, { prefix: '/admin/digest' });
+      // Field-sales CRM (retailer-crm). Its own MongoDB datastore and its own sales
+      // identity; the ONLY thing shared with the rest of the platform is admin auth —
+      // an admin signs in at /auth/admin/login and carries that token in here.
+      await api.register(crmRoutes, { prefix: '/crm' });
     },
     { prefix: '/api/v1' },
   );
