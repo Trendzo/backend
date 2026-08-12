@@ -13,14 +13,14 @@ export const LEGAL_DOC_LABELS: Record<LegalDocKind, string> = {
 
 /**
  * Bootstrap Retailer Terms — used until an admin publishes the first version into
- * `retailer_terms`. ⚠️ DRAFT digest pending legal review. Once admins publish versions,
- * the latest DB row is authoritative and this constant is no longer served.
+ * `retailer_terms`. Once admins publish versions, the latest DB row is authoritative
+ * and this constant is no longer served.
  */
 export const RETAILER_TERMS = {
-  version: '2026-07-05-draft',
-  label: 'Initial (draft)',
+  version: '2026-08-12',
+  label: 'Version 1',
   shortText: [
-    'Retailer Terms — summary (DRAFT, pending legal review)',
+    'Retailer Terms & Conditions — summary',
     '',
     '1. Marketplace. You list and sell your own products through the platform. You are the seller of record and are responsible for your listings, pricing, stock, GST invoicing and lawful sale of goods.',
     '2. Commission & payouts. The platform deducts the agreed platform fee per order; net proceeds are paid out on the agreed payout cadence, subject to returns, chargebacks and statutory deductions (incl. TCS/TDS where applicable).',
@@ -35,14 +35,15 @@ export const RETAILER_TERMS = {
 } as const;
 
 /**
- * Bootstrap Privacy Policy — same role as RETAILER_TERMS for the 'privacy' kind.
- * ⚠️ DRAFT digest pending legal review; the full text lives on the public /privacy page.
+ * Bootstrap Privacy Policy digest — same role as RETAILER_TERMS for the 'privacy' kind.
+ * This is only the SHORT in-app acceptance summary. The authoritative full policy is
+ * shared/privacy-policy.ts, served at the public /privacy URL given to the app stores.
  */
 export const RETAILER_PRIVACY = {
-  version: '2026-07-15-privacy-draft',
-  label: 'Initial (draft)',
+  version: '2026-08-12',
+  label: 'Version 1',
   shortText: [
-    'Privacy Policy — summary (DRAFT, pending legal review)',
+    'Privacy Policy — summary',
     '',
     '1. What we collect. Account and contact details; business onboarding and compliance details (store address, GSTIN, PAN, bank, KYC); listings, photos and other content you submit; store location; device identifiers for notifications; orders, invoices, inventory, POS, settlement and payout records.',
     '2. How we use it. To authenticate users, review applications, operate the marketplace (catalog, orders, payments, payouts, POS), send service messages, provide support, prevent abuse, and meet tax and legal duties.',

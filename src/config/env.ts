@@ -57,12 +57,17 @@ const EnvSchema = z
     RAZORPAY_KEY_SECRET: optionalSecret(8),
     RAZORPAY_WEBHOOK_SECRET: optionalSecret(8),
 
-    // Public legal/support pages used by App Store Connect.
-    PUBLIC_APP_NAME: z.string().min(1).default('Trendzo Mockup'),
+    // Public legal/support pages used by App Store Connect and Google Play. One
+    // brand name covers every app (shopping, retailer, delivery partner) — the
+    // privacy policy is shared, so this must NOT name a single app.
+    PUBLIC_APP_NAME: z.string().min(1).default('Trendzo'),
     PUBLIC_COMPANY_NAME: z.string().min(1).default('Trendzo'),
     PUBLIC_SUPPORT_EMAIL: z.string().email().default('trendzodevelopment@gmail.com'),
     PUBLIC_SUPPORT_PHONE: z.string().optional(),
     PUBLIC_BUSINESS_ADDRESS: z.string().optional(),
+    // Named Grievance Officer, required of Indian intermediaries by the IT Rules.
+    // Absent means the privacy page shows the support email route only.
+    PUBLIC_GRIEVANCE_OFFICER: z.string().optional(),
     // Free-text opening hours shown in the app's support screen, e.g.
     // "Mon-Sat, 9am - 9pm IST". Optional: absent means the app hides the row
     // rather than inventing one.

@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { env } from '@/config/env.js';
 import { db } from '@/db/client.js';
+import { PRIVACY_POLICY_EFFECTIVE, privacyPolicySections } from '@/shared/privacy-policy.js';
 import { currentLegalDoc, LEGAL_DOC_LABELS, type LegalDocKind } from '@/shared/terms.js';
 
 function escapeHtml(value: string): string {
@@ -54,6 +55,43 @@ function contactBlock(): string {
   return `<div class="card"><h2>Contact</h2><ul><li>Email: <a href="mailto:${email}">${email}</a></li>${phone}${address}</ul><p>We normally respond within two business days.</p></div>`;
 }
 
+/**
+ * Grievance Officer block — required of Indian intermediaries by the IT Rules, and
+ * the contact app-store reviewers look for on a privacy policy. Renders the officer's
+ * name only when PUBLIC_GRIEVANCE_OFFICER is set; the contact route is always shown.
+ */
+function grievanceBlock(): string {
+  const email = escapeHtml(env.PUBLIC_SUPPORT_EMAIL);
+  const officer = env.PUBLIC_GRIEVANCE_OFFICER
+    ? `<li>Grievance Officer: ${escapeHtml(env.PUBLIC_GRIEVANCE_OFFICER)}</li>`
+    : '';
+  const address = env.PUBLIC_BUSINESS_ADDRESS
+    ? `<li>Address: ${escapeHtml(env.PUBLIC_BUSINESS_ADDRESS)}</li>`
+    : '';
+  return `<div class="card"><h2>Contact us</h2><p>For any question about this policy, or to exercise any right described in it, contact us:</p><ul>${officer}<li>Email: <a href="mailto:${email}">${email}</a></li>${address}</ul><p>We acknowledge complaints within 24 hours and aim to resolve them within 15 days.</p></div>`;
+}
+
+/** Render the full Privacy Policy — the authoritative store-listing document. */
+function privacyPolicyHtml(): string {
+  const body = privacyPolicySections()
+    .map((section) => {
+      const paragraphs = (section.paragraphs ?? [])
+        .map((text) => `<p>${escapeHtml(text)}</p>`)
+        .join('');
+      const bullets = section.bullets?.length
+        ? `<ul>${section.bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+        : '';
+      return `<h2>${escapeHtml(section.heading)}</h2>${paragraphs}${bullets}`;
+    })
+    .join('');
+
+  return `
+      <h1>Privacy Policy</h1>
+      <p class="meta">Effective ${escapeHtml(PRIVACY_POLICY_EFFECTIVE)}</p>
+      <div class="card">${body}</div>
+      ${grievanceBlock()}`;
+}
+
 const publicLegalRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', (_req, reply) => {
     void reply
@@ -61,22 +99,27 @@ const publicLegalRoutes: FastifyPluginAsync = async (app) => {
       .send(
         layout(
           env.PUBLIC_APP_NAME,
-          `<h1>Retail catalog creation, made practical.</h1><p>${escapeHtml(env.PUBLIC_APP_NAME)} helps approved fashion retailers photograph garments, create AI-assisted catalog mockups, manage products and inventory, and operate point-of-sale workflows.</p><p><a class="button" href="/support">Get support</a></p>`,
+          `<h1>Fashion retail, end to end.</h1><p>${escapeHtml(env.PUBLIC_COMPANY_NAME)} connects shoppers, local fashion retailers and delivery partners. Customers browse and buy from stores near them, retailers run their catalog, inventory and point of sale, and delivery partners handle pickups, deliveries and returns.</p><p>These pages carry the legal, privacy and support information for every ${escapeHtml(env.PUBLIC_COMPANY_NAME)} app.</p><p><a class="button" href="/support">Get support</a></p>`,
         ),
       );
   });
 
-  // Both legal pages render the CURRENT admin-published document (retailer_terms
-  // table via currentLegalDoc) — publishing from /admin/terms updates these too.
-  // NOTE: these handlers are async, so they must RETURN the reply. Resolving an
-  // async handler with undefined makes Fastify send an empty payload, which is
-  // how both pages ended up serving `Content-Length: 0` in production.
-  app.get('/privacy', async (_req, reply) => {
-    return reply
+  // The Privacy Policy is the FULL text from shared/privacy-policy.ts, covering every
+  // Trendzo app. It is intentionally independent of `retailer_terms`: that table holds
+  // the short in-app acceptance digest, which is a summary and was rejected by Google
+  // Play as "not a valid privacy policy page". Static text also means this URL cannot
+  // go blank or stale because of a database state.
+  app.get('/privacy', (_req, reply) => {
+    void reply
       .type('text/html; charset=utf-8')
-      .send(layout('Privacy Policy', await legalDocContent('privacy')));
+      .send(layout('Privacy Policy', privacyPolicyHtml()));
   });
 
+  // Terms still render the CURRENT admin-published document (retailer_terms via
+  // currentLegalDoc) — publishing from /admin/terms updates this page too.
+  // NOTE: this handler is async, so it must RETURN the reply. Resolving an async
+  // handler with undefined makes Fastify send an empty payload, which is how both
+  // pages ended up serving `Content-Length: 0` in production.
   app.get('/terms', async (_req, reply) => {
     return reply
       .type('text/html; charset=utf-8')
@@ -101,7 +144,7 @@ const publicLegalRoutes: FastifyPluginAsync = async (app) => {
       .send(
         layout(
           'Account deletion',
-          `<h1>Delete your account</h1><p>You can initiate deletion without contacting support.</p><div class="card"><h2>In the iOS app</h2><ol><li>Sign in.</li><li>Open <strong>Profile</strong>.</li><li>Tap <strong>Delete account</strong>.</li><li>Review the retention notice and confirm deletion.</li></ol></div><h2>What happens</h2><p>Access is revoked immediately. Personal account details are anonymized and catalog/media content is removed from active access. Records required for GST, invoices, orders, payouts, accounting, fraud prevention or legal compliance are retained only as required.</p><h2>Cannot access the app?</h2><p>Email <a href="mailto:${escapeHtml(env.PUBLIC_SUPPORT_EMAIL)}?subject=Account%20deletion%20request">${escapeHtml(env.PUBLIC_SUPPORT_EMAIL)}</a> from the address associated with the account. We may verify ownership before acting.</p>`,
+          `<h1>Delete your account</h1><p>This applies to every ${escapeHtml(env.PUBLIC_COMPANY_NAME)} app — shopping, retailer and delivery partner. You can start deletion yourself, on Android or iOS, without contacting support.</p><div class="card"><h2>In the app</h2><ol><li>Sign in.</li><li>Open <strong>Profile</strong>.</li><li>Tap <strong>Delete account</strong>.</li><li>Review the retention notice and confirm deletion.</li></ol><p>If your app does not show that option, use the email route below and we will action it for you.</p></div><h2>What happens</h2><p>Access is revoked immediately. Personal account details are anonymized and any catalog or media content is removed from active access. Records required for GST, invoices, orders, payouts, accounting, fraud prevention or legal compliance are retained only for as long as the law requires.</p><h2>Cannot access the app?</h2><p>Email <a href="mailto:${escapeHtml(env.PUBLIC_SUPPORT_EMAIL)}?subject=Account%20deletion%20request">${escapeHtml(env.PUBLIC_SUPPORT_EMAIL)}</a> from the email address or with the mobile number registered on the account. We may verify ownership before acting.</p>`,
         ),
       );
   });
