@@ -22,6 +22,10 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/db/seed/run.ts",
+    "seed:indore:images": "tsx src/db/seed/indore-market/fetch-images.ts",
+    "seed:indore:dry": "tsx src/db/seed/indore-market/seed.ts",
+    "seed:indore": "tsx src/db/seed/indore-market/seed.ts --confirm",
+    "seed:indore:teardown": "tsx src/db/seed/indore-market/teardown.ts",
     "crm:seed": "tsx src/crm/seed.ts",
     "cms:sync": "node scripts/sync-cms-seed.mjs",
     "cms:upload-assets": "tsx scripts/upload-cms-assets.ts"
