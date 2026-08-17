@@ -110,8 +110,17 @@ export async function transitionOrder(
 
   // §14 L3 — credit loyalty points on delivery. Idempotent; skipped if rewards-banned.
   if (input.toStatus === 'delivered') {
-    const { grantLoyaltyOnDelivery } = await import('@/shared/loyalty/grant.js');
-    await grantLoyaltyOnDelivery(input.orderId);
+    // Non-fatal like every other post-delivery side-effect below: a loyalty hiccup must
+    // never 500 a delivery that already committed. (The grant is CAS-idempotent, so a
+    // retry is safe, but the request should still succeed.)
+    try {
+      const { grantLoyaltyOnDelivery } = await import('@/shared/loyalty/grant.js');
+      await grantLoyaltyOnDelivery(input.orderId);
+    } catch (err) {
+      console.error(
+        `[loyalty] grant on delivery failed for order ${input.orderId}: ${(err as Error).message}`,
+      );
+    }
 
     // §17 — issue consumer tax invoice. Idempotent; failures must not roll back delivery.
     try {
@@ -132,6 +141,32 @@ export async function transitionOrder(
     } catch (err) {
       console.error(
         `[settlement] commission invoice on delivery failed for order ${input.orderId}: ${(err as Error).message}`,
+      );
+    }
+
+    // Driver payout — recorded HERE (the single delivered funnel) so EVERY completion
+    // path pays the assigned driver: standard deliver, door close (driver / auto /
+    // retailer / admin), and the system try-on expiry sweep. Previously this lived only
+    // in the driver controller, so sweep/retailer/admin completions paid nothing and the
+    // driver's Home "delivered today" count stayed at 0. Idempotent via the
+    // driver_earnings per-order partial unique index; never pass reversePickupId here so
+    // a reverse-pickup leg on the same order can still coexist. Non-fatal like invoicing.
+    try {
+      const full = await database.query.orders.findFirst({
+        where: eq(orders.id, input.orderId),
+        columns: { assignedAgentId: true, deliveryMethod: true },
+      });
+      if (full?.assignedAgentId) {
+        const { recordDriverEarnings } = await import('./driver-earnings.js');
+        await recordDriverEarnings(database, {
+          orderId: input.orderId,
+          driverId: full.assignedAgentId,
+          deliveryMethod: full.deliveryMethod,
+        });
+      }
+    } catch (err) {
+      console.error(
+        `[driver-earnings] record on delivery failed for order ${input.orderId}: ${(err as Error).message}`,
       );
     }
   }

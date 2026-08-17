@@ -442,11 +442,31 @@ function returnPolicyFor(o: {
 type OrderRow = typeof orders.$inferSelect;
 
 /** Consumer-safe order-item projection — drops internal tax/promo allocations + hsn/gstRate. */
+/** Compact per-item try-on state for the consumer app's at-door UI. */
+function doorItemState(
+  customerDoorChoice: 'keep' | 'return' | null,
+  agentDoorDecision: 'accept_return' | 'reject_return' | null,
+):
+  | 'undecided'
+  | 'kept'
+  | 'return_requested'
+  | 'return_accepted'
+  | 'return_rejected' {
+  if (agentDoorDecision === 'accept_return') return 'return_accepted';
+  if (agentDoorDecision === 'reject_return') return 'return_rejected';
+  if (customerDoorChoice === 'keep') return 'kept';
+  if (customerDoorChoice === 'return') return 'return_requested';
+  return 'undecided';
+}
+
 function shapeOrderItem(it: {
   id: string; listingId: string; variantId: string;
   listingNameSnap: string; brandSnap: string; categorySnap: string;
   galleryImageSnap: string | null; attributesLabelSnap: string; listingPolicySnap: string;
   qty: number; unitPricePaise: number; lineSubtotalPaise: number; netLinePaise: number; outcome: string;
+  customerDoorChoice?: 'keep' | 'return' | null;
+  agentDoorDecision?: 'accept_return' | 'reject_return' | null;
+  agentReturnReason?: string | null;
 }) {
   return {
     id: it.id,
@@ -463,6 +483,11 @@ function shapeOrderItem(it: {
     lineSubtotalPaise: it.lineSubtotalPaise,
     netLinePaise: it.netLinePaise,
     outcome: it.outcome,
+    // Live customer-driven try-on staging (only meaningful while status === 'at_door').
+    customerDoorChoice: it.customerDoorChoice ?? null,
+    agentDoorDecision: it.agentDoorDecision ?? null,
+    agentReturnReason: it.agentReturnReason ?? null,
+    doorState: doorItemState(it.customerDoorChoice ?? null, it.agentDoorDecision ?? null),
   };
 }
 
@@ -575,6 +600,7 @@ function shapeOrderDetail(
     pickupSlotStart: o.pickupSlotStart,
     pickupSlotEnd: o.pickupSlotEnd,
     doorWindowExpiresAt: o.doorWindowExpiresAt,
+    doorWindowExtendedAt: o.doorWindowExtendedAt,
     // Return eligibility, computed SERVER-side. It depends on deliveredAt, the
     // per-item outcome and the final_sale policy frozen at placement — the app
     // cannot derive any of that, and its local 7-day counter was a second copy

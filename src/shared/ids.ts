@@ -88,6 +88,7 @@ export const IdPrefix = {
   CartEvent: 'cev',
   // §22 Notifications extras
   PushSubscription: 'psub',
+  DeviceToken: 'dtok',
   PushAttempt: 'patt',
   Banner: 'bnr',
   BannerDismissal: 'bdm',

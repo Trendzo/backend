@@ -122,6 +122,8 @@ import adminMoodboardRoutes from '@/modules/admin/moodboards/moodboards.routes.j
 import retailerPushRoutes from '@/modules/retailer/push/push.routes.js';
 import adminPushRoutes from '@/modules/admin/push/push.routes.js';
 import consumerPushRoutes from '@/modules/consumer/push/push.routes.js';
+import { deviceTokenRoutes } from '@/modules/_shared/device-push.routes.js';
+import consumerDoorRoutes from '@/modules/consumer/door/door.routes.js';
 import adminBannersRoutes from '@/modules/admin/banners/banners.routes.js';
 import retailerBannersRoutes from '@/modules/retailer/banners/banners.routes.js';
 import adminDigestRoutes from '@/modules/admin/digest/digest.routes.js';
@@ -405,6 +407,8 @@ export function buildApp() {
       // Consumer self-profile (OTP signups fill in name/email here before checkout)
       await api.register(consumerProfileRoutes, { prefix: '/consumer/profile' });
       await api.register(consumerTryOnRoutes, { prefix: '/consumer/tryon' });
+      // Customer-driven Try-and-Buy door decisions (keep/return per item)
+      await api.register(consumerDoorRoutes, { prefix: '/consumer/door' });
       // Public share read for moodboards (UNAUTHENTICATED — no auth hook)
       await api.register(publicMoodboardRoutes, { prefix: '/public/moodboards' });
       // Public live offers + coupons (UNAUTHENTICATED — drives banners + coupon wallet)
@@ -413,10 +417,13 @@ export function buildApp() {
       await api.register(pricingRoutes, { prefix: '/pricing' });
       // Admin moodboard moderation (takedown/restore)
       await api.register(adminMoodboardRoutes, { prefix: '/admin/moodboards' });
-      // §22 Push subscriptions
+      // §22 Push subscriptions (web-push)
       await api.register(retailerPushRoutes, { prefix: '/retailer/push-subscriptions' });
       await api.register(adminPushRoutes, { prefix: '/admin/push-subscriptions' });
       await api.register(consumerPushRoutes, { prefix: '/consumer/push-subscriptions' });
+      // Native OS push device tokens (FCM/APNs) for targeted mobile push
+      await api.register(deviceTokenRoutes('driver', 'delivery_agent'), { prefix: '/driver/push' });
+      await api.register(deviceTokenRoutes('consumer', 'consumer'), { prefix: '/consumer/push' });
       // §22 Banners
       await api.register(adminBannersRoutes, { prefix: '/admin/banners' });
       await api.register(retailerBannersRoutes, { prefix: '/retailer/banners' });

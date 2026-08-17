@@ -9,7 +9,7 @@
  * (path to the key file). If neither is set, every send is a no-op and push stays disabled.
  */
 import { applicationDefault, cert, initializeApp, type Credential } from 'firebase-admin/app';
-import { getMessaging } from 'firebase-admin/messaging';
+import { getMessaging, type MulticastMessage } from 'firebase-admin/messaging';
 import { env } from '@/config/env.js';
 
 const OFFERS_TOPIC = 'driver-offers';
@@ -60,5 +60,54 @@ export async function pushOffersChanged(): Promise<void> {
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[fcm] push failed:', (e as Error).message);
+  }
+}
+
+export type PushMessage = {
+  title?: string;
+  body?: string;
+  data?: Record<string, string>;
+};
+
+/**
+ * Send a TARGETED notification to specific device tokens (one consumer / one driver).
+ * Returns which tokens Firebase reported as permanently invalid so the caller can revoke
+ * them. No-op returning empty results when FCM is disabled. All string data values (FCM
+ * requires string-valued data).
+ */
+export async function sendToTokens(
+  tokens: string[],
+  msg: PushMessage,
+): Promise<{ successCount: number; prune: string[] }> {
+  init();
+  if (!enabled || tokens.length === 0) return { successCount: 0, prune: [] };
+  try {
+    // Build conditionally — exactOptionalPropertyTypes forbids passing `undefined` fields.
+    const notification: { title?: string; body?: string } = {};
+    if (msg.title) notification.title = msg.title;
+    if (msg.body) notification.body = msg.body;
+    const message: MulticastMessage = {
+      tokens,
+      ...(msg.title || msg.body ? { notification } : {}),
+      ...(msg.data ? { data: msg.data } : {}),
+      android: { priority: 'high' },
+      apns: { headers: { 'apns-priority': '10' }, payload: { aps: { sound: 'default' } } },
+    };
+    const res = await getMessaging().sendEachForMulticast(message);
+    const prune: string[] = [];
+    res.responses.forEach((r, i) => {
+      if (
+        !r.success &&
+        (r.error?.code === 'messaging/registration-token-not-registered' ||
+          r.error?.code === 'messaging/invalid-registration-token')
+      ) {
+        prune.push(tokens[i]!);
+      }
+    });
+    return { successCount: res.successCount, prune };
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[fcm] multicast push failed:', (e as Error).message);
+    return { successCount: 0, prune: [] };
   }
 }

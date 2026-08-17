@@ -19,6 +19,7 @@ import {
   consumers,
   consumerWallets,
   deliveryAgents,
+  deviceTokens,
   driverCashLedger,
   driverEarnings,
   heldItems,
@@ -61,6 +62,7 @@ import {
   failGatewayCheckout,
   settleGatewayCapture,
 } from '@/shared/payments/settle-gateway.js';
+import { processDoorWindowSweep } from '@/shared/orders/door-visit.js';
 import { buildApp } from '@/app.js';
 
 type App = ReturnType<typeof buildApp>;
@@ -509,10 +511,16 @@ describe('WS1 — door-return refund on arrival', () => {
     const { orderId } = await placeOrder({ deliveryMethod: 'try_and_buy', paymentMethod: 'upi' });
     await packAndPickUp(orderId);
     expect((await driverPost(driverToken, `/deliveries/${orderId}/depart`)).statusCode).toBe(200);
-    expect((await driverPost(driverToken, `/deliveries/${orderId}/door/open`)).statusCode).toBe(200);
+    // OTP now proves handover at door/open (start of the window). No OTP → 403.
+    expect(
+      (await driverPost(driverToken, `/deliveries/${orderId}/door/open`)).statusCode,
+    ).toBe(403);
+    expect(
+      (await driverPost(driverToken, `/deliveries/${orderId}/door/open`, { otp: '1111' })).statusCode,
+    ).toBe(200);
     const item = await db.query.orderItems.findFirst({ where: eq(orderItems.orderId, orderId) });
+    // Explicit all-at-once close still works (no OTP here anymore).
     const close = await driverPost(driverToken, `/deliveries/${orderId}/door/close`, {
-      otp: '1111',
       items: [{ orderItemId: item!.id, decision: 'returned' }],
     });
     expect(close.statusCode).toBe(200);
@@ -1361,10 +1369,11 @@ describe('WS5 — returns cannot double-refund, and cannot silently strand', () 
     const { orderId } = await placeOrder({ deliveryMethod: 'try_and_buy', paymentMethod: 'upi' });
     await packAndPickUp(orderId);
     expect((await driverPost(driverToken, `/deliveries/${orderId}/depart`)).statusCode).toBe(200);
-    expect((await driverPost(driverToken, `/deliveries/${orderId}/door/open`)).statusCode).toBe(200);
+    expect(
+      (await driverPost(driverToken, `/deliveries/${orderId}/door/open`, { otp: '1111' })).statusCode,
+    ).toBe(200);
     const items = await db.query.orderItems.findMany({ where: eq(orderItems.orderId, orderId) });
     const close = await driverPost(driverToken, `/deliveries/${orderId}/door/close`, {
-      otp: '1111',
       items: items.map((i) => ({ orderItemId: i.id, decision: 'returned' })),
     });
     expect(close.statusCode).toBe(200);
@@ -2215,5 +2224,178 @@ describe('cash ledger — collect, deposit, confirm/reject', () => {
     });
     expect(detail.statusCode).toBe(200);
     expect(data(detail).cash.outstandingPaise).toBe(0);
+  });
+});
+
+// ── Customer-driven Try-and-Buy door flow ─────────────────────────────────────
+describe('WS-door — customer-driven try-on decisions', () => {
+  const consumerPost = (path: string, payload?: unknown) =>
+    app.inject({
+      method: 'POST',
+      url: `/api/v1/consumer${path}`,
+      headers: auth(consumerToken),
+      ...(payload !== undefined ? { payload } : { payload: {} }),
+    });
+
+  /** place → pack → pickup → depart → open the door with the OTP (starts the window). */
+  async function atDoor(): Promise<{ orderId: string; itemId: string }> {
+    const { orderId } = await placeOrder({ deliveryMethod: 'try_and_buy', paymentMethod: 'upi' });
+    await packAndPickUp(orderId);
+    expect((await driverPost(driverToken, `/deliveries/${orderId}/depart`)).statusCode).toBe(200);
+    expect(
+      (await driverPost(driverToken, `/deliveries/${orderId}/door/open`, { otp: '1111' })).statusCode,
+    ).toBe(200);
+    const item = await db.query.orderItems.findFirst({ where: eq(orderItems.orderId, orderId) });
+    return { orderId, itemId: item!.id };
+  }
+
+  const earningRow = (orderId: string) =>
+    db.query.driverEarnings.findFirst({
+      where: and(eq(driverEarnings.orderId, orderId), eq(driverEarnings.driverId, driverId)),
+    });
+
+  it('customer keeps the item → auto-closes to delivered AND pays the driver', async () => {
+    const { orderId, itemId } = await atDoor();
+    const keep = await consumerPost(`/door/orders/${orderId}/items/${itemId}/keep`);
+    expect(keep.statusCode).toBe(200);
+    expect(data(keep).closed).toBe(true);
+    expect((await orderRow(orderId)).status).toBe('delivered');
+    // Earnings recorded via the central delivered funnel (not the driver controller).
+    expect(await earningRow(orderId)).toBeTruthy();
+  });
+
+  it('customer returns → driver accepts → auto-closes to returning_to_store with a pending door return', async () => {
+    const { orderId, itemId } = await atDoor();
+    const ret = await consumerPost(`/door/orders/${orderId}/items/${itemId}/return`);
+    expect(ret.statusCode).toBe(200);
+    expect(data(ret).closed).toBe(false);
+    expect((await orderRow(orderId)).status).toBe('at_door'); // waits for the driver
+
+    const accept = await driverPost(driverToken, `/deliveries/${orderId}/items/${itemId}/accept-return`);
+    expect(accept.statusCode).toBe(200);
+    expect(data(accept).closed).toBe(true);
+    expect((await orderRow(orderId)).status).toBe('returning_to_store');
+    const row = await db.query.returns.findFirst({ where: eq(returns.orderItemId, itemId) });
+    expect(row!.agentDisposition).toBe('returned');
+    expect(row!.storeDecision).toBe('pending');
+  });
+
+  it('driver rejects a return at the door — evidence required; item stays with the customer', async () => {
+    const { orderId, itemId } = await atDoor();
+    expect((await consumerPost(`/door/orders/${orderId}/items/${itemId}/return`)).statusCode).toBe(200);
+
+    const before = await db.query.variants.findFirst({ where: eq(variants.id, variantId) });
+    // No photo → 422.
+    const bad = await driverPost(driverToken, `/deliveries/${orderId}/items/${itemId}/reject-return`, {
+      reason: 'Item worn and tags removed',
+    });
+    expect(bad.statusCode).toBe(422);
+    // With evidence → rejected at door; the item counts as delivered (stays with customer).
+    const good = await driverPost(driverToken, `/deliveries/${orderId}/items/${itemId}/reject-return`, {
+      reason: 'Item worn and tags removed',
+      photos: ['https://example.com/evidence.jpg'],
+    });
+    expect(good.statusCode).toBe(200);
+    expect((await orderRow(orderId)).status).toBe('delivered');
+    const row = await db.query.returns.findFirst({ where: eq(returns.orderItemId, itemId) });
+    expect(row!.storeDecision).toBe('rejected_at_door');
+    const after = await db.query.variants.findFirst({ where: eq(variants.id, variantId) });
+    expect(after!.stock).toBe(before!.stock - 1); // stock finalized (customer kept it)
+    expect(await earningRow(orderId)).toBeTruthy();
+  });
+
+  it('a keep is blocked once the window has expired', async () => {
+    const { orderId, itemId } = await atDoor();
+    await db
+      .update(orders)
+      .set({ doorWindowExpiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(orders.id, orderId));
+    const keep = await consumerPost(`/door/orders/${orderId}/items/${itemId}/keep`);
+    expect(keep.statusCode).toBe(409); // DoorWindowExpired
+  });
+
+  it('a return requested near expiry can still be resolved by the driver (no deadlock)', async () => {
+    const { orderId, itemId } = await atDoor();
+    // Customer requests the return while the window is open…
+    expect((await consumerPost(`/door/orders/${orderId}/items/${itemId}/return`)).statusCode).toBe(200);
+    // …then the window lapses before the driver responds.
+    await db
+      .update(orders)
+      .set({ doorWindowExpiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(orders.id, orderId));
+    // The driver can STILL accept it (would otherwise be stranded until the 30-min sweep).
+    const accept = await driverPost(driverToken, `/deliveries/${orderId}/items/${itemId}/accept-return`);
+    expect(accept.statusCode).toBe(200);
+    expect((await orderRow(orderId)).status).toBe('returning_to_store');
+  });
+
+  it('closing twice does not double-finalize (idempotent item writes)', async () => {
+    const { orderId, itemId } = await atDoor();
+    const before = await db.query.variants.findFirst({ where: eq(variants.id, variantId) });
+    // First driver-finish closes the visit (single item → kept → delivered).
+    expect((await driverPost(driverToken, `/deliveries/${orderId}/door/close`, {})).statusCode).toBe(200);
+    expect((await orderRow(orderId)).status).toBe('delivered');
+    // A racing/duplicate close is rejected (no longer at_door) and never re-decrements stock.
+    expect((await driverPost(driverToken, `/deliveries/${orderId}/door/close`, {})).statusCode).toBe(409);
+    const after = await db.query.variants.findFirst({ where: eq(variants.id, variantId) });
+    expect(after!.stock).toBe(before!.stock - 1); // decremented exactly once
+  });
+
+  it('the sweep honors an unanswered customer return (returned, not silently kept)', async () => {
+    const { orderId, itemId } = await atDoor();
+    // Customer asks to return in-window; the driver never answers; the window lapses.
+    expect((await consumerPost(`/door/orders/${orderId}/items/${itemId}/return`)).statusCode).toBe(200);
+    await db
+      .update(orders)
+      .set({ doorWindowExpiresAt: new Date(Date.now() - 40 * 60_000) })
+      .where(eq(orders.id, orderId));
+    expect(await processDoorWindowSweep(db)).toBeGreaterThanOrEqual(1);
+    // The requested return is honored (goods-back leg), not converted to kept.
+    expect((await orderRow(orderId)).status).toBe('returning_to_store');
+    const row = await db.query.returns.findFirst({ where: eq(returns.orderItemId, itemId) });
+    expect(row!.agentDisposition).toBe('returned');
+    expect(row!.storeDecision).toBe('pending');
+  });
+
+  it('door/open is rejected for a non try_and_buy order', async () => {
+    const { orderId } = await placeOrder({ deliveryMethod: 'standard', paymentMethod: 'upi' });
+    await packAndPickUp(orderId);
+    expect((await driverPost(driverToken, `/deliveries/${orderId}/depart`)).statusCode).toBe(200);
+    const open = await driverPost(driverToken, `/deliveries/${orderId}/door/open`, { otp: '1111' });
+    expect(open.statusCode).toBe(409); // only try_and_buy has a try-on window
+  });
+
+  it('the expiry sweep closes an untouched window to delivered AND pays the driver', async () => {
+    const { orderId } = await atDoor();
+    // Expire the window well past the 30-min grace so the sweep picks it up.
+    await db
+      .update(orders)
+      .set({ doorWindowExpiresAt: new Date(Date.now() - 40 * 60_000) })
+      .where(eq(orders.id, orderId));
+    const closed = await processDoorWindowSweep(db);
+    expect(closed).toBeGreaterThanOrEqual(1);
+    expect((await orderRow(orderId)).status).toBe('delivered');
+    // The sweep previously paid nothing; now it flows through the delivered funnel.
+    expect(await earningRow(orderId)).toBeTruthy();
+  });
+
+  it('registers and revokes a device push token for driver and consumer', async () => {
+    const dReg = await driverPost(driverToken, `/push`, { token: 'drv-token-1', platform: 'android' });
+    expect(dReg.statusCode).toBe(200);
+    const cReg = await consumerPost(`/push`, { token: 'con-token-1', platform: 'ios' });
+    expect(cReg.statusCode).toBe(200);
+    const active = await db.query.deviceTokens.findMany({
+      where: inArray(deviceTokens.token, ['drv-token-1', 'con-token-1']),
+    });
+    expect(active.filter((t) => t.revokedAt === null).length).toBe(2);
+    // Re-register is idempotent (same active row, no duplicate).
+    expect((await driverPost(driverToken, `/push`, { token: 'drv-token-1', platform: 'android' })).statusCode).toBe(200);
+    expect(
+      (await db.query.deviceTokens.findMany({ where: eq(deviceTokens.token, 'drv-token-1') })).length,
+    ).toBe(1);
+    // Revoke.
+    expect((await consumerPost(`/push/revoke`, { token: 'con-token-1' })).statusCode).toBe(200);
+    const revoked = await db.query.deviceTokens.findFirst({ where: eq(deviceTokens.token, 'con-token-1') });
+    expect(revoked!.revokedAt).not.toBeNull();
   });
 });
