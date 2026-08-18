@@ -383,6 +383,19 @@ export const LEGACY_CATEGORY_SLUGS: Record<string, string> = Object.fromEntries(
 export const canonicalCategorySlug = (slug: string): string =>
   LEGACY_CATEGORY_SLUGS[slug] ?? slug;
 
+/**
+ * Leaf slug → its parent's slug, for every leaf in the tree.
+ *
+ * Callers used to derive this by stripping the last `-segment`, which is only correct
+ * for single-word leaf keys. `coords-two-piece` became `coords-two`, missed, and fell
+ * through to a generic default — the same one-segment-strip bug that sent whole
+ * categories to the wrong image pool in fix-images.ts. The tree knows the real answer,
+ * so ask it rather than guessing from the string.
+ */
+export const PARENT_BY_LEAF_SLUG: Record<string, string> = Object.fromEntries(
+  TAXONOMY.flatMap((p) => p.leaves.map((l) => [leafSlug(p, l.key), parentSlug(p)] as const)),
+);
+
 /** A node is on a rail when it is that gender or shared. Same rule as listings. */
 export const visibleTo = (nodeGender: Gender, rail: 'her' | 'him'): boolean =>
   nodeGender === rail || nodeGender === 'unisex';

@@ -19,7 +19,7 @@
  * especially fine-jewellery (3%, a separate chapter with its own rules).
  */
 
-import { canonicalCategorySlug } from '@/shared/catalog/taxonomy.js';
+import { PARENT_BY_LEAF_SLUG, canonicalCategorySlug } from '@/shared/catalog/taxonomy.js';
 
 /** GST rate in basis points (1% = 100bp). */
 export const GstRateBp = {
@@ -46,6 +46,15 @@ type GstKind = 'apparel' | 'footwear' | 'accessory' | 'cosmetics';
  * probes and fell through to the knitwear default.
  */
 const parentOf = (slug: string): string => {
+  // The taxonomy knows each leaf's real parent. Stripping the last `-segment` only works
+  // for single-word leaf keys: `coords-two-piece` yielded `coords-two`, missed
+  // HSN_BY_PARENT, and fell back to the knitwear default 6109 instead of Co-ords' 6204.
+  // Nineteen leaves were wrong that way — every multi-word one under coords, active,
+  // swim, ethnic, plus wide-leg and lounge-pants.
+  const known = PARENT_BY_LEAF_SLUG[slug];
+  if (known) return known;
+  // Unknown slug (a retired flat category from an old order snapshot) — the old
+  // one-segment strip is still the best guess available.
   const cut = slug.lastIndexOf('-');
   return cut === -1 ? slug : slug.slice(0, cut);
 };

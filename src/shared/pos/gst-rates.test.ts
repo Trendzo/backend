@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { categoryDefaultHsn, GstRateBp, resolveGstRateBp } from './gst-rates.js';
+import {
+  PARENT_BY_LEAF_SLUG,
+  TAXONOMY,
+  leafSlug,
+  parentSlug,
+} from '@/shared/catalog/taxonomy.js';
 
 const rate = (hsn: string | null, categorySlug: string | null, mrpRupees: number) =>
   resolveGstRateBp({ hsn, categorySlug, unitMrpPaise: mrpRupees * 100 });
@@ -112,5 +118,48 @@ describe('categoryDefaultHsn', () => {
   });
   it('returns null for no category', () => {
     expect(categoryDefaultHsn(null)).toBeNull();
+  });
+});
+
+/**
+ * `parentOf` used to strip the last `-segment`, which is only correct for single-word
+ * leaf keys. Nineteen leaves resolved to a non-existent parent and fell through to the
+ * knitwear default 6109 — every multi-word leaf under coords, active, swim and ethnic,
+ * plus wide-leg and lounge-pants.
+ */
+describe('multi-word leaf slugs resolve to their real parent', () => {
+  it('gives multi-word leaves their parent HSN, not the generic default', () => {
+    expect(categoryDefaultHsn('coords-two-piece')).toBe('6204');
+    expect(categoryDefaultHsn('coords-skirt-sets')).toBe('6204');
+    expect(categoryDefaultHsn('bottoms-wide-leg')).toBe('6203');
+    expect(categoryDefaultHsn('denim-wide-leg')).toBe('6203');
+    expect(categoryDefaultHsn('active-sports-bras')).toBe('6112');
+    expect(categoryDefaultHsn('active-track-pants')).toBe('6112');
+    expect(categoryDefaultHsn('swim-beach-shirts')).toBe('6112');
+    expect(categoryDefaultHsn('lounge-lounge-pants')).toBe('6208');
+    expect(categoryDefaultHsn('ethnic-kurta-sets')).toBe('6205');
+    expect(categoryDefaultHsn('ethnic-nehru-jackets')).toBe('6205');
+  });
+
+  it('resolves every leaf in the taxonomy to a real parent', () => {
+    for (const p of TAXONOMY) {
+      for (const l of p.leaves) {
+        expect(PARENT_BY_LEAF_SLUG[leafSlug(p, l.key)]).toBe(parentSlug(p));
+      }
+    }
+  });
+
+  it('still resolves single-word leaves and legacy flat slugs', () => {
+    expect(categoryDefaultHsn('shoes-sneakers')).toBe('6403');
+    expect(categoryDefaultHsn('bags-totes')).toBe('4202');
+    // Retired flat slug from an old order snapshot — the one-segment strip is the
+    // only guess available, and it must still land on footwear.
+    expect(categoryDefaultHsn('footwear')).toBe('6403');
+  });
+
+  it('accepts the old gender-prefixed slugs historical rows still carry', () => {
+    expect(categoryDefaultHsn('her-coords-two-piece')).toBe('6204');
+    expect(categoryDefaultHsn('him-ethnic-kurtas')).toBe('6205');
+    expect(categoryDefaultHsn('her-jewelry-earrings')).toBe('7117');
   });
 });

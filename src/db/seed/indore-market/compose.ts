@@ -40,23 +40,6 @@ export function loadImagePool(): ImagePool {
   return JSON.parse(readFileSync(POOL_PATH, 'utf8')) as ImagePool;
 }
 
-/**
- * HSN for a leaf, working around a bug in the shared resolver.
- *
- * `categoryDefaultHsn` falls back through `parentOf` (gst-rates.ts:46), which strips
- * only ONE trailing slug segment. So `coords-two-piece` becomes `coords-two`,
- * misses `HSN_BY_PARENT`, and lands on the generic `6109` instead of Co-ords' `6204`;
- * `bottoms-wide-leg` likewise loses `6203`. We know the real parent, so when the leaf
- * lookup produces the generic default and the parent has something specific, prefer the
- * parent's. Fixing `parentOf` itself would change GST classification for listings that
- * already exist, which is not this seed's call to make.
- */
-function hsnFor(leafSlug: string, parentSlug: string): string | null {
-  const leafHsn = categoryDefaultHsn(leafSlug);
-  const parentHsn = categoryDefaultHsn(parentSlug);
-  return leafHsn === '6109' && parentHsn !== '6109' ? parentHsn : leafHsn;
-}
-
 const photoUrl = (p: PoolPhoto): string =>
   `${p.raw}${p.raw.includes('?') ? '&' : '?'}w=${IMG_WIDTH}&q=80&auto=format&fit=crop`;
 
@@ -257,7 +240,7 @@ export function compose(pool: ImagePool, now: Date): Composed {
       brandName: brandLabel(brandSlug),
       description: shortDescription(spec, name, colors),
       descriptionLong: longDescription(spec, name, colors, sizes, brandLabel(brandSlug)),
-      hsn: hsnFor(spec.slug, spec.parentSlug),
+      hsn: categoryDefaultHsn(spec.slug),
       galleryUrls: gallery,
       createdAt: createdAtFor(slot.index, now),
       groups,
