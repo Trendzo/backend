@@ -7,7 +7,7 @@
  * wrong-looking product in a live marketplace.
  */
 
-import { LEAF_SPECS } from './leaf-catalog.js';
+import { BRAND_GENDER, LEAF_SPECS } from './leaf-catalog.js';
 import { countForLeaf, STORE_COUNT, TOTAL_PRODUCTS } from './distribute.js';
 import { STORES } from './stores.js';
 import type { Composed, ComposedListing } from './compose.js';
@@ -75,6 +75,14 @@ export function checkInvariants(composed: Composed, pool: ImagePool): string[] {
     if (l.gender !== spec.gender) fail(`${where}: gender ${l.gender} but leaf is ${spec.gender}`);
     // Brand must come from this leaf's affinity list — the anti-Gucci-sherwani rule.
     if (!spec.brands.includes(l.brandSlug)) fail(`${where}: brand ${l.brandSlug} not valid for ${l.leafSlug}`);
+    // …and a single-rail brand must not appear on the other rail's leaf.
+    const brandGender = BRAND_GENDER[l.brandSlug];
+    if (brandGender && l.gender !== 'unisex' && brandGender !== l.gender) {
+      fail(`${where}: ${l.brandSlug} is a ${brandGender} brand on a ${l.gender} leaf`);
+    }
+    if (brandGender && l.gender === 'unisex') {
+      fail(`${where}: ${l.brandSlug} is ${brandGender}-only but the leaf is unisex`);
+    }
     // Name must actually name the thing being sold.
     if (!l.name.endsWith(spec.noun)) fail(`${where}: name does not end in the leaf noun "${spec.noun}"`);
 

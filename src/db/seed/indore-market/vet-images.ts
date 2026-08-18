@@ -126,11 +126,25 @@ function keywordsFor(noun: string, query: string): string[] {
   return [...new Set([...fromNoun, ...fromQuery, ...extra])];
 }
 
-/** 2 = alt names the garment, 1 = alt exists but is unrelated, 0 = no alt at all. */
-function scorePhoto(p: PoolPhoto, keywords: string[]): number {
+// Word-boundary matching matters here: "woman" contains "man" as a substring, so a
+// naive includes() marks every womenswear photo as menswear.
+const READS_FEMALE = /\b(woman|women|female|girl|lady|ladies|her)\b/;
+const READS_MALE = /\b(man|men|male|boy|guy|gentleman|his)\b/;
+
+/**
+ * 2 = alt names the garment, 1 = alt exists but is unrelated, 0 = no alt at all.
+ * A photo whose subject is the wrong gender for a single-gender leaf is pushed below
+ * everything else — a woman modelling men's lounge pants is precisely the mismatch
+ * this whole exercise exists to prevent.
+ */
+function scorePhoto(p: PoolPhoto, keywords: string[], gender: string): number {
   if (!p.alt) return 0;
   const alt = p.alt.toLowerCase();
-  return keywords.some((k) => alt.includes(k)) ? 2 : 1;
+  const base = keywords.some((k) => alt.includes(k)) ? 2 : 1;
+
+  if (gender === 'him' && READS_FEMALE.test(alt) && !READS_MALE.test(alt)) return base - 3;
+  if (gender === 'her' && READS_MALE.test(alt) && !READS_FEMALE.test(alt)) return base - 3;
+  return base;
 }
 
 function main(): void {
@@ -145,7 +159,7 @@ function main(): void {
     cached += 1;
 
     const keywords = keywordsFor(spec.noun, spec.query);
-    const scored = photos.map((p, i) => ({ p, i, s: scorePhoto(p, keywords) }));
+    const scored = photos.map((p, i) => ({ p, i, s: scorePhoto(p, keywords, spec.gender) }));
     // Stable sort: matched first, then original order (Unsplash relevance).
     const sorted = [...scored].sort((a, b) => b.s - a.s || a.i - b.i);
 

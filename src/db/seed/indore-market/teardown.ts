@@ -36,6 +36,15 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MANIFEST_PATH = resolve(HERE, 'manifest.json');
 const CONFIRM = process.argv.includes('--confirm');
 
+/**
+ * Bound-parameter list for a dynamic id set.
+ *
+ * Drizzle renders an interpolated JS array as a record/tuple, so neither
+ * = ANY(${ids}) nor a ::text[] cast works. Emitting one placeholder per id keeps
+ * every value parameterised.
+ */
+const idList = (ids: string[]) => sql.join(ids.map((id) => sql`${id}`), sql`, `);
+
 type Manifest = {
   host: string;
   storeIds: string[];
@@ -98,7 +107,7 @@ async function main(): Promise<void> {
   const blockers: string[] = [];
   for (const table of HISTORY_BY_STORE) {
     const res = await db.execute(
-      sql`SELECT count(*)::int AS n FROM ${sql.identifier(table)} WHERE store_id = ANY(${manifest.storeIds})`,
+      sql`SELECT count(*)::int AS n FROM ${sql.identifier(table)} WHERE store_id IN (${idList(manifest.storeIds)})`,
     );
     const n = Number((res.rows[0] as { n: number } | undefined)?.n ?? 0);
     if (n > 0) blockers.push(`${table}: ${n} row(s)`);
@@ -106,7 +115,7 @@ async function main(): Promise<void> {
   for (const table of HISTORY_BY_LISTING) {
     const col = table === 'reels' ? 'product_id' : 'listing_id';
     const res = await db.execute(
-      sql`SELECT count(*)::int AS n FROM ${sql.identifier(table)} WHERE ${sql.identifier(col)} = ANY(${manifest.listingIds})`,
+      sql`SELECT count(*)::int AS n FROM ${sql.identifier(table)} WHERE ${sql.identifier(col)} IN (${idList(manifest.listingIds)})`,
     );
     const n = Number((res.rows[0] as { n: number } | undefined)?.n ?? 0);
     if (n > 0) blockers.push(`${table}: ${n} row(s)`);
@@ -142,22 +151,22 @@ async function main(): Promise<void> {
   await db.transaction(async (tx) => {
     // Cascade-linked analytics/moderation children first so the counts are visible
     // rather than silently swept by ON DELETE CASCADE.
-    await tx.execute(sql`DELETE FROM inventory_reservations WHERE variant_id = ANY(${manifest.variantIds})`);
-    await tx.execute(sql`DELETE FROM inventory_adjustments WHERE variant_id = ANY(${manifest.variantIds})`);
-    await tx.execute(sql`DELETE FROM listing_views WHERE listing_id = ANY(${manifest.listingIds})`);
-    await tx.execute(sql`DELETE FROM cart_events WHERE listing_id = ANY(${manifest.listingIds})`);
-    await tx.execute(sql`DELETE FROM collection_listings WHERE listing_id = ANY(${manifest.listingIds})`);
-    await tx.execute(sql`DELETE FROM product_reviews WHERE listing_id = ANY(${manifest.listingIds})`);
-    await tx.execute(sql`DELETE FROM listing_audit_entries WHERE listing_id = ANY(${manifest.listingIds})`);
+    await tx.execute(sql`DELETE FROM inventory_reservations WHERE variant_id IN (${idList(manifest.variantIds)})`);
+    await tx.execute(sql`DELETE FROM inventory_adjustments WHERE variant_id IN (${idList(manifest.variantIds)})`);
+    await tx.execute(sql`DELETE FROM listing_views WHERE listing_id IN (${idList(manifest.listingIds)})`);
+    await tx.execute(sql`DELETE FROM cart_events WHERE listing_id IN (${idList(manifest.listingIds)})`);
+    await tx.execute(sql`DELETE FROM collection_listings WHERE listing_id IN (${idList(manifest.listingIds)})`);
+    await tx.execute(sql`DELETE FROM product_reviews WHERE listing_id IN (${idList(manifest.listingIds)})`);
+    await tx.execute(sql`DELETE FROM listing_audit_entries WHERE listing_id IN (${idList(manifest.listingIds)})`);
 
     await tx.delete(variants).where(inArray(variants.id, manifest.variantIds));
     await tx.delete(variantGroups).where(inArray(variantGroups.id, manifest.groupIds));
     await tx.delete(productListings).where(inArray(productListings.id, manifest.listingIds));
 
-    await tx.execute(sql`DELETE FROM store_media WHERE store_id = ANY(${manifest.storeIds})`);
-    await tx.execute(sql`DELETE FROM store_pickup_slots WHERE store_id = ANY(${manifest.storeIds})`);
-    await tx.execute(sql`DELETE FROM store_holiday_closures WHERE store_id = ANY(${manifest.storeIds})`);
-    await tx.execute(sql`DELETE FROM retailer_staff_invites WHERE store_id = ANY(${manifest.storeIds})`);
+    await tx.execute(sql`DELETE FROM store_media WHERE store_id IN (${idList(manifest.storeIds)})`);
+    await tx.execute(sql`DELETE FROM store_pickup_slots WHERE store_id IN (${idList(manifest.storeIds)})`);
+    await tx.execute(sql`DELETE FROM store_holiday_closures WHERE store_id IN (${idList(manifest.storeIds)})`);
+    await tx.execute(sql`DELETE FROM retailer_staff_invites WHERE store_id IN (${idList(manifest.storeIds)})`);
 
     await tx
       .delete(retailerTermsAcceptances)

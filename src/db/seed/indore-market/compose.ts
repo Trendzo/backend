@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { categoryDefaultHsn } from '@/shared/pos/gst-rates.js';
 import type { Gender } from '@/shared/catalog/taxonomy.js';
 import {
+  BRAND_NAMES,
   LEAF_SPECS,
   SIZE_RUNS,
   productColors,
@@ -37,6 +38,23 @@ export function loadImagePool(): ImagePool {
     throw new Error(`image-pool.json not found. Run fetch-images.ts first.`);
   }
   return JSON.parse(readFileSync(POOL_PATH, 'utf8')) as ImagePool;
+}
+
+/**
+ * HSN for a leaf, working around a bug in the shared resolver.
+ *
+ * `categoryDefaultHsn` falls back through `parentOf` (gst-rates.ts:46), which strips
+ * only ONE trailing slug segment. So `her-coords-two-piece` becomes `her-coords-two`,
+ * misses `HSN_BY_PARENT`, and lands on the generic `6109` instead of Co-ords' `6204`;
+ * `bottoms-wide-leg` likewise loses `6203`. We know the real parent, so when the leaf
+ * lookup produces the generic default and the parent has something specific, prefer the
+ * parent's. Fixing `parentOf` itself would change GST classification for listings that
+ * already exist, which is not this seed's call to make.
+ */
+function hsnFor(leafSlug: string, parentSlug: string): string | null {
+  const leafHsn = categoryDefaultHsn(leafSlug);
+  const parentHsn = categoryDefaultHsn(parentSlug);
+  return leafHsn === '6109' && parentHsn !== '6109' ? parentHsn : leafHsn;
 }
 
 const photoUrl = (p: PoolPhoto): string =>
@@ -163,9 +181,12 @@ export type Composed = {
   slots: Slot[];
 };
 
-/** Title-cased brand label; the real one is resolved from the DB at write time. */
-const brandLabel = (slug: string) =>
-  slug.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+/** Real brand name. Throws rather than guessing — this string ships in product copy. */
+const brandLabel = (slug: string): string => {
+  const name = BRAND_NAMES[slug];
+  if (!name) throw new Error(`No display name for brand "${slug}" — add it to BRAND_NAMES`);
+  return name;
+};
 
 export function compose(pool: ImagePool, now: Date): Composed {
   const slots = buildSlots();
@@ -173,18 +194,19 @@ export function compose(pool: ImagePool, now: Date): Composed {
   const listings = slots.map((slot): ComposedListing => {
     const spec = LEAF_SPECS[slot.leafIndex]!;
     const store = STORES[slot.storeIndex]!;
-    const name = productName(spec, slot.k);
-    const colors = productColors(spec, slot.k);
+    const name = productName(spec, slot.k, slot.leafIndex);
+    const colors = productColors(spec, slot.k, slot.leafIndex);
     const sizes = SIZE_RUNS[spec.sizeKind];
-    const price = productPrice(spec, slot.k, slot.countForLeaf);
+    const price = productPrice(spec, slot.k, slot.countForLeaf, slot.leafIndex);
     const pricePaise = price * 100;
     // Every third product carries a struck-through "was" price. The DB requires
     // compareAtPrice > pricePaise, so a flat 1.4x is always valid.
     const compareAtPrice = slot.index % 3 === 0 ? Math.round(pricePaise * 1.4) : null;
 
     // Brand comes from the LEAF's own affinity list, never a global round-robin —
-    // that round-robin is exactly what put Gucci on a sherwani.
-    const brandSlug = spec.brands[slot.k % spec.brands.length]!;
+    // that round-robin is exactly what put Gucci on a sherwani. Offset by the leaf so
+    // neighbouring categories don't all lead with the same label.
+    const brandSlug = spec.brands[(slot.k + slot.leafIndex) % spec.brands.length]!;
 
     const photos = pool[spec.slug] ?? [];
     const gallery = Array.from({ length: Math.min(GALLERY_SIZE, photos.length) }, (_, i) =>
@@ -235,7 +257,7 @@ export function compose(pool: ImagePool, now: Date): Composed {
       brandName: brandLabel(brandSlug),
       description: shortDescription(spec, name, colors),
       descriptionLong: longDescription(spec, name, colors, sizes, brandLabel(brandSlug)),
-      hsn: categoryDefaultHsn(spec.slug),
+      hsn: hsnFor(spec.slug, spec.parentSlug),
       galleryUrls: gallery,
       createdAt: createdAtFor(slot.index, now),
       groups,

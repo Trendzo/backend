@@ -73,16 +73,72 @@ const SPORT = ['nike', 'adidas', 'puma', 'under-armour', 'reebok', 'champion'];
 const SNEAKER = ['nike', 'adidas', 'converse', 'vans', 'new-balance', 'puma'];
 const DENIM_BRANDS = ['levis', 'diesel', 'calvin-klein'];
 const OUTER = ['north-face', 'burberry', 'diesel', 'zara'];
-const ETHNIC = ['manyavar', 'fabindia', 'biba'];
+/** Menswear ethnic only. Biba and W are womenswear labels and belong to her-leaves. */
+const ETHNIC = ['manyavar', 'fabindia'];
 const LEATHER = ['hidesign', 'tommy', 'calvin-klein'];
 const BEAUTY_BRANDS = ['sugar-cosmetics', 'forest-essentials'];
 const GROOMING = ['bombay-shaving', 'forest-essentials'];
+
+/**
+ * Display names for every brand slug the vocabulary references.
+ *
+ * Title-casing the slug is not good enough: it yields "Hm", "Levis" and "W", and these
+ * names are written into the product description that ships to shoppers.
+ */
+export const BRAND_NAMES: Record<string, string> = {
+  zara: 'Zara',
+  hm: 'H&M',
+  uniqlo: 'Uniqlo',
+  'ralph-lauren': 'Ralph Lauren',
+  tommy: 'Tommy Hilfiger',
+  'calvin-klein': 'Calvin Klein',
+  'hugo-boss': 'Hugo Boss',
+  gucci: 'Gucci',
+  prada: 'Prada',
+  versace: 'Versace',
+  burberry: 'Burberry',
+  nike: 'Nike',
+  adidas: 'Adidas',
+  puma: 'Puma',
+  'under-armour': 'Under Armour',
+  reebok: 'Reebok',
+  champion: 'Champion',
+  converse: 'Converse',
+  vans: 'Vans',
+  'new-balance': 'New Balance',
+  levis: "Levi's",
+  diesel: 'Diesel',
+  'north-face': 'The North Face',
+  hidesign: 'Hidesign',
+  titan: 'Titan',
+  'sugar-cosmetics': 'Sugar Cosmetics',
+  'forest-essentials': 'Forest Essentials',
+  'bombay-shaving': 'Bombay Shaving Company',
+  fabindia: 'FabIndia',
+  manyavar: 'Manyavar',
+  biba: 'Biba',
+  w: 'W for Woman',
+  'house-of-closetx': 'House of ClosetX',
+};
+
+/**
+ * Brands that only sell to one rail. Anything absent here is treated as unisex.
+ * Enforced by an invariant, so a womenswear label can never land on a men's leaf —
+ * "Nehru Jacket by Biba" is the same failure as "Sherwani by Gucci", just subtler.
+ */
+export const BRAND_GENDER: Record<string, 'her' | 'him'> = {
+  biba: 'her',
+  w: 'her',
+  manyavar: 'him',
+  'bombay-shaving': 'him',
+};
 
 /** Brands the existing seed does not have. Created idempotently by seed.ts. */
 export const NEW_BRANDS = [
   { slug: 'fabindia', name: 'FabIndia', tintColor: '#8B4513', domain: 'fabindia.com' },
   { slug: 'manyavar', name: 'Manyavar', tintColor: '#7B1113', domain: 'manyavar.com' },
   { slug: 'biba', name: 'Biba', tintColor: '#E23744', domain: 'biba.in' },
+  { slug: 'w', name: 'W for Woman', tintColor: '#9B2D5E', domain: 'wforwoman.com' },
   { slug: 'hidesign', name: 'Hidesign', tintColor: '#5C3A21', domain: 'hidesign.com' },
   { slug: 'titan', name: 'Titan', tintColor: '#0F2B5B', domain: 'titan.co.in' },
   { slug: 'sugar-cosmetics', name: 'Sugar Cosmetics', tintColor: '#1A1A1A', domain: 'sugarcosmetics.com' },
@@ -387,7 +443,7 @@ const LEAVES: Record<string, LeafOverride> = {
   'active-gym-leggings': { noun: 'Gym Leggings', query: 'gym leggings women' },
   'active-track-pants': { noun: 'Track Pants', query: 'track pants' },
   'active-shorts': { noun: 'Gym Shorts', query: 'mens gym shorts' },
-  'active-workout-tops': { noun: 'Workout Top', query: 'womens workout top' },
+  'active-workout-tops': { noun: 'Workout Top', query: 'woman fitness gym clothing' },
   'active-tanks': { noun: 'Tank', query: 'mens gym tank top' },
   'active-windbreakers': { noun: 'Windbreaker', query: 'windbreaker jacket' },
 
@@ -519,7 +575,7 @@ const LEAVES: Record<string, LeafOverride> = {
   // --- him-ethnic -----------------------------------------------------------
   'him-ethnic-kurtas': { noun: 'Kurta', query: 'mens kurta ethnic wear india' },
   'him-ethnic-kurta-sets': { noun: 'Kurta Set', query: 'mens kurta pyjama set india' },
-  'him-ethnic-nehru-jackets': { noun: 'Nehru Jacket', query: 'nehru jacket mens india' },
+  'him-ethnic-nehru-jackets': { noun: 'Nehru Jacket', query: 'indian traditional mens jacket' },
   'him-ethnic-sherwanis': {
     noun: 'Sherwani',
     priceFrom: 8999,
@@ -527,7 +583,7 @@ const LEAVES: Record<string, LeafOverride> = {
     query: 'sherwani groom indian wedding',
     brands: ['manyavar', 'fabindia'],
   },
-  'him-ethnic-pathani': { noun: 'Pathani Suit', query: 'pathani suit mens' },
+  'him-ethnic-pathani': { noun: 'Pathani Suit', query: 'indian mens traditional kurta outfit' },
 
   // --- him-formal -----------------------------------------------------------
   'him-formal-blazers': { noun: 'Blazer', query: 'mens blazer suit jacket' },
@@ -550,9 +606,16 @@ export const LEAF_SPECS: LeafSpec[] = TAXONOMY.flatMap((parent) => {
     const slug = leafSlug(parent, leaf.key);
     const override = LEAVES[slug];
     if (!override) throw new Error(`No leaf spec for "${slug}"`);
+    const merged = { ...defaults, ...override };
     return {
-      ...defaults,
-      ...override,
+      ...merged,
+      // Palettes are composed by slicing shared lists, and those lists overlap — both
+      // NEUTRALS and LEATHER_TONES carry "Black". A repeated colour name would produce
+      // two variant groups with the same name on one listing, which
+      // `variant_groups_listing_name_idx` (listing_id, lower(name)) rejects.
+      colors: merged.colors.filter(
+        (c, i, all) => all.findIndex((o) => o.name.toLowerCase() === c.name.toLowerCase()) === i,
+      ),
       slug,
       parentSlug: pSlug,
       // Leaf gender falls back to the parent's, exactly as category-taxonomy.ts seeds it.
@@ -561,27 +624,44 @@ export const LEAF_SPECS: LeafSpec[] = TAXONOMY.flatMap((parent) => {
   });
 });
 
-/** Name for product `k` of a leaf. Distinct qualifiers per k keep names unique. */
-export function productName(spec: LeafSpec, k: number): string {
-  const qualifier = spec.qualifiers[k % spec.qualifiers.length]!;
+/**
+ * Every picker below is offset by BOTH the product index and the leaf index.
+ *
+ * k alone keeps the 3-4 products within a leaf distinct, but it made every k=0 product
+ * across the whole catalog identical in style: "Relaxed Cotton T-Shirt", "Relaxed
+ * Cotton Shirt", "Relaxed Cotton Polo" — all Zara, all Rs 799, all Black/Ivory. Adding
+ * the leaf index rotates each leaf's starting point, so browsing a parent category
+ * shows variety instead of an obvious template.
+ *
+ * Within-leaf distinctness survives because k varies over consecutive values and every
+ * qualifier list holds at least 4 entries.
+ */
+
+/** Name for product `k` of a leaf. Always ends in the leaf's noun. */
+export function productName(spec: LeafSpec, k: number, leafIndex: number): string {
+  const qualifier = spec.qualifiers[(k + leafIndex) % spec.qualifiers.length]!;
   const material = spec.materials.length
-    ? spec.materials[(k * 2) % spec.materials.length]!
+    ? spec.materials[(k * 2 + leafIndex) % spec.materials.length]!
     : null;
   return [qualifier, material, spec.noun].filter(Boolean).join(' ');
 }
 
-/** Straight-line price across the leaf's band, so the 3-4 products differ sensibly. */
-export function productPrice(spec: LeafSpec, k: number, count: number): number {
-  if (count <= 1) return spec.priceFrom;
-  return (
-    spec.priceFrom + Math.round(((spec.priceTo - spec.priceFrom) * k) / (count - 1))
-  );
+/** Straight-line price across the leaf's band, plus a deterministic +/-5% nudge so
+ *  sibling leaves in one parent don't all open at exactly the band floor. */
+export function productPrice(spec: LeafSpec, k: number, count: number, leafIndex: number): number {
+  const base =
+    count <= 1
+      ? spec.priceFrom
+      : spec.priceFrom + Math.round(((spec.priceTo - spec.priceFrom) * k) / (count - 1));
+  const jitterPct = ((leafIndex * 37) % 11) - 5;
+  return Math.max(99, Math.round((base * (100 + jitterPct)) / 100 / 10) * 10);
 }
 
-/** Two colourways per product, offset by k so a leaf's products are not identical. */
-export function productColors(spec: LeafSpec, k: number): Colorway[] {
+/** Two colourways per product. Deduped upstream, so the pair is never the same name. */
+export function productColors(spec: LeafSpec, k: number, leafIndex: number): Colorway[] {
   const n = spec.colors.length;
-  return [spec.colors[(k * 2) % n]!, spec.colors[(k * 2 + 1) % n]!];
+  const start = (k * 2 + leafIndex) % n;
+  return [spec.colors[start]!, spec.colors[(start + 1) % n]!];
 }
 
 if (LEAF_SPECS.length !== 118) {

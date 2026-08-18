@@ -115,6 +115,10 @@ async function main(): Promise<void> {
     .where(inArray(brands.slug, wantedBrands));
   const brandBySlug = new Map(brandRows.map((b) => [b.slug, b.id]));
   const missingBrands = wantedBrands.filter((s) => !brandBySlug.has(s));
+  // A brand the vocabulary references, that is neither in the DB nor in NEW_BRANDS,
+  // would otherwise only blow up inside the transaction. Catch it in the dry run.
+  const newBrandSlugs = new Set<string>(NEW_BRANDS.map((b) => b.slug));
+  const uncreatable = missingBrands.filter((s) => !newBrandSlugs.has(s));
 
   const storeIds = STORES.map((s) => storeId(s.n));
   const existingStores = await db
@@ -139,6 +143,12 @@ async function main(): Promise<void> {
   console.log(`  email collisions           ${clashEmail.length}`);
   console.log(`  phone collisions           ${clashPhone.length}`);
 
+  if (uncreatable.length) {
+    console.error(`\nBrands referenced by leaf-catalog.ts but neither seeded nor in NEW_BRANDS:`);
+    for (const s of uncreatable) console.error(`  - ${s}`);
+    await pool.end();
+    process.exit(1);
+  }
   if (existingStores.length) {
     console.error('\nThese stores already exist. Run teardown.ts first, or leave them be.');
     await pool.end();
@@ -320,25 +330,32 @@ async function main(): Promise<void> {
     for (const batch of chunked(allVariants)) await tx.insert(variants).values(batch);
 
     // --- 5. verify through the REAL predicates, then commit ----------------
-    const [check] = await tx
-      .select({
-        listings: sql<number>`count(*)::int`,
-        publishable: sql<number>`count(*) FILTER (
-          WHERE ${productListings.status} = 'active'
-            AND coalesce(btrim(${productListings.name}), '') <> ''
-            AND coalesce(btrim(${productListings.description}), '') <> ''
-            AND coalesce(btrim(${productListings.descriptionLong}), '') <> ''
-            AND jsonb_array_length(${productListings.galleryUrls}) >= 1
+    // Raw SQL with an explicit `pl` alias. Interpolating drizzle Column objects into a
+    // template that also declares its own aliases leaves bare column references the
+    // planner can resolve against more than one relation ("column reference id is
+    // ambiguous", SQLSTATE 42702).
+    const verify = await tx.execute(sql`
+      SELECT
+        count(*)::int AS listings,
+        count(*) FILTER (
+          WHERE pl.status = 'active'
+            AND coalesce(btrim(pl.name), '') <> ''
+            AND coalesce(btrim(pl.description), '') <> ''
+            AND coalesce(btrim(pl.description_long), '') <> ''
+            AND jsonb_array_length(pl.gallery_urls) >= 1
             AND EXISTS (
-              SELECT 1 FROM variants v JOIN variant_groups vg ON vg.id = v.group_id
-              WHERE v.listing_id = ${productListings.id}
+              SELECT 1
+              FROM variants v
+              JOIN variant_groups vg ON vg.id = v.group_id
+              WHERE v.listing_id = pl.id
                 AND v.is_active AND vg.is_active
                 AND v.price_paise > 0 AND v.sku IS NOT NULL
             )
-        )::int`,
-      })
-      .from(productListings)
-      .where(inArray(productListings.storeId, storeIds));
+        )::int AS publishable
+      FROM product_listings pl
+      WHERE pl.store_id IN (${sql.join(storeIds.map((id) => sql`${id}`), sql`, `)})
+    `);
+    const check = verify.rows[0] as { listings: number; publishable: number } | undefined;
 
     console.log(`  verified: ${check?.publishable}/${check?.listings} listings publishable + visible`);
     if (check?.listings !== composed.listings.length || check.publishable !== composed.listings.length) {
