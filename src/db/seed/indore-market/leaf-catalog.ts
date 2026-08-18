@@ -16,7 +16,7 @@
  * per leaf and only genuinely different leaves carry detail.
  */
 
-import { TAXONOMY, leafSlug, type Gender } from '@/shared/catalog/taxonomy.js';
+import { TAXONOMY, leafSlug, parentSlug, type Gender } from '@/shared/catalog/taxonomy.js';
 
 export type SizeKind = 'letter' | 'waist' | 'shoe' | 'one';
 
@@ -210,7 +210,7 @@ const PARENTS: Record<string, ParentDefaults> = {
     brands: [...BASICS, ...PREMIUM],
     occasion: ['brunch', 'office'],
   },
-  'her-dresses': {
+  'dresses': {
     sizeKind: 'letter',
     priceFrom: 1499,
     priceTo: 5999,
@@ -220,7 +220,7 @@ const PARENTS: Record<string, ParentDefaults> = {
     brands: [...BASICS, 'zara', ...LUXURY.slice(0, 2)],
     occasion: ['party', 'date'],
   },
-  'her-coords': {
+  'coords': {
     sizeKind: 'letter',
     priceFrom: 1999,
     priceTo: 4999,
@@ -320,7 +320,7 @@ const PARENTS: Record<string, ParentDefaults> = {
     brands: [...LEATHER, ...BASICS.slice(0, 2)],
     occasion: ['streetwear'],
   },
-  'her-jewelry': {
+  'jewelry': {
     sizeKind: 'one',
     priceFrom: 599,
     priceTo: 3999,
@@ -341,7 +341,7 @@ const PARENTS: Record<string, ParentDefaults> = {
     brands: BEAUTY_BRANDS,
     occasion: ['date', 'party'],
   },
-  'him-ethnic': {
+  'ethnic': {
     sizeKind: 'letter',
     priceFrom: 1999,
     priceTo: 6999,
@@ -351,7 +351,7 @@ const PARENTS: Record<string, ParentDefaults> = {
     brands: ETHNIC,
     occasion: ['wedding', 'formal'],
   },
-  'him-formal': {
+  'formal': {
     sizeKind: 'letter',
     priceFrom: 2999,
     priceTo: 9999,
@@ -390,19 +390,19 @@ const LEAVES: Record<string, LeafOverride> = {
     materials: ['Wool Blend', 'Cotton Knit', 'Merino', 'Chunky Knit'],
   },
 
-  // --- her-dresses ----------------------------------------------------------
-  'her-dresses-mini': { noun: 'Mini Dress', query: 'mini dress' },
-  'her-dresses-midi': { noun: 'Midi Dress', query: 'midi dress' },
-  'her-dresses-maxi': { noun: 'Maxi Dress', query: 'maxi dress' },
-  'her-dresses-bodycon': { noun: 'Bodycon Dress', query: 'bodycon dress' },
-  'her-dresses-party': { noun: 'Party Dress', query: 'party dress evening' },
-  'her-dresses-casual': { noun: 'Casual Dress', query: 'casual day dress' },
+  // --- dresses ----------------------------------------------------------
+  'dresses-mini': { noun: 'Mini Dress', query: 'mini dress' },
+  'dresses-midi': { noun: 'Midi Dress', query: 'midi dress' },
+  'dresses-maxi': { noun: 'Maxi Dress', query: 'maxi dress' },
+  'dresses-bodycon': { noun: 'Bodycon Dress', query: 'bodycon dress' },
+  'dresses-party': { noun: 'Party Dress', query: 'party dress evening' },
+  'dresses-casual': { noun: 'Casual Dress', query: 'casual day dress' },
 
-  // --- her-coords -----------------------------------------------------------
-  'her-coords-two-piece': { noun: 'Two-Piece Set', query: 'two piece co-ord set women' },
-  'her-coords-matching': { noun: 'Matching Set', query: 'matching co-ord set women' },
-  'her-coords-skirt-sets': { noun: 'Skirt Set', query: 'skirt and top co-ord set' },
-  'her-coords-pant-sets': { noun: 'Pant Set', query: 'pant co-ord set women' },
+  // --- coords -----------------------------------------------------------
+  'coords-two-piece': { noun: 'Two-Piece Set', query: 'two piece co-ord set women' },
+  'coords-matching': { noun: 'Matching Set', query: 'matching co-ord set women' },
+  'coords-skirt-sets': { noun: 'Skirt Set', query: 'skirt and top co-ord set' },
+  'coords-pant-sets': { noun: 'Pant Set', query: 'pant co-ord set women' },
 
   // --- bottoms --------------------------------------------------------------
   'bottoms-pants': { noun: 'Pants', sizeKind: 'letter', query: 'womens trousers pants' },
@@ -531,12 +531,12 @@ const LEAVES: Record<string, LeafOverride> = {
     materials: ['Nylon', 'Opaque Knit', 'Sheer'],
   },
 
-  // --- her-jewelry ----------------------------------------------------------
-  'her-jewelry-earrings': { noun: 'Earrings', query: 'earrings jewelry' },
-  'her-jewelry-necklaces': { noun: 'Necklace', query: 'necklace jewelry' },
-  'her-jewelry-rings': { noun: 'Ring', query: 'ring jewelry' },
-  'her-jewelry-bracelets': { noun: 'Bracelet', query: 'bracelet jewelry' },
-  'her-jewelry-anklets': { noun: 'Anklet', query: 'anklet jewelry' },
+  // --- jewelry ----------------------------------------------------------
+  'jewelry-earrings': { noun: 'Earrings', query: 'earrings jewelry' },
+  'jewelry-necklaces': { noun: 'Necklace', query: 'necklace jewelry' },
+  'jewelry-rings': { noun: 'Ring', query: 'ring jewelry' },
+  'jewelry-bracelets': { noun: 'Bracelet', query: 'bracelet jewelry' },
+  'jewelry-anklets': { noun: 'Anklet', query: 'anklet jewelry' },
 
   // --- beauty ---------------------------------------------------------------
   'beauty-makeup': { noun: 'Lipstick', query: 'lipstick makeup product' },
@@ -572,25 +572,25 @@ const LEAVES: Record<string, LeafOverride> = {
     brands: GROOMING,
   },
 
-  // --- him-ethnic -----------------------------------------------------------
-  'him-ethnic-kurtas': { noun: 'Kurta', query: 'mens kurta ethnic wear india' },
-  'him-ethnic-kurta-sets': { noun: 'Kurta Set', query: 'mens kurta pyjama set india' },
-  'him-ethnic-nehru-jackets': { noun: 'Nehru Jacket', query: 'indian traditional mens jacket' },
-  'him-ethnic-sherwanis': {
+  // --- ethnic -----------------------------------------------------------
+  'ethnic-kurtas': { noun: 'Kurta', query: 'mens kurta ethnic wear india' },
+  'ethnic-kurta-sets': { noun: 'Kurta Set', query: 'mens kurta pyjama set india' },
+  'ethnic-nehru-jackets': { noun: 'Nehru Jacket', query: 'indian traditional mens jacket' },
+  'ethnic-sherwanis': {
     noun: 'Sherwani',
     priceFrom: 8999,
     priceTo: 24999,
     query: 'sherwani groom indian wedding',
     brands: ['manyavar', 'fabindia'],
   },
-  'him-ethnic-pathani': { noun: 'Pathani Suit', query: 'indian mens traditional kurta outfit' },
+  'ethnic-pathani': { noun: 'Pathani Suit', query: 'indian mens traditional kurta outfit' },
 
-  // --- him-formal -----------------------------------------------------------
-  'him-formal-blazers': { noun: 'Blazer', query: 'mens blazer suit jacket' },
-  'him-formal-suits': { noun: 'Suit', priceFrom: 8999, priceTo: 19999, query: 'mens two piece suit' },
-  'him-formal-shirts': { noun: 'Formal Shirt', priceFrom: 1299, priceTo: 3499, query: 'mens formal shirt' },
-  'him-formal-trousers': { noun: 'Formal Trousers', sizeKind: 'waist', query: 'mens formal trousers' },
-  'him-formal-waistcoats': { noun: 'Waistcoat', query: 'mens waistcoat vest formal' },
+  // --- formal -----------------------------------------------------------
+  'formal-blazers': { noun: 'Blazer', query: 'mens blazer suit jacket' },
+  'formal-suits': { noun: 'Suit', priceFrom: 8999, priceTo: 19999, query: 'mens two piece suit' },
+  'formal-shirts': { noun: 'Formal Shirt', priceFrom: 1299, priceTo: 3499, query: 'mens formal shirt' },
+  'formal-trousers': { noun: 'Formal Trousers', sizeKind: 'waist', query: 'mens formal trousers' },
+  'formal-waistcoats': { noun: 'Waistcoat', query: 'mens waistcoat vest formal' },
 };
 
 /**
@@ -598,7 +598,9 @@ const LEAVES: Record<string, LeafOverride> = {
  * order. Order is load-bearing: the distribution in seed.ts indexes this array.
  */
 export const LEAF_SPECS: LeafSpec[] = TAXONOMY.flatMap((parent) => {
-  const pSlug = parent.gender === 'unisex' ? parent.key : `${parent.gender}-${parent.key}`;
+  // Use the helper rather than rebuilding the slug: it is the single definition of the
+  // rule, and duplicating it here is how this file kept gendered slugs after the rename.
+  const pSlug = parentSlug(parent);
   const defaults = PARENTS[pSlug];
   if (!defaults) throw new Error(`No parent defaults for "${pSlug}"`);
 

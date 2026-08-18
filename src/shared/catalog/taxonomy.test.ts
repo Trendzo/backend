@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TAXONOMY, leafSlug, parentSlug, railFor } from './taxonomy.js';
+import { TAXONOMY, canonicalCategorySlug, leafSlug, parentSlug, railFor } from './taxonomy.js';
 
 /**
  * The taxonomy is stored once as a mixed-gender tree but has to render as the two
@@ -87,6 +87,46 @@ describe('category taxonomy', () => {
       for (const l of p.leaves) {
         expect(l.gender ?? p.gender, `${p.key}/${l.key}`).toBe(p.gender);
       }
+    }
+  });
+});
+
+/**
+ * Slugs dropped their gender prefix, but apps already on phones — and CMS rows, and
+ * order snapshots — still send the old ones. If this alias map ever stops covering
+ * them, category browse silently returns nothing for those clients.
+ */
+describe('legacy category slugs', () => {
+  it('maps every renamed parent and leaf to its current slug', () => {
+    expect(canonicalCategorySlug('her-dresses')).toBe('dresses');
+    expect(canonicalCategorySlug('her-dresses-midi')).toBe('dresses-midi');
+    expect(canonicalCategorySlug('her-coords-skirt-sets')).toBe('coords-skirt-sets');
+    expect(canonicalCategorySlug('her-jewelry-necklaces')).toBe('jewelry-necklaces');
+    expect(canonicalCategorySlug('him-ethnic-kurtas')).toBe('ethnic-kurtas');
+    expect(canonicalCategorySlug('him-formal-waistcoats')).toBe('formal-waistcoats');
+  });
+
+  it('covers every leaf of every renamed parent, not just the ones spot-checked', () => {
+    for (const p of TAXONOMY) {
+      if (p.gender === 'unisex') continue;
+      const legacyParent = `${p.gender}-${p.key}`;
+      expect(canonicalCategorySlug(legacyParent)).toBe(p.key);
+      for (const l of p.leaves) {
+        expect(canonicalCategorySlug(`${legacyParent}-${l.key}`)).toBe(`${p.key}-${l.key}`);
+      }
+    }
+  });
+
+  it('passes unknown and already-current slugs through untouched', () => {
+    expect(canonicalCategorySlug('tops-tshirts')).toBe('tops-tshirts');
+    expect(canonicalCategorySlug('dresses-midi')).toBe('dresses-midi');
+    expect(canonicalCategorySlug('not-a-slug')).toBe('not-a-slug');
+  });
+
+  it('leaves no current slug carrying a rail prefix', () => {
+    for (const p of TAXONOMY) {
+      expect(parentSlug(p).startsWith('her-')).toBe(false);
+      expect(parentSlug(p).startsWith('him-')).toBe(false);
     }
   });
 });

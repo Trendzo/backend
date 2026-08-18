@@ -44,7 +44,7 @@ export function loadImagePool(): ImagePool {
  * HSN for a leaf, working around a bug in the shared resolver.
  *
  * `categoryDefaultHsn` falls back through `parentOf` (gst-rates.ts:46), which strips
- * only ONE trailing slug segment. So `her-coords-two-piece` becomes `her-coords-two`,
+ * only ONE trailing slug segment. So `coords-two-piece` becomes `coords-two`,
  * misses `HSN_BY_PARENT`, and lands on the generic `6109` instead of Co-ords' `6204`;
  * `bottoms-wide-leg` likewise loses `6203`. We know the real parent, so when the leaf
  * lookup produces the generic default and the parent has something specific, prefer the

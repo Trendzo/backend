@@ -20,7 +20,7 @@ import { eq, inArray, sql } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
 import { categories, productListings } from '@/db/schema/index.js';
 import type { Gender } from '@/shared/catalog/taxonomy.js';
-import { TAXONOMY, leafSlug, parentSlug } from '@/shared/catalog/taxonomy.js';
+import { LEGACY_CATEGORY_SLUGS, TAXONOMY, leafSlug, parentSlug } from '@/shared/catalog/taxonomy.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 
 /**
@@ -36,14 +36,14 @@ import { IdPrefix, newId } from '@/shared/ids.js';
  */
 export const LISTING_REMAP: Record<string, string> = {
   // HER — dresses
-  'Silk Slip Dress': 'her-dresses-midi',
-  'Floral Maxi Dress': 'her-dresses-maxi',
-  'Elegant Mini Dress': 'her-dresses-mini',
-  'Satin Wrap Dress': 'her-dresses-party',
-  'Pleated Midi Dress': 'her-dresses-midi',
-  'Boho Maxi Dress': 'her-dresses-maxi',
-  'Sunset Tiered Maxi': 'her-dresses-maxi',
-  'Cotton Slub Maxi': 'her-dresses-maxi',
+  'Silk Slip Dress': 'dresses-midi',
+  'Floral Maxi Dress': 'dresses-maxi',
+  'Elegant Mini Dress': 'dresses-mini',
+  'Satin Wrap Dress': 'dresses-party',
+  'Pleated Midi Dress': 'dresses-midi',
+  'Boho Maxi Dress': 'dresses-maxi',
+  'Sunset Tiered Maxi': 'dresses-maxi',
+  'Cotton Slub Maxi': 'dresses-maxi',
   // HER — tops
   'Crop Top': 'tops-crop-tops',
   'Silk Camisole': 'tops-camis',
@@ -69,7 +69,7 @@ export const LISTING_REMAP: Record<string, string> = {
   'Slim Fit Oxford Shirt': 'tops-shirts',
   'Linen Summer Shirt': 'tops-shirts',
   'Flannel Check Shirt': 'tops-shirts',
-  'Black Dress Shirt': 'him-formal-shirts',
+  'Black Dress Shirt': 'formal-shirts',
   'Graphic Oversized Tee': 'tops-tshirts',
   'Essential Crew Tee': 'tops-tshirts',
   'Classic Polo Shirt': 'tops-polos',
@@ -126,13 +126,12 @@ const FALLBACK_REMAP: Record<string, string> = {
   footwear: 'shoes-sneakers',
   accessories: 'accessories-belts',
   'her-tops': 'tops-blouses',
-  'her-dresses': 'her-dresses-midi',
   'her-bottoms': 'bottoms-trousers',
   'her-heels': 'shoes-heels',
   'her-bags': 'bags-totes',
   'her-beauty': 'beauty-makeup',
   'her-coats': 'outerwear-coats',
-  'her-maxi': 'her-dresses-maxi',
+  'her-maxi': 'dresses-maxi',
   'him-shirts': 'tops-shirts',
   'him-tshirts': 'tops-tshirts',
   'him-bottoms': 'bottoms-trousers',
@@ -144,8 +143,9 @@ const FALLBACK_REMAP: Record<string, string> = {
 };
 
 /**
- * The flat pre-taxonomy slugs. `accessories` and `her-dresses` are NOT here — they are
- * reused as nodes of the new tree, so they are upserted rather than retired.
+ * The flat pre-taxonomy slugs. `accessories` and `her-dresses` are NOT here — the first
+ * is reused as a node of the new tree, and the second IS the Dresses parent, renamed to
+ * `dresses` by the slug-rename pass rather than retired.
  */
 const RETIRED_SLUGS = [
   'apparel',
@@ -169,6 +169,31 @@ const RETIRED_SLUGS = [
 
 export async function seedCategoryTaxonomy(database: typeof Db): Promise<void> {
   const idBySlug = new Map<string, string>();
+
+  /**
+   * Slugs lost their gender prefix. Rename the EXISTING rows in place before anything
+   * upserts, so ids survive and every listing keeps its category.
+   *
+   * Doing this by upsert instead would insert fresh `dresses-mini` rows while the
+   * listings stayed pointed at `her-dresses-mini`, leaving the old node undeletable and
+   * its products invisible — a parent with no children is filtered off the rail.
+   */
+  for (const [oldSlug, newSlug] of Object.entries(LEGACY_CATEGORY_SLUGS)) {
+    const stale = await database.query.categories.findFirst({
+      where: eq(categories.slug, oldSlug),
+      columns: { id: true },
+    });
+    if (!stale) continue;
+    const taken = await database.query.categories.findFirst({
+      where: eq(categories.slug, newSlug),
+      columns: { id: true },
+    });
+    // A previous run already created the new row; drop the rename and let the upsert
+    // converge, rather than colliding with categories_slug_idx.
+    if (taken) continue;
+    await database.update(categories).set({ slug: newSlug }).where(eq(categories.id, stale.id));
+    console.log(`  → renamed category ${oldSlug} → ${newSlug}`);
+  }
 
   /** Insert or converge one row. Image URL is never touched — fix-images.ts owns it. */
   async function upsert(row: {

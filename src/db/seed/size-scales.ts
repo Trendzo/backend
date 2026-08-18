@@ -24,14 +24,14 @@ const APPAREL = [
   'active',
   'lounge',
   'swim',
-  'her-dresses',
-  'her-coords',
-  'him-ethnic',
-  'him-formal',
+  'dresses',
+  'coords',
+  'ethnic',
+  'formal',
 ];
-const BOTTOMS = ['bottoms', 'denim', 'him-formal'];
+const BOTTOMS = ['bottoms', 'denim', 'formal'];
 const FOOTWEAR = ['shoes'];
-const ACCESSORIES = ['accessories', 'bags', 'her-jewelry'];
+const ACCESSORIES = ['accessories', 'bags', 'jewelry'];
 
 type Scale = { name: string; values: string[]; categorySlugs: string[]; sortOrder: number };
 

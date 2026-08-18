@@ -19,7 +19,7 @@ const u = (id: string, w = 600) =>
   `https://images.unsplash.com/photo-${id}?w=${w}&q=80&auto=format&fit=crop`;
 
 /**
- * Pools are keyed by TAXONOMY PARENT slug (`tops`, `shoes`, `her-dresses`…). Leaves
+ * Pools are keyed by TAXONOMY PARENT slug (`tops`, `shoes`, `dresses`…). Leaves
  * inherit their parent's pool via `poolFor`, so adding a sub-category never needs new
  * art here — `tops-bodysuits` draws from the `tops` pool.
  *
@@ -27,8 +27,8 @@ const u = (id: string, w = 600) =>
  */
 const POOLS: Record<string, string[]> = {
   tops: [u('1485518882345-15568b007407'), u('1521572163474-6864f9cf17ab'), u('1503341504253-dff4815485f1'), u('1576566588028-4147f3842f27')],
-  'her-dresses': [u('1595777457583-95e059d581b8'), u('1572804013309-59a88b7e92f1'), u('1612336307429-8a898d10e223'), u('1496747611176-843222e1e57c')],
-  'her-coords': [u('1583496661160-fb5886a0aaaa'), u('1604176354204-9268737828e4'), u('1572804013309-59a88b7e92f1')],
+  'dresses': [u('1595777457583-95e059d581b8'), u('1572804013309-59a88b7e92f1'), u('1612336307429-8a898d10e223'), u('1496747611176-843222e1e57c')],
+  'coords': [u('1583496661160-fb5886a0aaaa'), u('1604176354204-9268737828e4'), u('1572804013309-59a88b7e92f1')],
   bottoms: [u('1541099649105-f69ad21f3246'), u('1604176354204-9268737828e4'), u('1583496661160-fb5886a0aaaa'), u('1473966968600-fa801b869a1a')],
   denim: [u('1624378439575-d8705ad7ae80'), u('1541099649105-f69ad21f3246'), u('1473966968600-fa801b869a1a')],
   lounge: [u('1522335789203-aabd1fc54bc9'), u('1485518882345-15568b007407'), u('1552902865-b72c031ac5ea')],
@@ -38,10 +38,10 @@ const POOLS: Record<string, string[]> = {
   shoes: [u('1542291026-7eec264c27ff'), u('1549298916-b41d501d3772'), u('1595950653106-6c9ebd614d3a'), u('1600185365926-3a2ce3cdb9eb'), u('1543163521-1bf539c55dd2'), u('1596703263926-eb0762ee17e4')],
   bags: [u('1584917865442-de89df76afd3'), u('1590874103328-eac38a683ce7'), u('1548036328-c9fa89d128fa'), u('1553062407-98eeb64c6a62')],
   accessories: [u('1553062407-98eeb64c6a62'), u('1588850561407-ed78c282e89b'), u('1586350977771-b3b0abd50c82'), u('1572635196237-14b3f281503f'), u('1524592094714-0f0654e20314'), u('1511499767150-a48a237f0083')],
-  'her-jewelry': [u('1523275335684-37898b6baf30'), u('1586350977771-b3b0abd50c82'), u('1588850561407-ed78c282e89b')],
+  'jewelry': [u('1523275335684-37898b6baf30'), u('1586350977771-b3b0abd50c82'), u('1588850561407-ed78c282e89b')],
   beauty: [u('1586495777744-4413f21062fa'), u('1522335789203-aabd1fc54bc9')],
-  'him-ethnic': [u('1596755094514-f87e34085b2c'), u('1602810318383-e386cc2a3ccf')],
-  'him-formal': [u('1602810318383-e386cc2a3ccf'), u('1596755094514-f87e34085b2c'), u('1522312346375-d1a52e2b99b3')],
+  'ethnic': [u('1596755094514-f87e34085b2c'), u('1602810318383-e386cc2a3ccf')],
+  'formal': [u('1602810318383-e386cc2a3ccf'), u('1596755094514-f87e34085b2c'), u('1522312346375-d1a52e2b99b3')],
   // Retired flat slugs, kept so a partially-migrated DB still resolves.
   apparel: [u('1556821840-3a63f95609a7'), u('1509942774463-acf339cf87d5'), u('1521572163474-6864f9cf17ab'), u('1552902865-b72c031ac5ea')],
   footwear: [u('1549298916-b41d501d3772'), u('1595950653106-6c9ebd614d3a'), u('1600185365926-3a2ce3cdb9eb'), u('1542291026-7eec264c27ff')],

@@ -91,7 +91,7 @@ async function main() {
   const genericBrand = await db.query.brands.findFirst({ where: eq(brands.slug, 'generic') });
   const catApparel = await db.query.categories.findFirst({ where: eq(categories.slug, 'tops-tshirts') });
   const herTops = await db.query.categories.findFirst({ where: eq(categories.slug, 'tops-blouses') });
-  const herDresses = await db.query.categories.findFirst({ where: eq(categories.slug, 'her-dresses-midi') });
+  const herDresses = await db.query.categories.findFirst({ where: eq(categories.slug, 'dresses-midi') });
   const himShirts = await db.query.categories.findFirst({ where: eq(categories.slug, 'tops-shirts') });
 
   const brandId = genericBrand?.id ?? null;

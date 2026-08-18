@@ -13,6 +13,7 @@
  */
 
 import { db } from '@/db/client.js';
+import { canonicalCategorySlug } from './taxonomy.js';
 
 export type CategoryNode = {
   id: string;
@@ -58,9 +59,13 @@ export async function resolveDescendantIds(ref: {
 }): Promise<string[] | null> {
   if (!ref.categoryId && !ref.categorySlug) return null;
   const nodes = await loadNodes();
+  // Category slugs lost their gender prefix; shipped apps and CMS rows still send the
+  // old ones, so every inbound slug is normalised here — the single choke point for
+  // slug→category resolution.
+  const slug = ref.categorySlug ? canonicalCategorySlug(ref.categorySlug) : undefined;
   const root = ref.categoryId
     ? nodes.find((n) => n.id === ref.categoryId)
-    : nodes.find((n) => n.slug === ref.categorySlug);
+    : nodes.find((n) => n.slug === slug);
   if (!root) return null;
 
   const childrenByParent = new Map<string, CategoryNode[]>();

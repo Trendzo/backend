@@ -99,11 +99,11 @@ const PARENT_PROFILE: Record<
   bags: { sizes: 'one', priceFrom: 999, priceTo: 5999, occ: ['brunch', 'travel'] },
   accessories: { sizes: 'one', priceFrom: 499, priceTo: 2999, occ: ['streetwear'] },
   beauty: { sizes: 'one', priceFrom: 399, priceTo: 2499, occ: ['date', 'party'] },
-  'her-dresses': { sizes: 'letter', priceFrom: 1499, priceTo: 5999, occ: ['party', 'date'] },
-  'her-coords': { sizes: 'letter', priceFrom: 1999, priceTo: 4999, occ: ['brunch', 'party'] },
-  'her-jewelry': { sizes: 'one', priceFrom: 599, priceTo: 3999, occ: ['party', 'wedding'] },
-  'him-ethnic': { sizes: 'letter', priceFrom: 1999, priceTo: 6999, occ: ['wedding', 'formal'] },
-  'him-formal': { sizes: 'waist', priceFrom: 2999, priceTo: 9999, occ: ['formal', 'office'] },
+  'dresses': { sizes: 'letter', priceFrom: 1499, priceTo: 5999, occ: ['party', 'date'] },
+  'coords': { sizes: 'letter', priceFrom: 1999, priceTo: 4999, occ: ['brunch', 'party'] },
+  'jewelry': { sizes: 'one', priceFrom: 599, priceTo: 3999, occ: ['party', 'wedding'] },
+  'ethnic': { sizes: 'letter', priceFrom: 1999, priceTo: 6999, occ: ['wedding', 'formal'] },
+  'formal': { sizes: 'waist', priceFrom: 2999, priceTo: 9999, occ: ['formal', 'office'] },
 };
 
 const SIZE_RUNS: Record<SizeKind, string[]> = {

@@ -19,6 +19,8 @@
  * especially fine-jewellery (3%, a separate chapter with its own rules).
  */
 
+import { canonicalCategorySlug } from '@/shared/catalog/taxonomy.js';
+
 /** GST rate in basis points (1% = 100bp). */
 export const GstRateBp = {
   zero: 0,
@@ -53,7 +55,7 @@ const KIND_BY_PARENT: Record<string, GstKind> = {
   shoes: 'footwear',
   bags: 'accessory',
   accessories: 'accessory',
-  'her-jewelry': 'accessory',
+  'jewelry': 'accessory',
   beauty: 'cosmetics',
   // Legacy flat slugs, still reachable via order/POS snapshots taken before the retaxonomy.
   footwear: 'footwear',
@@ -71,9 +73,17 @@ const KIND_BY_LEAF: Record<string, GstKind> = {
   'accessories-scarves': 'apparel',
 };
 
-/** Resolve a category slug (leaf or parent) to its GST kind. */
+/**
+ * Resolve a category slug (leaf or parent) to its GST kind.
+ *
+ * Normalised first because order items, POS sales and invoices snapshot the category
+ * slug AT THE TIME OF SALE. Those historical rows still carry the gender-prefixed slugs,
+ * and a miss here silently falls through to 'apparel' — which would change the tax kind
+ * on a jewellery or footwear line when a return or credit note is computed later.
+ */
 function kindForSlug(slug: string): GstKind {
-  return KIND_BY_LEAF[slug] ?? KIND_BY_PARENT[slug] ?? KIND_BY_PARENT[parentOf(slug)] ?? 'apparel';
+  const s = canonicalCategorySlug(slug);
+  return KIND_BY_LEAF[s] ?? KIND_BY_PARENT[s] ?? KIND_BY_PARENT[parentOf(s)] ?? 'apparel';
 }
 
 /** Classify a line into a GST kind from its category slug + HSN. HSN wins when recognisable. */
@@ -142,9 +152,12 @@ export function resolveGstRateBp(input: {
  */
 export function categoryDefaultHsn(categorySlug: string | null): string | null {
   if (!categorySlug) return null;
-  const leafHit = HSN_BY_LEAF[categorySlug];
+  // Normalised for the same reason as kindForSlug: historical snapshots carry the old
+  // gender-prefixed slugs.
+  const slug = canonicalCategorySlug(categorySlug);
+  const leafHit = HSN_BY_LEAF[slug];
   if (leafHit) return leafHit;
-  return HSN_BY_PARENT[categorySlug] ?? HSN_BY_PARENT[parentOf(categorySlug)] ?? '6109';
+  return HSN_BY_PARENT[slug] ?? HSN_BY_PARENT[parentOf(slug)] ?? '6109';
 }
 
 /**
@@ -163,11 +176,11 @@ const HSN_BY_PARENT: Record<string, string> = {
   bags: '4202',
   accessories: '4202',
   beauty: '3304',
-  'her-dresses': '6204',
-  'her-coords': '6204',
-  'her-jewelry': '7117',
-  'him-ethnic': '6205',
-  'him-formal': '6203',
+  'dresses': '6204',
+  'coords': '6204',
+  'jewelry': '7117',
+  'ethnic': '6205',
+  'formal': '6203',
   // Legacy flat slugs, kept so pre-retaxonomy snapshots still resolve.
   apparel: '6109',
   footwear: '6403',
@@ -189,7 +202,7 @@ const HSN_BY_LEAF: Record<string, string> = {
   'accessories-scarves': '6214',
   'accessories-caps': '6505',
   'accessories-hats': '6505',
-  'him-formal-shirts': '6205',
+  'formal-shirts': '6205',
   'beauty-fragrance': '3303',
   'beauty-hair': '3305',
 };

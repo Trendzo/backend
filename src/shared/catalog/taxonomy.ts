@@ -345,13 +345,43 @@ export const TAXONOMY: Parent[] = [
   },
 ];
 
-/** Slug for a parent: bare key when unisex, gender-prefixed when it belongs to one rail. */
-export const parentSlug = (p: Pick<Parent, 'key' | 'gender'>): string =>
-  p.gender === 'unisex' ? p.key : `${p.gender}-${p.key}`;
+/**
+ * Slug for a parent: always the bare key.
+ *
+ * Slugs used to carry the rail (`her-dresses`, `him-ethnic`), which duplicated the
+ * `gender` column and made callers guess a prefix — the same mistake occasion
+ * collections made. Gender is its own field; the slug just names the thing. Bare keys
+ * stay globally unique: the five formerly-prefixed parents (dresses, coords, jewelry,
+ * ethnic, formal) collide with none of the eleven shared ones.
+ */
+export const parentSlug = (p: Pick<Parent, 'key' | 'gender'>): string => p.key;
 
 /** Slug for a leaf: always `<parentSlug>-<leafKey>`, which keeps them globally unique. */
 export const leafSlug = (p: Pick<Parent, 'key' | 'gender'>, leafKey: string): string =>
   `${parentSlug(p)}-${leafKey}`;
+
+/**
+ * Old gender-prefixed slug → current slug, for every renamed parent and leaf.
+ *
+ * Shipped clients hardcode the old slugs (customer-app `content/collections.ts` and
+ * `home.content.json` reference `her-dresses`, `her-jewelry-necklaces`, `him-ethnic`),
+ * and CMS rows key category imagery the same way. Category lookups resolve through this
+ * map so a rename never breaks an app already on someone's phone; those references can
+ * migrate at their own pace.
+ */
+export const LEGACY_CATEGORY_SLUGS: Record<string, string> = Object.fromEntries(
+  TAXONOMY.filter((p) => p.gender !== 'unisex').flatMap((p) => {
+    const legacyParent = `${p.gender}-${p.key}`;
+    return [
+      [legacyParent, p.key] as const,
+      ...p.leaves.map((l) => [`${legacyParent}-${l.key}`, `${p.key}-${l.key}`] as const),
+    ];
+  }),
+);
+
+/** Current slug for any slug, old or new. Unknown slugs pass through untouched. */
+export const canonicalCategorySlug = (slug: string): string =>
+  LEGACY_CATEGORY_SLUGS[slug] ?? slug;
 
 /** A node is on a rail when it is that gender or shared. Same rule as listings. */
 export const visibleTo = (nodeGender: Gender, rail: 'her' | 'him'): boolean =>

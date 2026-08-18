@@ -1014,7 +1014,7 @@
   {
     "id": "lst_s2_013_0",
     "store": "MG Road Trends",
-    "leaf": "her-dresses-mini",
+    "leaf": "dresses-mini",
     "name": "Wrap Chiffon Mini Dress",
     "gender": "her",
     "brand": "H&M",
@@ -1037,7 +1037,7 @@
   {
     "id": "lst_s2_013_1",
     "store": "Saket Style Studio",
-    "leaf": "her-dresses-mini",
+    "leaf": "dresses-mini",
     "name": "Tiered Crepe Mini Dress",
     "gender": "her",
     "brand": "Uniqlo",
@@ -1060,7 +1060,7 @@
   {
     "id": "lst_s2_013_2",
     "store": "Geeta Bhawan Trends",
-    "leaf": "her-dresses-mini",
+    "leaf": "dresses-mini",
     "name": "Flowy Chiffon Mini Dress",
     "gender": "her",
     "brand": "Zara",
@@ -1083,7 +1083,7 @@
   {
     "id": "lst_s2_014_0",
     "store": "Bhawarkua Style Bazaar",
-    "leaf": "her-dresses-midi",
+    "leaf": "dresses-midi",
     "name": "Tiered Cotton Midi Dress",
     "gender": "her",
     "brand": "Uniqlo",
@@ -1106,7 +1106,7 @@
   {
     "id": "lst_s2_014_1",
     "store": "Scheme 78 Boutique",
-    "leaf": "her-dresses-midi",
+    "leaf": "dresses-midi",
     "name": "Flowy Satin Midi Dress",
     "gender": "her",
     "brand": "Zara",
@@ -1129,7 +1129,7 @@
   {
     "id": "lst_s2_014_2",
     "store": "Sudama Nagar Clothing",
-    "leaf": "her-dresses-midi",
+    "leaf": "dresses-midi",
     "name": "Fitted Cotton Midi Dress",
     "gender": "her",
     "brand": "Gucci",
@@ -1152,7 +1152,7 @@
   {
     "id": "lst_s2_015_0",
     "store": "Annapurna Fashion Mart",
-    "leaf": "her-dresses-maxi",
+    "leaf": "dresses-maxi",
     "name": "Flowy Crepe Maxi Dress",
     "gender": "her",
     "brand": "Zara",
@@ -1175,7 +1175,7 @@
   {
     "id": "lst_s2_015_1",
     "store": "Nipania Lifestyle Store",
-    "leaf": "her-dresses-maxi",
+    "leaf": "dresses-maxi",
     "name": "Fitted Chiffon Maxi Dress",
     "gender": "her",
     "brand": "Gucci",
@@ -1198,7 +1198,7 @@
   {
     "id": "lst_s2_015_2",
     "store": "Tilak Nagar Outfitters",
-    "leaf": "her-dresses-maxi",
+    "leaf": "dresses-maxi",
     "name": "Pleated Crepe Maxi Dress",
     "gender": "her",
     "brand": "Prada",
@@ -1221,7 +1221,7 @@
   {
     "id": "lst_s2_015_3",
     "store": "LIG Colony Wardrobe",
-    "leaf": "her-dresses-maxi",
+    "leaf": "dresses-maxi",
     "name": "Wrap Chiffon Maxi Dress",
     "gender": "her",
     "brand": "Zara",
@@ -1244,7 +1244,7 @@
   {
     "id": "lst_s2_016_0",
     "store": "Khajrana Collections",
-    "leaf": "her-dresses-bodycon",
+    "leaf": "dresses-bodycon",
     "name": "Fitted Satin Bodycon Dress",
     "gender": "her",
     "brand": "Gucci",
@@ -1267,7 +1267,7 @@
   {
     "id": "lst_s2_016_1",
     "store": "Silicon City Wardrobe",
-    "leaf": "her-dresses-bodycon",
+    "leaf": "dresses-bodycon",
     "name": "Pleated Cotton Bodycon Dress",
     "gender": "her",
     "brand": "Prada",
@@ -1290,7 +1290,7 @@
   {
     "id": "lst_s2_016_2",
     "store": "Old Palasia Couture",
-    "leaf": "her-dresses-bodycon",
+    "leaf": "dresses-bodycon",
     "name": "Wrap Satin Bodycon Dress",
     "gender": "her",
     "brand": "Zara",
@@ -1313,7 +1313,7 @@
   {
     "id": "lst_s2_017_0",
     "store": "Mhow Naka Fashion Depot",
-    "leaf": "her-dresses-party",
+    "leaf": "dresses-party",
     "name": "Pleated Chiffon Party Dress",
     "gender": "her",
     "brand": "Prada",
@@ -1336,7 +1336,7 @@
   {
     "id": "lst_s2_017_1",
     "store": "Bicholi Mardana Bazaar",
-    "leaf": "her-dresses-party",
+    "leaf": "dresses-party",
     "name": "Wrap Crepe Party Dress",
     "gender": "her",
     "brand": "Zara",
@@ -1359,7 +1359,7 @@
   {
     "id": "lst_s2_017_2",
     "store": "Bengali Square Attire",
-    "leaf": "her-dresses-party",
+    "leaf": "dresses-party",
     "name": "Tiered Chiffon Party Dress",
     "gender": "her",
     "brand": "H&M",
@@ -1382,7 +1382,7 @@
   {
     "id": "lst_s2_017_3",
     "store": "Rajwada Textiles",
-    "leaf": "her-dresses-party",
+    "leaf": "dresses-party",
     "name": "Flowy Crepe Party Dress",
     "gender": "her",
     "brand": "Uniqlo",
@@ -1405,7 +1405,7 @@
   {
     "id": "lst_s2_018_0",
     "store": "Vijay Nagar Fashion House",
-    "leaf": "her-dresses-casual",
+    "leaf": "dresses-casual",
     "name": "Wrap Cotton Casual Dress",
     "gender": "her",
     "brand": "Zara",
@@ -1428,7 +1428,7 @@
   {
     "id": "lst_s2_018_1",
     "store": "Palasia Apparel Company",
-    "leaf": "her-dresses-casual",
+    "leaf": "dresses-casual",
     "name": "Tiered Satin Casual Dress",
     "gender": "her",
     "brand": "H&M",
@@ -1451,7 +1451,7 @@
   {
     "id": "lst_s2_018_2",
     "store": "Sapna Sangeeta Garments",
-    "leaf": "her-dresses-casual",
+    "leaf": "dresses-casual",
     "name": "Flowy Cotton Casual Dress",
     "gender": "her",
     "brand": "Uniqlo",
@@ -1474,7 +1474,7 @@
   {
     "id": "lst_s2_019_0",
     "store": "MG Road Trends",
-    "leaf": "her-coords-two-piece",
+    "leaf": "coords-two-piece",
     "name": "Textured Crepe Two-Piece Set",
     "gender": "her",
     "brand": "W for Woman",
@@ -1497,7 +1497,7 @@
   {
     "id": "lst_s2_019_1",
     "store": "Saket Style Studio",
-    "leaf": "her-coords-two-piece",
+    "leaf": "coords-two-piece",
     "name": "Relaxed Cotton Two-Piece Set",
     "gender": "her",
     "brand": "Zara",
@@ -1520,7 +1520,7 @@
   {
     "id": "lst_s2_019_2",
     "store": "Geeta Bhawan Trends",
-    "leaf": "her-coords-two-piece",
+    "leaf": "coords-two-piece",
     "name": "Structured Crepe Two-Piece Set",
     "gender": "her",
     "brand": "H&M",
@@ -1543,7 +1543,7 @@
   {
     "id": "lst_s2_020_0",
     "store": "Bhawarkua Style Bazaar",
-    "leaf": "her-coords-matching",
+    "leaf": "coords-matching",
     "name": "Relaxed Linen Matching Set",
     "gender": "her",
     "brand": "Zara",
@@ -1566,7 +1566,7 @@
   {
     "id": "lst_s2_020_1",
     "store": "Scheme 78 Boutique",
-    "leaf": "her-coords-matching",
+    "leaf": "coords-matching",
     "name": "Structured Rayon Matching Set",
     "gender": "her",
     "brand": "H&M",
@@ -1589,7 +1589,7 @@
   {
     "id": "lst_s2_020_2",
     "store": "Sudama Nagar Clothing",
-    "leaf": "her-coords-matching",
+    "leaf": "coords-matching",
     "name": "Cropped Linen Matching Set",
     "gender": "her",
     "brand": "Uniqlo",
@@ -1612,7 +1612,7 @@
   {
     "id": "lst_s2_020_3",
     "store": "Annapurna Fashion Mart",
-    "leaf": "her-coords-matching",
+    "leaf": "coords-matching",
     "name": "Longline Rayon Matching Set",
     "gender": "her",
     "brand": "Biba",
@@ -1635,7 +1635,7 @@
   {
     "id": "lst_s2_021_0",
     "store": "Nipania Lifestyle Store",
-    "leaf": "her-coords-skirt-sets",
+    "leaf": "coords-skirt-sets",
     "name": "Structured Cotton Skirt Set",
     "gender": "her",
     "brand": "H&M",
@@ -1658,7 +1658,7 @@
   {
     "id": "lst_s2_021_1",
     "store": "Tilak Nagar Outfitters",
-    "leaf": "her-coords-skirt-sets",
+    "leaf": "coords-skirt-sets",
     "name": "Cropped Crepe Skirt Set",
     "gender": "her",
     "brand": "Uniqlo",
@@ -1681,7 +1681,7 @@
   {
     "id": "lst_s2_021_2",
     "store": "LIG Colony Wardrobe",
-    "leaf": "her-coords-skirt-sets",
+    "leaf": "coords-skirt-sets",
     "name": "Longline Cotton Skirt Set",
     "gender": "her",
     "brand": "Biba",
@@ -1704,7 +1704,7 @@
   {
     "id": "lst_s2_022_0",
     "store": "Khajrana Collections",
-    "leaf": "her-coords-pant-sets",
+    "leaf": "coords-pant-sets",
     "name": "Cropped Rayon Pant Set",
     "gender": "her",
     "brand": "Uniqlo",
@@ -1727,7 +1727,7 @@
   {
     "id": "lst_s2_022_1",
     "store": "Silicon City Wardrobe",
-    "leaf": "her-coords-pant-sets",
+    "leaf": "coords-pant-sets",
     "name": "Longline Linen Pant Set",
     "gender": "her",
     "brand": "Biba",
@@ -1750,7 +1750,7 @@
   {
     "id": "lst_s2_022_2",
     "store": "Old Palasia Couture",
-    "leaf": "her-coords-pant-sets",
+    "leaf": "coords-pant-sets",
     "name": "Textured Rayon Pant Set",
     "gender": "her",
     "brand": "W for Woman",
@@ -7318,7 +7318,7 @@
   {
     "id": "lst_s2_097_0",
     "store": "Scheme 78 Boutique",
-    "leaf": "her-jewelry-earrings",
+    "leaf": "jewelry-earrings",
     "name": "Layered Sterling Silver Earrings",
     "gender": "her",
     "brand": "W for Woman",
@@ -7337,7 +7337,7 @@
   {
     "id": "lst_s2_097_1",
     "store": "Sudama Nagar Clothing",
-    "leaf": "her-jewelry-earrings",
+    "leaf": "jewelry-earrings",
     "name": "Minimal Oxidised Silver Earrings",
     "gender": "her",
     "brand": "House of ClosetX",
@@ -7356,7 +7356,7 @@
   {
     "id": "lst_s2_097_2",
     "store": "Annapurna Fashion Mart",
-    "leaf": "her-jewelry-earrings",
+    "leaf": "jewelry-earrings",
     "name": "Hammered Sterling Silver Earrings",
     "gender": "her",
     "brand": "Biba",
@@ -7375,7 +7375,7 @@
   {
     "id": "lst_s2_097_3",
     "store": "Nipania Lifestyle Store",
-    "leaf": "her-jewelry-earrings",
+    "leaf": "jewelry-earrings",
     "name": "Dainty Oxidised Silver Earrings",
     "gender": "her",
     "brand": "W for Woman",
@@ -7394,7 +7394,7 @@
   {
     "id": "lst_s2_098_0",
     "store": "Tilak Nagar Outfitters",
-    "leaf": "her-jewelry-necklaces",
+    "leaf": "jewelry-necklaces",
     "name": "Minimal Rose Gold Necklace",
     "gender": "her",
     "brand": "House of ClosetX",
@@ -7413,7 +7413,7 @@
   {
     "id": "lst_s2_098_1",
     "store": "LIG Colony Wardrobe",
-    "leaf": "her-jewelry-necklaces",
+    "leaf": "jewelry-necklaces",
     "name": "Hammered Gold-Plated Necklace",
     "gender": "her",
     "brand": "Biba",
@@ -7432,7 +7432,7 @@
   {
     "id": "lst_s2_098_2",
     "store": "Khajrana Collections",
-    "leaf": "her-jewelry-necklaces",
+    "leaf": "jewelry-necklaces",
     "name": "Dainty Rose Gold Necklace",
     "gender": "her",
     "brand": "W for Woman",
@@ -7451,7 +7451,7 @@
   {
     "id": "lst_s2_099_0",
     "store": "Silicon City Wardrobe",
-    "leaf": "her-jewelry-rings",
+    "leaf": "jewelry-rings",
     "name": "Hammered Oxidised Silver Ring",
     "gender": "her",
     "brand": "Biba",
@@ -7470,7 +7470,7 @@
   {
     "id": "lst_s2_099_1",
     "store": "Old Palasia Couture",
-    "leaf": "her-jewelry-rings",
+    "leaf": "jewelry-rings",
     "name": "Dainty Sterling Silver Ring",
     "gender": "her",
     "brand": "W for Woman",
@@ -7489,7 +7489,7 @@
   {
     "id": "lst_s2_099_2",
     "store": "Mhow Naka Fashion Depot",
-    "leaf": "her-jewelry-rings",
+    "leaf": "jewelry-rings",
     "name": "Statement Oxidised Silver Ring",
     "gender": "her",
     "brand": "House of ClosetX",
@@ -7508,7 +7508,7 @@
   {
     "id": "lst_s2_100_0",
     "store": "Bicholi Mardana Bazaar",
-    "leaf": "her-jewelry-bracelets",
+    "leaf": "jewelry-bracelets",
     "name": "Dainty Gold-Plated Bracelet",
     "gender": "her",
     "brand": "W for Woman",
@@ -7527,7 +7527,7 @@
   {
     "id": "lst_s2_100_1",
     "store": "Bengali Square Attire",
-    "leaf": "her-jewelry-bracelets",
+    "leaf": "jewelry-bracelets",
     "name": "Statement Rose Gold Bracelet",
     "gender": "her",
     "brand": "House of ClosetX",
@@ -7546,7 +7546,7 @@
   {
     "id": "lst_s2_100_2",
     "store": "Rajwada Textiles",
-    "leaf": "her-jewelry-bracelets",
+    "leaf": "jewelry-bracelets",
     "name": "Layered Gold-Plated Bracelet",
     "gender": "her",
     "brand": "Biba",
@@ -7565,7 +7565,7 @@
   {
     "id": "lst_s2_100_3",
     "store": "Vijay Nagar Fashion House",
-    "leaf": "her-jewelry-bracelets",
+    "leaf": "jewelry-bracelets",
     "name": "Minimal Rose Gold Bracelet",
     "gender": "her",
     "brand": "W for Woman",
@@ -7584,7 +7584,7 @@
   {
     "id": "lst_s2_101_0",
     "store": "Palasia Apparel Company",
-    "leaf": "her-jewelry-anklets",
+    "leaf": "jewelry-anklets",
     "name": "Statement Sterling Silver Anklet",
     "gender": "her",
     "brand": "House of ClosetX",
@@ -7603,7 +7603,7 @@
   {
     "id": "lst_s2_101_1",
     "store": "Sapna Sangeeta Garments",
-    "leaf": "her-jewelry-anklets",
+    "leaf": "jewelry-anklets",
     "name": "Layered Oxidised Silver Anklet",
     "gender": "her",
     "brand": "Biba",
@@ -7622,7 +7622,7 @@
   {
     "id": "lst_s2_101_2",
     "store": "MG Road Trends",
-    "leaf": "her-jewelry-anklets",
+    "leaf": "jewelry-anklets",
     "name": "Minimal Sterling Silver Anklet",
     "gender": "her",
     "brand": "W for Woman",
@@ -8040,7 +8040,7 @@
   {
     "id": "lst_s2_108_0",
     "store": "Geeta Bhawan Trends",
-    "leaf": "him-ethnic-kurtas",
+    "leaf": "ethnic-kurtas",
     "name": "Slim-Fit Cotton Kurta",
     "gender": "him",
     "brand": "Manyavar",
@@ -8063,7 +8063,7 @@
   {
     "id": "lst_s2_108_1",
     "store": "Bhawarkua Style Bazaar",
-    "leaf": "him-ethnic-kurtas",
+    "leaf": "ethnic-kurtas",
     "name": "Printed Linen Kurta",
     "gender": "him",
     "brand": "FabIndia",
@@ -8086,10 +8086,10 @@
   {
     "id": "lst_s2_108_2",
     "store": "Scheme 78 Boutique",
-    "leaf": "him-ethnic-kurtas",
+    "leaf": "ethnic-kurtas",
     "name": "Straight-Fit Cotton Kurta",
     "gender": "him",
-    "brand": "Biba",
+    "brand": "Manyavar",
     "priceRupees": 6860,
     "sizes": [
       "XS",
@@ -8109,7 +8109,7 @@
   {
     "id": "lst_s2_109_0",
     "store": "Sudama Nagar Clothing",
-    "leaf": "him-ethnic-kurta-sets",
+    "leaf": "ethnic-kurta-sets",
     "name": "Printed Silk Blend Kurta Set",
     "gender": "him",
     "brand": "FabIndia",
@@ -8132,10 +8132,10 @@
   {
     "id": "lst_s2_109_1",
     "store": "Annapurna Fashion Mart",
-    "leaf": "him-ethnic-kurta-sets",
+    "leaf": "ethnic-kurta-sets",
     "name": "Straight-Fit Chanderi Kurta Set",
     "gender": "him",
-    "brand": "Biba",
+    "brand": "Manyavar",
     "priceRupees": 4590,
     "sizes": [
       "XS",
@@ -8155,10 +8155,10 @@
   {
     "id": "lst_s2_109_2",
     "store": "Nipania Lifestyle Store",
-    "leaf": "him-ethnic-kurta-sets",
+    "leaf": "ethnic-kurta-sets",
     "name": "Embroidered Silk Blend Kurta Set",
     "gender": "him",
-    "brand": "Manyavar",
+    "brand": "FabIndia",
     "priceRupees": 7140,
     "sizes": [
       "XS",
@@ -8178,10 +8178,10 @@
   {
     "id": "lst_s2_110_0",
     "store": "Tilak Nagar Outfitters",
-    "leaf": "him-ethnic-nehru-jackets",
+    "leaf": "ethnic-nehru-jackets",
     "name": "Straight-Fit Linen Nehru Jacket",
     "gender": "him",
-    "brand": "Biba",
+    "brand": "Manyavar",
     "priceRupees": 1900,
     "sizes": [
       "XS",
@@ -8201,10 +8201,10 @@
   {
     "id": "lst_s2_110_1",
     "store": "LIG Colony Wardrobe",
-    "leaf": "him-ethnic-nehru-jackets",
+    "leaf": "ethnic-nehru-jackets",
     "name": "Embroidered Cotton Nehru Jacket",
     "gender": "him",
-    "brand": "Manyavar",
+    "brand": "FabIndia",
     "priceRupees": 3480,
     "sizes": [
       "XS",
@@ -8224,10 +8224,10 @@
   {
     "id": "lst_s2_110_2",
     "store": "Khajrana Collections",
-    "leaf": "him-ethnic-nehru-jackets",
+    "leaf": "ethnic-nehru-jackets",
     "name": "Handloom Linen Nehru Jacket",
     "gender": "him",
-    "brand": "FabIndia",
+    "brand": "Manyavar",
     "priceRupees": 5070,
     "sizes": [
       "XS",
@@ -8247,10 +8247,10 @@
   {
     "id": "lst_s2_110_3",
     "store": "Silicon City Wardrobe",
-    "leaf": "him-ethnic-nehru-jackets",
+    "leaf": "ethnic-nehru-jackets",
     "name": "Slim-Fit Cotton Nehru Jacket",
     "gender": "him",
-    "brand": "Biba",
+    "brand": "FabIndia",
     "priceRupees": 6650,
     "sizes": [
       "XS",
@@ -8270,7 +8270,7 @@
   {
     "id": "lst_s2_111_0",
     "store": "Old Palasia Couture",
-    "leaf": "him-ethnic-sherwanis",
+    "leaf": "ethnic-sherwanis",
     "name": "Embroidered Chanderi Sherwani",
     "gender": "him",
     "brand": "FabIndia",
@@ -8293,7 +8293,7 @@
   {
     "id": "lst_s2_111_1",
     "store": "Mhow Naka Fashion Depot",
-    "leaf": "him-ethnic-sherwanis",
+    "leaf": "ethnic-sherwanis",
     "name": "Handloom Silk Blend Sherwani",
     "gender": "him",
     "brand": "Manyavar",
@@ -8316,7 +8316,7 @@
   {
     "id": "lst_s2_111_2",
     "store": "Bicholi Mardana Bazaar",
-    "leaf": "him-ethnic-sherwanis",
+    "leaf": "ethnic-sherwanis",
     "name": "Slim-Fit Chanderi Sherwani",
     "gender": "him",
     "brand": "FabIndia",
@@ -8339,10 +8339,10 @@
   {
     "id": "lst_s2_112_0",
     "store": "Bengali Square Attire",
-    "leaf": "him-ethnic-pathani",
+    "leaf": "ethnic-pathani",
     "name": "Handloom Cotton Pathani Suit",
     "gender": "him",
-    "brand": "FabIndia",
+    "brand": "Manyavar",
     "priceRupees": 2060,
     "sizes": [
       "XS",
@@ -8362,10 +8362,10 @@
   {
     "id": "lst_s2_112_1",
     "store": "Rajwada Textiles",
-    "leaf": "him-ethnic-pathani",
+    "leaf": "ethnic-pathani",
     "name": "Slim-Fit Linen Pathani Suit",
     "gender": "him",
-    "brand": "Biba",
+    "brand": "FabIndia",
     "priceRupees": 3780,
     "sizes": [
       "XS",
@@ -8385,7 +8385,7 @@
   {
     "id": "lst_s2_112_2",
     "store": "Vijay Nagar Fashion House",
-    "leaf": "him-ethnic-pathani",
+    "leaf": "ethnic-pathani",
     "name": "Printed Cotton Pathani Suit",
     "gender": "him",
     "brand": "Manyavar",
@@ -8408,7 +8408,7 @@
   {
     "id": "lst_s2_112_3",
     "store": "Palasia Apparel Company",
-    "leaf": "him-ethnic-pathani",
+    "leaf": "ethnic-pathani",
     "name": "Straight-Fit Linen Pathani Suit",
     "gender": "him",
     "brand": "FabIndia",
@@ -8431,7 +8431,7 @@
   {
     "id": "lst_s2_113_0",
     "store": "Sapna Sangeeta Garments",
-    "leaf": "him-formal-blazers",
+    "leaf": "formal-blazers",
     "name": "Tailored Cotton Poplin Blazer",
     "gender": "him",
     "brand": "Hugo Boss",
@@ -8454,7 +8454,7 @@
   {
     "id": "lst_s2_113_1",
     "store": "MG Road Trends",
-    "leaf": "him-formal-blazers",
+    "leaf": "formal-blazers",
     "name": "Textured Linen Blend Blazer",
     "gender": "him",
     "brand": "Manyavar",
@@ -8477,7 +8477,7 @@
   {
     "id": "lst_s2_113_2",
     "store": "Saket Style Studio",
-    "leaf": "him-formal-blazers",
+    "leaf": "formal-blazers",
     "name": "Slim-Fit Cotton Poplin Blazer",
     "gender": "him",
     "brand": "Ralph Lauren",
@@ -8500,7 +8500,7 @@
   {
     "id": "lst_s2_114_0",
     "store": "Geeta Bhawan Trends",
-    "leaf": "him-formal-suits",
+    "leaf": "formal-suits",
     "name": "Textured Twill Suit",
     "gender": "him",
     "brand": "Manyavar",
@@ -8523,7 +8523,7 @@
   {
     "id": "lst_s2_114_1",
     "store": "Bhawarkua Style Bazaar",
-    "leaf": "him-formal-suits",
+    "leaf": "formal-suits",
     "name": "Slim-Fit Wool Blend Suit",
     "gender": "him",
     "brand": "Ralph Lauren",
@@ -8546,7 +8546,7 @@
   {
     "id": "lst_s2_114_2",
     "store": "Scheme 78 Boutique",
-    "leaf": "him-formal-suits",
+    "leaf": "formal-suits",
     "name": "Regular-Fit Twill Suit",
     "gender": "him",
     "brand": "Tommy Hilfiger",
@@ -8569,7 +8569,7 @@
   {
     "id": "lst_s2_115_0",
     "store": "Sudama Nagar Clothing",
-    "leaf": "him-formal-shirts",
+    "leaf": "formal-shirts",
     "name": "Slim-Fit Linen Blend Formal Shirt",
     "gender": "him",
     "brand": "Ralph Lauren",
@@ -8592,7 +8592,7 @@
   {
     "id": "lst_s2_115_1",
     "store": "Annapurna Fashion Mart",
-    "leaf": "him-formal-shirts",
+    "leaf": "formal-shirts",
     "name": "Regular-Fit Cotton Poplin Formal Shirt",
     "gender": "him",
     "brand": "Tommy Hilfiger",
@@ -8615,7 +8615,7 @@
   {
     "id": "lst_s2_115_2",
     "store": "Nipania Lifestyle Store",
-    "leaf": "him-formal-shirts",
+    "leaf": "formal-shirts",
     "name": "Structured Linen Blend Formal Shirt",
     "gender": "him",
     "brand": "Calvin Klein",
@@ -8638,7 +8638,7 @@
   {
     "id": "lst_s2_115_3",
     "store": "Tilak Nagar Outfitters",
-    "leaf": "him-formal-shirts",
+    "leaf": "formal-shirts",
     "name": "Tailored Cotton Poplin Formal Shirt",
     "gender": "him",
     "brand": "Hugo Boss",
@@ -8661,7 +8661,7 @@
   {
     "id": "lst_s2_116_0",
     "store": "LIG Colony Wardrobe",
-    "leaf": "him-formal-trousers",
+    "leaf": "formal-trousers",
     "name": "Regular-Fit Wool Blend Formal Trousers",
     "gender": "him",
     "brand": "Tommy Hilfiger",
@@ -8684,7 +8684,7 @@
   {
     "id": "lst_s2_116_1",
     "store": "Khajrana Collections",
-    "leaf": "him-formal-trousers",
+    "leaf": "formal-trousers",
     "name": "Structured Twill Formal Trousers",
     "gender": "him",
     "brand": "Calvin Klein",
@@ -8707,7 +8707,7 @@
   {
     "id": "lst_s2_116_2",
     "store": "Silicon City Wardrobe",
-    "leaf": "him-formal-trousers",
+    "leaf": "formal-trousers",
     "name": "Tailored Wool Blend Formal Trousers",
     "gender": "him",
     "brand": "Hugo Boss",
@@ -8730,7 +8730,7 @@
   {
     "id": "lst_s2_117_0",
     "store": "Old Palasia Couture",
-    "leaf": "him-formal-waistcoats",
+    "leaf": "formal-waistcoats",
     "name": "Structured Cotton Poplin Waistcoat",
     "gender": "him",
     "brand": "Calvin Klein",
@@ -8753,7 +8753,7 @@
   {
     "id": "lst_s2_117_1",
     "store": "Mhow Naka Fashion Depot",
-    "leaf": "him-formal-waistcoats",
+    "leaf": "formal-waistcoats",
     "name": "Tailored Linen Blend Waistcoat",
     "gender": "him",
     "brand": "Hugo Boss",
@@ -8776,7 +8776,7 @@
   {
     "id": "lst_s2_117_2",
     "store": "Bicholi Mardana Bazaar",
-    "leaf": "him-formal-waistcoats",
+    "leaf": "formal-waistcoats",
     "name": "Textured Cotton Poplin Waistcoat",
     "gender": "him",
     "brand": "Manyavar",
@@ -8799,7 +8799,7 @@
   {
     "id": "lst_s2_117_3",
     "store": "Bengali Square Attire",
-    "leaf": "him-formal-waistcoats",
+    "leaf": "formal-waistcoats",
     "name": "Slim-Fit Linen Blend Waistcoat",
     "gender": "him",
     "brand": "Ralph Lauren",

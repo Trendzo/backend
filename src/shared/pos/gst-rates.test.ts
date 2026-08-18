@@ -12,7 +12,7 @@ describe('resolveGstRateBp — GST 2.0 (eff 22-Sep-2025)', () => {
     });
     it('premium apparel is 18%', () => {
       expect(rate(null, 'bottoms-trousers', 2501)).toBe(GstRateBp.standard);
-      expect(rate(null, 'her-dresses-maxi', 5000)).toBe(GstRateBp.standard);
+      expect(rate(null, 'dresses-maxi', 5000)).toBe(GstRateBp.standard);
     });
     it('the old ₹1,000/12% slab is gone — a ₹1,500 tee is 5%, not 12%', () => {
       expect(rate(null, 'tops-tshirts', 1500)).toBe(GstRateBp.reduced);
@@ -68,7 +68,7 @@ describe('resolveGstRateBp — GST 2.0 (eff 22-Sep-2025)', () => {
       expect(rate(null, 'accessories-scarves', 400)).toBe(GstRateBp.reduced);
     });
     it('imitation jewellery leaves resolve to 12% without an explicit HSN', () => {
-      expect(rate(categoryDefaultHsn('her-jewelry-earrings'), 'her-jewelry-earrings', 800)).toBe(
+      expect(rate(categoryDefaultHsn('jewelry-earrings'), 'jewelry-earrings', 800)).toBe(
         GstRateBp.imitation_jewellery,
       );
     });
@@ -90,13 +90,13 @@ describe('categoryDefaultHsn', () => {
     expect(categoryDefaultHsn('shoes')).toBe('6403');
     expect(categoryDefaultHsn('accessories')).toBe('4202');
     expect(categoryDefaultHsn('tops')).toBe('6109');
-    expect(categoryDefaultHsn('her-dresses')).toBe('6204');
+    expect(categoryDefaultHsn('dresses')).toBe('6204');
   });
   it('inherits the parent default for leaves that have no override', () => {
     expect(categoryDefaultHsn('tops-tshirts')).toBe('6109');
     expect(categoryDefaultHsn('bottoms-chinos')).toBe('6203');
     expect(categoryDefaultHsn('denim-jeans')).toBe('6203');
-    expect(categoryDefaultHsn('her-dresses-maxi')).toBe('6204');
+    expect(categoryDefaultHsn('dresses-maxi')).toBe('6204');
     expect(categoryDefaultHsn('shoes-sneakers')).toBe('6403');
   });
   it('applies leaf overrides where the parent default is wrong', () => {

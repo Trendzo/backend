@@ -65,9 +65,9 @@ describe('category taxonomy end to end', () => {
       await listCategories({ query: { gender: 'her', activeOnly: true, withCounts: false } }),
     ) as Row[];
     const slugs = new Set(her.map((r) => r.slug));
-    expect(slugs.has('her-dresses')).toBe(true); // her-only
+    expect(slugs.has('dresses')).toBe(true); // her-only
     expect(slugs.has('tops')).toBe(true); // shared
-    expect(slugs.has('him-ethnic')).toBe(false); // him-only
+    expect(slugs.has('ethnic')).toBe(false); // him-only
     // Shared parent, gendered leaves: HER sees Blouses but never Polos.
     expect(slugs.has('tops-blouses')).toBe(true);
     expect(slugs.has('tops-polos')).toBe(false);

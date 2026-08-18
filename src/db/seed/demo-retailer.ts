@@ -112,7 +112,7 @@ export async function seedDemoRetailer(database: typeof Db): Promise<void> {
   const [genericBrand, teesCat, herDressesCat, herTopsCat, himShirtsCat] = await Promise.all([
     database.query.brands.findFirst({ where: eq(brands.slug, 'generic') }),
     database.query.categories.findFirst({ where: eq(categories.slug, 'tops-tshirts') }),
-    database.query.categories.findFirst({ where: eq(categories.slug, 'her-dresses-midi') }),
+    database.query.categories.findFirst({ where: eq(categories.slug, 'dresses-midi') }),
     database.query.categories.findFirst({ where: eq(categories.slug, 'tops-blouses') }),
     database.query.categories.findFirst({ where: eq(categories.slug, 'tops-shirts') }),
   ]);
