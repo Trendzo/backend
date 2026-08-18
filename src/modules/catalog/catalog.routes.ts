@@ -3,6 +3,7 @@ import * as ctrl from './catalog.controller.js';
 import {
   BrandsQuery,
   CategoriesQuery,
+  CollectionQuery,
   CollectionsQuery,
   FacetsQuery,
   IdParam,
@@ -69,8 +70,8 @@ const catalogRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get(
     '/collections/:slug',
-    { schema: { params: SlugParam } },
-    async (req) => ctrl.getCollection(req.params.slug),
+    { schema: { params: SlugParam, querystring: CollectionQuery } },
+    async (req) => ctrl.getCollection(req.params.slug, req.query),
   );
 
   // Stores near a point, nearest first. Registered BEFORE /stores/:id so the

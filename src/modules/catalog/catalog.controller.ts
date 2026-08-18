@@ -682,11 +682,80 @@ export async function listCollections(input: { query: z.infer<typeof Collections
   );
 }
 
-export async function getCollection(slug: string) {
-  const c = await db.query.collections.findFirst({
+/** Listings carrying an occasion tag. */
+const occasionMatchSql = (tag: string): SQL =>
+  sql`${productListings.occasion} @> ${JSON.stringify([tag])}::jsonb`;
+
+/**
+ * Narrow to one rail, or don't narrow at all.
+ *
+ * Same rule the taxonomy uses (shared/catalog/taxonomy.ts `visibleTo`): a rail sees its
+ * own gender plus unisex. Passing no gender is a legitimate request for everything.
+ */
+const genderScopeSql = (gender: 'her' | 'him' | 'unisex' | undefined): SQL | undefined =>
+  gender === undefined || gender === 'unisex'
+    ? undefined
+    : inArray(productListings.gender, [gender, 'unisex']);
+
+export async function getCollection(
+  slug: string,
+  query: { gender?: 'her' | 'him' | 'unisex' | undefined; limit: number } = { limit: 60 },
+) {
+  const { gender, limit } = query;
+  const genderScope = genderScopeSql(gender);
+
+  let c = await db.query.collections.findFirst({
     where: eq(collections.slug, slug),
   });
-  if (!c || c.status !== 'active') {
+
+  /**
+   * OCCASION IS A TAG, NOT A GENDERED ROW.
+   *
+   * Occasion slugs used to bake in a rail (`her-occasion-brunch`), which forced every
+   * caller to guess a prefix — and the prefix never filtered anything anyway, since the
+   * branch below matches purely on `occasionTag`. Slugs are bare tags now, with gender
+   * kept in its own column, and this fallback reads any unknown slug as an occasion tag.
+   * So `/collections/brunch` resolves whether or not a "brunch" row exists, `?gender=him`
+   * narrows it, and an occasion one rail has and the other doesn't still answers for
+   * both instead of 404-ing on a missing prefix.
+   */
+  if (!c) {
+    const byTag = await db.query.collections.findFirst({
+      where: and(eq(collections.kind, 'occasion'), eq(collections.occasionTag, slug)),
+    });
+    if (byTag) {
+      c = byTag;
+    } else {
+      const rows = await queryListings({
+        where: and(occasionMatchSql(slug), eq(productListings.status, 'active'), genderScope),
+        limit,
+      });
+      if (rows.length === 0) {
+        throw new AppError(404, ErrorCode.NotFound, 'Collection not found');
+      }
+      // Synthesised so the payload shape matches a real collection row.
+      return ok({
+        id: `occasion:${slug}`,
+        slug,
+        name: slug.replace(/-/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase()),
+        kind: 'occasion' as const,
+        gender: gender ?? ('unisex' as const),
+        description: null,
+        heroImageUrl: null,
+        accentColors: [],
+        sortOrder: 0,
+        isFeatured: false,
+        status: 'active' as const,
+        brandId: null,
+        occasionTag: slug,
+        startsAt: null,
+        endsAt: null,
+        listings: shapeListings(rows),
+      });
+    }
+  }
+
+  if (c.status !== 'active') {
     throw new AppError(404, ErrorCode.NotFound, 'Collection not found');
   }
   const now = new Date();
@@ -702,18 +771,29 @@ export async function getCollection(slug: string) {
   let listings: ReturnType<typeof shapeListings>;
   if (c.kind === 'brand' && c.brandId) {
     const rows = await queryListings({
-      where: and(eq(productListings.brandId, c.brandId), eq(productListings.status, 'active')),
+      where: and(
+        eq(productListings.brandId, c.brandId),
+        eq(productListings.status, 'active'),
+        genderScope,
+      ),
+      limit,
     });
     listings = shapeListings(rows);
   } else if (c.kind === 'occasion' && c.occasionTag) {
     const rows = await queryListings({
       where: and(
-        sql`${productListings.occasion} @> ${JSON.stringify([c.occasionTag])}::jsonb`,
+        occasionMatchSql(c.occasionTag),
         eq(productListings.status, 'active'),
+        genderScope,
       ),
+      limit,
     });
     listings = shapeListings(rows);
   } else {
+    // Hand-curated collections (outfit/drop/edit/trend) are NOT gender-narrowed: an
+    // admin picked these listings deliberately, and silently dropping some of them
+    // because of the caller's rail would break the curation. Their own `gender` column
+    // is what decides which rail surfaces the collection in the first place.
     const memberships = await db
       .select({
         listingId: collectionListings.listingId,

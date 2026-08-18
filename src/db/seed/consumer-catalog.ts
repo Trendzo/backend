@@ -248,17 +248,17 @@ const COLLECTION_SPECS: CollectionSpec[] = [
   { slug: 'him-weekend-drip', name: 'Weekend Drip', kind: 'outfit', gender: 'him', hero: u('photo-1507003211169-0a1dd7228f2d', 500), accent: ['#222222', '#5d4037', '#888888'], sortOrder: 50, members: ['Flannel Check Shirt', 'Cargo Joggers', 'Retro Suede Sneaker', 'Classic Backpack'] },
 
   // Occasions — HER (auto-resolve via occasionTag)
-  { slug: 'her-occasion-brunch', name: 'Brunch', kind: 'occasion', gender: 'her', hero: u('photo-1496747611176-843222e1e57c', 400), accent: ['#fff5e1', '#ffe0b2'], sortOrder: 10, occasionTag: 'brunch' },
-  { slug: 'her-occasion-date', name: 'Date', kind: 'occasion', gender: 'her', hero: u('photo-1539109136881-3be0616acf4b', 400), accent: ['#ff6b9d', '#feca57'], sortOrder: 20, occasionTag: 'date' },
-  { slug: 'her-occasion-beach', name: 'Beach', kind: 'occasion', gender: 'her', hero: u('photo-1583496661160-fb5886a0aaaa', 400), accent: ['#a8e6cf', '#dcedc1'], sortOrder: 30, occasionTag: 'beach' },
-  { slug: 'her-occasion-wedding', name: 'Wedding', kind: 'occasion', gender: 'her', hero: u('photo-1469334031218-e382a71b716b', 400), accent: ['#f5e6d3', '#c9a87c'], sortOrder: 40, occasionTag: 'wedding' },
-  { slug: 'her-occasion-party', name: 'Party', kind: 'occasion', gender: 'her', hero: u('photo-1503342217505-b0a15ec3261c', 400), accent: ['#a78bfa', '#ff6b9d'], sortOrder: 50, occasionTag: 'party' },
+  { slug: 'brunch', name: 'Brunch', kind: 'occasion', gender: 'her', hero: u('photo-1496747611176-843222e1e57c', 400), accent: ['#fff5e1', '#ffe0b2'], sortOrder: 10, occasionTag: 'brunch' },
+  { slug: 'date', name: 'Date', kind: 'occasion', gender: 'her', hero: u('photo-1539109136881-3be0616acf4b', 400), accent: ['#ff6b9d', '#feca57'], sortOrder: 20, occasionTag: 'date' },
+  { slug: 'beach', name: 'Beach', kind: 'occasion', gender: 'her', hero: u('photo-1583496661160-fb5886a0aaaa', 400), accent: ['#a8e6cf', '#dcedc1'], sortOrder: 30, occasionTag: 'beach' },
+  { slug: 'wedding', name: 'Wedding', kind: 'occasion', gender: 'her', hero: u('photo-1469334031218-e382a71b716b', 400), accent: ['#f5e6d3', '#c9a87c'], sortOrder: 40, occasionTag: 'wedding' },
+  { slug: 'party', name: 'Party', kind: 'occasion', gender: 'her', hero: u('photo-1503342217505-b0a15ec3261c', 400), accent: ['#a78bfa', '#ff6b9d'], sortOrder: 50, occasionTag: 'party' },
   // Occasions — HIM
-  { slug: 'him-occasion-office', name: 'Office', kind: 'occasion', gender: 'him', hero: u('photo-1591047139829-d91aecb6caea', 400), accent: ['#1a1a1a', '#5d4037'], sortOrder: 60, occasionTag: 'office' },
-  { slug: 'him-occasion-streetwear', name: 'Streetwear', kind: 'occasion', gender: 'him', hero: u('photo-1490481651871-ab68de25d43d', 400), accent: ['#000000', '#333333'], sortOrder: 70, occasionTag: 'streetwear' },
-  { slug: 'him-occasion-gym', name: 'Gym', kind: 'occasion', gender: 'him', hero: u('photo-1517836357463-d25dfeac3438', 400), accent: ['#222222', '#666666'], sortOrder: 80, occasionTag: 'gym' },
-  { slug: 'him-occasion-formal', name: 'Formal', kind: 'occasion', gender: 'him', hero: u('photo-1507003211169-0a1dd7228f2d', 400), accent: ['#1a1a1a', '#3a3a3a'], sortOrder: 90, occasionTag: 'formal' },
-  { slug: 'him-occasion-travel', name: 'Travel', kind: 'occasion', gender: 'him', hero: u('photo-1525507119028-ed4c629a60a3', 400), accent: ['#5d4037', '#8d6e63'], sortOrder: 100, occasionTag: 'travel' },
+  { slug: 'office', name: 'Office', kind: 'occasion', gender: 'him', hero: u('photo-1591047139829-d91aecb6caea', 400), accent: ['#1a1a1a', '#5d4037'], sortOrder: 60, occasionTag: 'office' },
+  { slug: 'streetwear', name: 'Streetwear', kind: 'occasion', gender: 'him', hero: u('photo-1490481651871-ab68de25d43d', 400), accent: ['#000000', '#333333'], sortOrder: 70, occasionTag: 'streetwear' },
+  { slug: 'gym', name: 'Gym', kind: 'occasion', gender: 'him', hero: u('photo-1517836357463-d25dfeac3438', 400), accent: ['#222222', '#666666'], sortOrder: 80, occasionTag: 'gym' },
+  { slug: 'formal', name: 'Formal', kind: 'occasion', gender: 'him', hero: u('photo-1507003211169-0a1dd7228f2d', 400), accent: ['#1a1a1a', '#3a3a3a'], sortOrder: 90, occasionTag: 'formal' },
+  { slug: 'travel', name: 'Travel', kind: 'occasion', gender: 'him', hero: u('photo-1525507119028-ed4c629a60a3', 400), accent: ['#5d4037', '#8d6e63'], sortOrder: 100, occasionTag: 'travel' },
 
   // Drops
   { slug: 'drop-court-classics', name: 'Court Classics', kind: 'drop', gender: 'unisex', hero: u('photo-1490481651871-ab68de25d43d', 500), accent: ['#ffffff', '#111111', '#c3002f'], sortOrder: 10, isFeatured: true, startsAt: daysAgo(1), members: ['Court Sneaker', 'Canvas High-Top', 'Skate Classic', '574 Core Runner', 'Classic White Sneaker'] },

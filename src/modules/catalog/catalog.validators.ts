@@ -7,6 +7,20 @@ export const SlugParam = z.object({ slug: z.string() });
 export const IdParam = z.object({ id: z.string() });
 
 /**
+ * One collection. `gender` NARROWS the result to that rail (plus unisex) and is
+ * entirely optional — an occasion is a tag, not a gendered thing, so omitting it
+ * returns every product carrying the tag regardless of rail.
+ *
+ * `limit` is not optional in effect: occasion and brand collections resolve live from
+ * the catalog and previously ran unbounded, so a popular tag could return the whole
+ * catalog with every variant in one response.
+ */
+export const CollectionQuery = z.object({
+  gender: GenderEnum.optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(60),
+});
+
+/**
  * Stores near a point. Consumers get a whitelisted projection — see
  * catalog.controller.ts shapeStore. `radiusKm` is capped so this can never be
  * used to enumerate the whole store table.

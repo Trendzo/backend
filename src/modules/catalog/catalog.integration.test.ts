@@ -14,7 +14,7 @@ import { seedCategoryTaxonomy } from '@/db/seed/category-taxonomy.js';
 import { seedConsumerCatalog } from '@/db/seed/consumer-catalog.js';
 import { invalidateCategoryTree, resolveDescendantIds } from '@/shared/catalog/category-tree.js';
 import { TAXONOMY, leafSlug, parentSlug } from '@/shared/catalog/taxonomy.js';
-import { listCategories, listFacets, listProducts } from './catalog.controller.js';
+import { getCollection, listCategories, listFacets, listProducts } from './catalog.controller.js';
 
 type Row = Record<string, unknown>;
 const data = <T>(env: { data: T }): T => env.data;
@@ -196,5 +196,69 @@ describe('category taxonomy end to end', () => {
   it('returns an empty facet set for an unknown category', async () => {
     const facets = data(await listFacets({ query: { categorySlug: 'not-a-real-slug' } }));
     expect(facets).toEqual({ total: 0, genders: [], categories: [] });
+  });
+});
+
+/**
+ * Occasion is a TAG, not a gendered thing.
+ *
+ * The seeded occasion collections are slugged `her-occasion-brunch` /
+ * `him-occasion-streetwear`, which forced every caller to guess a rail prefix even
+ * though the resolver only ever matched on `occasionTag`. The customer app asked for
+ * `/collections/brunch`, got a 404, and silently fell back to a generic browse — so
+ * every occasion tile rendered the same grid.
+ */
+/**
+ * getCollection returns either a real collection row or a synthesised one (bare tag with
+ * no row of its own), so its envelope is a union the generic data helper cannot narrow.
+ */
+const coll = (env: Awaited<ReturnType<typeof getCollection>>) =>
+  env.data as { occasionTag: string | null; listings: { id: string; gender: string }[] };
+
+describe('occasion collections', () => {
+  it('resolves a bare occasion tag with no collection row of its own', async () => {
+    const byTag = coll(await getCollection('brunch', { limit: 60 }));
+    expect(byTag.occasionTag).toBe('brunch');
+    expect(byTag.listings.length).toBeGreaterThan(0);
+  });
+
+  it('returns every rail when no gender is given', async () => {
+    const all = coll(await getCollection('brunch', { limit: 200 }));
+    const genders = new Set(all.listings.map((l) => l.gender));
+    // The tag spans rails, so an unfiltered request must not be silently one-rail.
+    expect(genders.size).toBeGreaterThan(1);
+  });
+
+  it('narrows to one rail plus unisex when gender is given', async () => {
+    const him = coll(await getCollection('brunch', { gender: 'him', limit: 200 }));
+    expect(him.listings.length).toBeGreaterThan(0);
+    for (const l of him.listings) expect(['him', 'unisex']).toContain(l.gender);
+    // Narrowing must actually narrow.
+    const all = coll(await getCollection('brunch', { limit: 200 }));
+    expect(him.listings.length).toBeLessThan(all.listings.length);
+  });
+
+  it('does not resolve a gender-prefixed slug — the prefix is gone', async () => {
+    // Occasion slugs are bare tags now. A rail-prefixed slug is not a tag any listing
+    // carries, so it must 404 rather than quietly resolving to something.
+    await expect(getCollection('her-occasion-brunch', { limit: 60 })).rejects.toThrow();
+  });
+
+  it('a him-only occasion still resolves for a her request, just narrower', async () => {
+    // 'gym' is seeded as a him occasion. Occasion is not owned by a rail, so asking as
+    // her must return her+unisex products carrying the tag rather than 404.
+    const all = coll(await getCollection('gym', { limit: 200 }));
+    expect(all.listings.length).toBeGreaterThan(0);
+    const her = coll(await getCollection('gym', { gender: 'her', limit: 200 }));
+    for (const l of her.listings) expect(['her', 'unisex']).toContain(l.gender);
+  });
+
+  it('caps the result instead of returning the whole catalog', async () => {
+    const capped = coll(await getCollection('brunch', { limit: 5 }));
+    expect(capped.listings.length).toBeLessThanOrEqual(5);
+  });
+
+  it('404s on a tag no listing carries', async () => {
+    await expect(getCollection('not-a-real-occasion', { limit: 60 })).rejects.toThrow();
   });
 });
