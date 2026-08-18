@@ -24,7 +24,16 @@ export type CmsFieldKind =
   | 'textarea' // multi-line editorial copy
   | 'color' // #rrggbb
   | 'string_list' // array of short strings (chips, tags)
-  | 'number';
+  | 'number'
+  /**
+   * A taxonomy category slug, rendered by admin as a picker over the live tree.
+   *
+   * Deliberately NOT plain text. A hand-typed slug is how a Steals tile labelled
+   * "T-shirts" ends up pointing at nothing, and how the occasion tile keyed `street`
+   * silently missed the `streetwear` tag — a typo produces the wrong catalog with no
+   * error anywhere. A picker cannot be mistyped.
+   */
+  | 'category';
 
 export type CmsFieldSpec = {
   /** Key inside `content` (items) or `config` (sections). */
@@ -254,9 +263,15 @@ export const SECTION_SCHEMA = {
         kind: 'text',
         required: true,
         maxLength: 24,
-        help: 'Shown verbatim, e.g. "Under ₹999". Nothing validates this against real prices.',
+        help: 'Shown verbatim, e.g. "Under ₹999". The ceiling is parsed out of this and applied as a real filter, so keep the number honest.',
       },
       { key: 'qualifier', label: 'Qualifier', kind: 'text', maxLength: 24 },
+      {
+        key: 'categorySlug',
+        label: 'Category',
+        kind: 'category',
+        help: 'What the tile actually shows. Without it the label is decoration: a tile reading "T-shirts under ₹1499" returned the cheapest products of ANY category, which is how face serum ended up under a T-shirt tile. Leave blank for an all-category price band.',
+      },
     ],
   },
 

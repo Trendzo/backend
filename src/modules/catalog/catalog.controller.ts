@@ -364,6 +364,19 @@ export async function listProducts(input: { query: z.infer<typeof ProductsQuery>
   }
   if (query.storeId) filters.push(eq(productListings.storeId, query.storeId));
   if (query.search) filters.push(ilike(productListings.name, `%${query.search}%`));
+  if (query.maxPricePaise !== undefined) {
+    // Cheapest shoppable variant ≤ ceiling, matching what the card displays and what
+    // `sort: price_asc` orders by. Restricted to active variants in active groups for
+    // the same reason as hasShoppableVariantSql: a listing whose only cheap variant is
+    // switched off should not qualify for a band it cannot actually sell into.
+    filters.push(sql`EXISTS (
+      SELECT 1 FROM variants v
+      JOIN variant_groups vg ON vg.id = v.group_id
+      WHERE v.listing_id = ${productListings.id}
+        AND v.is_active = true AND vg.is_active = true
+        AND v.price_paise <= ${query.maxPricePaise}
+    )`);
+  }
 
   if (query.categoryId || query.categorySlug) {
     const ids = await resolveDescendantIds({

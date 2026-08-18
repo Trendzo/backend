@@ -27,7 +27,9 @@
       "subtitle": null,
       "kicker": null,
       "ctaLabel": null,
-      "config": { "autoplayMs": 3500 },
+      "config": {
+        "autoplayMs": 3500
+      },
       "items": [
         {
           "key": "hero-her-new1",
@@ -35,8 +37,12 @@
           "assetKey": "banners/her-new1",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ForHer" },
-          "content": { "tint": "#f4e6c3" }
+          "link": {
+            "route": "ForHer"
+          },
+          "content": {
+            "tint": "#f4e6c3"
+          }
         },
         {
           "key": "hero-her-new2",
@@ -44,8 +50,12 @@
           "assetKey": "banners/her-new2",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ForHer" },
-          "content": { "tint": "#efcdc8" }
+          "link": {
+            "route": "ForHer"
+          },
+          "content": {
+            "tint": "#efcdc8"
+          }
         },
         {
           "key": "hero-him-new1",
@@ -53,8 +63,12 @@
           "assetKey": "banners/him-new1",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ForHim" },
-          "content": { "tint": "#ebe5cb" }
+          "link": {
+            "route": "ForHim"
+          },
+          "content": {
+            "tint": "#ebe5cb"
+          }
         },
         {
           "key": "hero-him-traditional",
@@ -62,8 +76,12 @@
           "assetKey": "banners/him-traditional",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ForHim" },
-          "content": { "tint": "#f2ddc4" }
+          "link": {
+            "route": "ForHim"
+          },
+          "content": {
+            "tint": "#f2ddc4"
+          }
         }
       ]
     },
@@ -74,7 +92,9 @@
       "subtitle": "60 minutes",
       "kicker": "3 stores nearby",
       "ctaLabel": null,
-      "config": { "searchPlaceholder": "Search 60-min drops..." },
+      "config": {
+        "searchPlaceholder": "Search 60-min drops..."
+      },
       "items": []
     },
     {
@@ -96,7 +116,9 @@
       "subtitle": null,
       "kicker": null,
       "ctaLabel": null,
-      "config": { "highlightColor": "#F2E63C" },
+      "config": {
+        "highlightColor": "#F2E63C"
+      },
       "items": [
         {
           "key": "exh-1",
@@ -104,8 +126,16 @@
           "assetKey": "github-import/numbered/1",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Wide Leg Denim" } },
-          "content": { "label": "Wide Leg Denim", "tint": "#E8A79A" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Wide Leg Denim"
+            }
+          },
+          "content": {
+            "label": "Wide Leg Denim",
+            "tint": "#E8A79A"
+          }
         },
         {
           "key": "exh-2",
@@ -113,8 +143,16 @@
           "assetKey": "github-import/numbered/2",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Sun Dress" } },
-          "content": { "label": "Sun Dress", "tint": "#A9BFE6" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Sun Dress"
+            }
+          },
+          "content": {
+            "label": "Sun Dress",
+            "tint": "#A9BFE6"
+          }
         },
         {
           "key": "exh-3",
@@ -122,8 +160,16 @@
           "assetKey": "github-import/numbered/3",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Bags" } },
-          "content": { "label": "Bags", "tint": "#BDE3C3" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Bags"
+            }
+          },
+          "content": {
+            "label": "Bags",
+            "tint": "#BDE3C3"
+          }
         },
         {
           "key": "exh-4",
@@ -131,8 +177,16 @@
           "assetKey": "github-import/numbered/4",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Matching Sets" } },
-          "content": { "label": "Matching Sets", "tint": "#E6D3A9" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Matching Sets"
+            }
+          },
+          "content": {
+            "label": "Matching Sets",
+            "tint": "#E6D3A9"
+          }
         },
         {
           "key": "exh-5",
@@ -140,8 +194,16 @@
           "assetKey": "github-import/numbered/5",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Everyday Tanks" } },
-          "content": { "label": "Everyday Tanks", "tint": "#D9B8E6" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Everyday Tanks"
+            }
+          },
+          "content": {
+            "label": "Everyday Tanks",
+            "tint": "#D9B8E6"
+          }
         },
         {
           "key": "exh-6",
@@ -149,8 +211,16 @@
           "assetKey": "github-import/numbered/6",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Workwear" } },
-          "content": { "label": "Workwear", "tint": "#A9DEDA" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Workwear"
+            }
+          },
+          "content": {
+            "label": "Workwear",
+            "tint": "#A9DEDA"
+          }
         },
         {
           "key": "exh-7",
@@ -158,8 +228,16 @@
           "assetKey": "github-import/numbered/7",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Mini Skirts" } },
-          "content": { "label": "Mini Skirts", "tint": "#E6B8C4" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Mini Skirts"
+            }
+          },
+          "content": {
+            "label": "Mini Skirts",
+            "tint": "#E6B8C4"
+          }
         },
         {
           "key": "exm-1",
@@ -167,8 +245,16 @@
           "assetKey": "github-import/numbered-men/1",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Baggy Denim" } },
-          "content": { "label": "Baggy Denim", "tint": "#E8A79A" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Baggy Denim"
+            }
+          },
+          "content": {
+            "label": "Baggy Denim",
+            "tint": "#E8A79A"
+          }
         },
         {
           "key": "exm-2",
@@ -176,8 +262,16 @@
           "assetKey": "github-import/numbered-men/2",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Graphic Tees" } },
-          "content": { "label": "Graphic Tees", "tint": "#A9BFE6" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Graphic Tees"
+            }
+          },
+          "content": {
+            "label": "Graphic Tees",
+            "tint": "#A9BFE6"
+          }
         },
         {
           "key": "exm-3",
@@ -185,8 +279,16 @@
           "assetKey": "github-import/numbered-men/3",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Sneakers" } },
-          "content": { "label": "Sneakers", "tint": "#BDE3C3" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Sneakers"
+            }
+          },
+          "content": {
+            "label": "Sneakers",
+            "tint": "#BDE3C3"
+          }
         },
         {
           "key": "exm-4",
@@ -194,8 +296,16 @@
           "assetKey": "github-import/numbered-men/4",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Co-ord Sets" } },
-          "content": { "label": "Co-ord Sets", "tint": "#E6D3A9" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Co-ord Sets"
+            }
+          },
+          "content": {
+            "label": "Co-ord Sets",
+            "tint": "#E6D3A9"
+          }
         },
         {
           "key": "exm-5",
@@ -203,8 +313,16 @@
           "assetKey": "github-import/numbered-men/5",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Overshirts" } },
-          "content": { "label": "Overshirts", "tint": "#D9B8E6" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Overshirts"
+            }
+          },
+          "content": {
+            "label": "Overshirts",
+            "tint": "#D9B8E6"
+          }
         },
         {
           "key": "exm-6",
@@ -212,8 +330,16 @@
           "assetKey": "github-import/numbered-men/6",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Workwear" } },
-          "content": { "label": "Workwear", "tint": "#A9DEDA" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Workwear"
+            }
+          },
+          "content": {
+            "label": "Workwear",
+            "tint": "#A9DEDA"
+          }
         },
         {
           "key": "exm-7",
@@ -221,8 +347,16 @@
           "assetKey": "github-import/numbered-men/7",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Cargos" } },
-          "content": { "label": "Cargos", "tint": "#E6B8C4" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Cargos"
+            }
+          },
+          "content": {
+            "label": "Cargos",
+            "tint": "#E6B8C4"
+          }
         }
       ]
     },
@@ -241,8 +375,15 @@
           "assetKey": "steals/her/beauty",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Steals" },
-          "content": { "label": "Beauty", "priceLine": "Under ₹999", "qualifier": "Starting at" }
+          "link": {
+            "route": "Steals"
+          },
+          "content": {
+            "label": "Beauty",
+            "priceLine": "Under ₹999",
+            "qualifier": "Starting at",
+            "categorySlug": "beauty"
+          }
         },
         {
           "key": "steal-her-2",
@@ -250,8 +391,14 @@
           "assetKey": "steals/her/jewelry",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Steals" },
-          "content": { "label": "Jewelry", "priceLine": "Under ₹1499" }
+          "link": {
+            "route": "Steals"
+          },
+          "content": {
+            "label": "Jewelry",
+            "priceLine": "Under ₹1499",
+            "categorySlug": "jewelry"
+          }
         },
         {
           "key": "steal-her-3",
@@ -259,8 +406,14 @@
           "assetKey": "steals/her/tops",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Steals" },
-          "content": { "label": "Tops", "priceLine": "Under ₹1999" }
+          "link": {
+            "route": "Steals"
+          },
+          "content": {
+            "label": "Tops",
+            "priceLine": "Under ₹1999",
+            "categorySlug": "tops"
+          }
         },
         {
           "key": "steal-him-1",
@@ -268,11 +421,14 @@
           "assetKey": "steals/him/tee",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Steals" },
+          "link": {
+            "route": "Steals"
+          },
           "content": {
             "label": "T-shirts",
             "priceLine": "Under ₹1499",
-            "qualifier": "Starting at"
+            "qualifier": "Starting at",
+            "categorySlug": "tops-tshirts"
           }
         },
         {
@@ -281,8 +437,14 @@
           "assetKey": "steals/him/eyewear",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Steals" },
-          "content": { "label": "Eyewear", "priceLine": "Under ₹1999" }
+          "link": {
+            "route": "Steals"
+          },
+          "content": {
+            "label": "Eyewear",
+            "priceLine": "Under ₹1999",
+            "categorySlug": "accessories-sunglasses"
+          }
         },
         {
           "key": "steal-him-3",
@@ -290,8 +452,14 @@
           "assetKey": "steals/him/jacket",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Steals" },
-          "content": { "label": "Jackets", "priceLine": "Under ₹2499" }
+          "link": {
+            "route": "Steals"
+          },
+          "content": {
+            "label": "Jackets",
+            "priceLine": "Under ₹2499",
+            "categorySlug": "outerwear-jackets"
+          }
         }
       ]
     },
@@ -302,7 +470,9 @@
       "subtitle": null,
       "kicker": null,
       "ctaLabel": "In the spotlight",
-      "config": { "cardLabel": "Trending Now" },
+      "config": {
+        "cardLabel": "Trending Now"
+      },
       "items": [
         {
           "key": "her-story-1",
@@ -310,7 +480,9 @@
           "assetKey": "story-posters/her-60-min",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "TopStories" },
+          "link": {
+            "route": "TopStories"
+          },
           "content": {}
         },
         {
@@ -319,7 +491,9 @@
           "assetKey": "story-posters/her-friday",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "TopStories" },
+          "link": {
+            "route": "TopStories"
+          },
           "content": {}
         },
         {
@@ -328,7 +502,9 @@
           "assetKey": "story-posters/her-roommate",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "TopStories" },
+          "link": {
+            "route": "TopStories"
+          },
           "content": {}
         },
         {
@@ -337,7 +513,9 @@
           "assetKey": "story-posters/her-latest-drops",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "TopStories" },
+          "link": {
+            "route": "TopStories"
+          },
           "content": {}
         },
         {
@@ -346,7 +524,9 @@
           "assetKey": "story-posters/her-casual-affair",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "TopStories" },
+          "link": {
+            "route": "TopStories"
+          },
           "content": {}
         },
         {
@@ -355,7 +535,9 @@
           "assetKey": "story-posters/him-coffee",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "TopStories" },
+          "link": {
+            "route": "TopStories"
+          },
           "content": {}
         },
         {
@@ -364,7 +546,9 @@
           "assetKey": "story-posters/him-60-min",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "TopStories" },
+          "link": {
+            "route": "TopStories"
+          },
           "content": {}
         },
         {
@@ -373,7 +557,9 @@
           "assetKey": "story-posters/him-friday",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "TopStories" },
+          "link": {
+            "route": "TopStories"
+          },
           "content": {}
         },
         {
@@ -382,7 +568,9 @@
           "assetKey": "story-posters/him-bros",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "TopStories" },
+          "link": {
+            "route": "TopStories"
+          },
           "content": {}
         }
       ]
@@ -402,8 +590,14 @@
           "assetKey": "reel-features/sheer-confidence",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ReelsTab" },
-          "content": { "label": "Up to 50% Off", "title": "Stay", "accent": "#111111" }
+          "link": {
+            "route": "ReelsTab"
+          },
+          "content": {
+            "label": "Up to 50% Off",
+            "title": "Stay",
+            "accent": "#111111"
+          }
         },
         {
           "key": "reel-feat-her-2",
@@ -411,8 +605,14 @@
           "assetKey": "reel-features/evening-edit",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ReelsTab" },
-          "content": { "label": "Hot on the Gram", "title": "Fresh", "accent": "#C84F87" }
+          "link": {
+            "route": "ReelsTab"
+          },
+          "content": {
+            "label": "Hot on the Gram",
+            "title": "Fresh",
+            "accent": "#C84F87"
+          }
         },
         {
           "key": "reel-feat-him-1",
@@ -420,8 +620,14 @@
           "assetKey": "reel-features/him-city",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ReelsTab" },
-          "content": { "label": "Up to 50% Off", "title": "Stay", "accent": "#111111" }
+          "link": {
+            "route": "ReelsTab"
+          },
+          "content": {
+            "label": "Up to 50% Off",
+            "title": "Stay",
+            "accent": "#111111"
+          }
         },
         {
           "key": "reel-feat-him-2",
@@ -429,8 +635,14 @@
           "assetKey": "reel-features/him-after-dark",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ReelsTab" },
-          "content": { "label": "Hot on the Gram", "title": "Fresh", "accent": "#245A9B" }
+          "link": {
+            "route": "ReelsTab"
+          },
+          "content": {
+            "label": "Hot on the Gram",
+            "title": "Fresh",
+            "accent": "#245A9B"
+          }
         }
       ]
     },
@@ -449,7 +661,9 @@
           "assetKey": "reels/female1",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ReelsTab" },
+          "link": {
+            "route": "ReelsTab"
+          },
           "content": {}
         },
         {
@@ -458,7 +672,9 @@
           "assetKey": "reels/female2",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ReelsTab" },
+          "link": {
+            "route": "ReelsTab"
+          },
           "content": {}
         },
         {
@@ -467,7 +683,9 @@
           "assetKey": "reels/men1",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ReelsTab" },
+          "link": {
+            "route": "ReelsTab"
+          },
           "content": {}
         },
         {
@@ -476,7 +694,9 @@
           "assetKey": "reels/men2",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ReelsTab" },
+          "link": {
+            "route": "ReelsTab"
+          },
           "content": {}
         }
       ]
@@ -499,8 +719,12 @@
           "assetKey": null,
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories" },
-          "content": { "label": "Trendy Styles" }
+          "link": {
+            "route": "Categories"
+          },
+          "content": {
+            "label": "Trendy Styles"
+          }
         },
         {
           "key": "reel-chip-fast",
@@ -508,8 +732,12 @@
           "assetKey": null,
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories" },
-          "content": { "label": "Lightning Fast" }
+          "link": {
+            "route": "Categories"
+          },
+          "content": {
+            "label": "Lightning Fast"
+          }
         },
         {
           "key": "reel-chip-returns",
@@ -517,8 +745,12 @@
           "assetKey": null,
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories" },
-          "content": { "label": "Easy Returns" }
+          "link": {
+            "route": "Categories"
+          },
+          "content": {
+            "label": "Easy Returns"
+          }
         }
       ]
     },
@@ -529,7 +761,9 @@
       "subtitle": null,
       "kicker": null,
       "ctaLabel": null,
-      "config": { "backgroundAssetKey": "github-import/top/bg" },
+      "config": {
+        "backgroundAssetKey": "github-import/top/bg"
+      },
       "items": [
         {
           "key": "occ-her-brunch",
@@ -537,8 +771,15 @@
           "assetKey": "github-import/women/dress",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ShopByOccasion", "params": { "occasion": "brunch" } },
-          "content": { "label": "Brunch" }
+          "link": {
+            "route": "ShopByOccasion",
+            "params": {
+              "occasion": "brunch"
+            }
+          },
+          "content": {
+            "label": "Brunch"
+          }
         },
         {
           "key": "occ-her-party",
@@ -546,8 +787,15 @@
           "assetKey": "github-import/women/top",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ShopByOccasion", "params": { "occasion": "party" } },
-          "content": { "label": "Party" }
+          "link": {
+            "route": "ShopByOccasion",
+            "params": {
+              "occasion": "party"
+            }
+          },
+          "content": {
+            "label": "Party"
+          }
         },
         {
           "key": "occ-her-date",
@@ -555,8 +803,15 @@
           "assetKey": "github-import/women/heels",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ShopByOccasion", "params": { "occasion": "date" } },
-          "content": { "label": "Date" }
+          "link": {
+            "route": "ShopByOccasion",
+            "params": {
+              "occasion": "date"
+            }
+          },
+          "content": {
+            "label": "Date"
+          }
         },
         {
           "key": "occ-her-wedding",
@@ -564,8 +819,15 @@
           "assetKey": "github-import/women/ethenic",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ShopByOccasion", "params": { "occasion": "wedding" } },
-          "content": { "label": "Wedding" }
+          "link": {
+            "route": "ShopByOccasion",
+            "params": {
+              "occasion": "wedding"
+            }
+          },
+          "content": {
+            "label": "Wedding"
+          }
         },
         {
           "key": "occ-her-casual",
@@ -573,8 +835,15 @@
           "assetKey": "github-import/women/pants",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ShopByOccasion", "params": { "occasion": "casual" } },
-          "content": { "label": "Casual" }
+          "link": {
+            "route": "ShopByOccasion",
+            "params": {
+              "occasion": "casual"
+            }
+          },
+          "content": {
+            "label": "Casual"
+          }
         },
         {
           "key": "occ-him-office",
@@ -582,8 +851,15 @@
           "assetKey": "github-import/men/shirt",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ShopByOccasion", "params": { "occasion": "office" } },
-          "content": { "label": "Office" }
+          "link": {
+            "route": "ShopByOccasion",
+            "params": {
+              "occasion": "office"
+            }
+          },
+          "content": {
+            "label": "Office"
+          }
         },
         {
           "key": "occ-him-street",
@@ -591,8 +867,15 @@
           "assetKey": "github-import/men/jackets",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ShopByOccasion", "params": { "occasion": "streetwear" } },
-          "content": { "label": "Streetwear" }
+          "link": {
+            "route": "ShopByOccasion",
+            "params": {
+              "occasion": "streetwear"
+            }
+          },
+          "content": {
+            "label": "Streetwear"
+          }
         },
         {
           "key": "occ-him-gym",
@@ -600,8 +883,15 @@
           "assetKey": "github-import/men/tshirt",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ShopByOccasion", "params": { "occasion": "gym" } },
-          "content": { "label": "Gym" }
+          "link": {
+            "route": "ShopByOccasion",
+            "params": {
+              "occasion": "gym"
+            }
+          },
+          "content": {
+            "label": "Gym"
+          }
         },
         {
           "key": "occ-him-travel",
@@ -609,8 +899,15 @@
           "assetKey": "github-import/men/jeans",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ShopByOccasion", "params": { "occasion": "travel" } },
-          "content": { "label": "Travel" }
+          "link": {
+            "route": "ShopByOccasion",
+            "params": {
+              "occasion": "travel"
+            }
+          },
+          "content": {
+            "label": "Travel"
+          }
         },
         {
           "key": "occ-him-weekend",
@@ -618,8 +915,15 @@
           "assetKey": "github-import/men/shoes",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "ShopByOccasion", "params": { "occasion": "weekend" } },
-          "content": { "label": "Weekend" }
+          "link": {
+            "route": "ShopByOccasion",
+            "params": {
+              "occasion": "weekend"
+            }
+          },
+          "content": {
+            "label": "Weekend"
+          }
         }
       ]
     },
@@ -638,8 +942,12 @@
           "assetKey": "github-import/men/tshirt",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "FlashFit" },
-          "content": { "label": "T-Shirt" }
+          "link": {
+            "route": "FlashFit"
+          },
+          "content": {
+            "label": "T-Shirt"
+          }
         },
         {
           "key": "flash-shoes",
@@ -647,8 +955,12 @@
           "assetKey": "github-import/men/shoes",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "FlashFit" },
-          "content": { "label": "Shoes" }
+          "link": {
+            "route": "FlashFit"
+          },
+          "content": {
+            "label": "Shoes"
+          }
         },
         {
           "key": "flash-jeans",
@@ -656,8 +968,12 @@
           "assetKey": "github-import/men/jeans",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "FlashFit" },
-          "content": { "label": "Jeans" }
+          "link": {
+            "route": "FlashFit"
+          },
+          "content": {
+            "label": "Jeans"
+          }
         }
       ]
     },
@@ -668,7 +984,9 @@
       "subtitle": "Tap a look and try it on yourself",
       "kicker": null,
       "ctaLabel": "View",
-      "config": { "wordmark": "Try & Buy" },
+      "config": {
+        "wordmark": "Try & Buy"
+      },
       "items": [
         {
           "key": "tryon-cutouts",
@@ -676,7 +994,9 @@
           "assetKey": "vr-try-on",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "TryOnPicker" },
+          "link": {
+            "route": "TryOnPicker"
+          },
           "content": {}
         }
       ]
@@ -691,7 +1011,6 @@
       "config": {},
       "items": []
     },
-
     {
       "key": "page.steals_hero",
       "type": "page_hero",
@@ -736,8 +1055,13 @@
           "assetKey": "steals/her/beauty",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Steals" },
-          "content": { "label": "Beauty", "priceLine": "₹999" }
+          "link": {
+            "route": "Steals"
+          },
+          "content": {
+            "label": "Beauty",
+            "priceLine": "₹999"
+          }
         },
         {
           "key": "steals-deal-her-jewelry",
@@ -745,8 +1069,13 @@
           "assetKey": "steals/her/jewelry",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Steals" },
-          "content": { "label": "Jewelry", "priceLine": "₹1499" }
+          "link": {
+            "route": "Steals"
+          },
+          "content": {
+            "label": "Jewelry",
+            "priceLine": "₹1499"
+          }
         },
         {
           "key": "steals-deal-her-tops",
@@ -754,8 +1083,13 @@
           "assetKey": "steals/her/tops",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Steals" },
-          "content": { "label": "Tops", "priceLine": "₹1999" }
+          "link": {
+            "route": "Steals"
+          },
+          "content": {
+            "label": "Tops",
+            "priceLine": "₹1999"
+          }
         },
         {
           "key": "steals-deal-him-tee",
@@ -763,8 +1097,13 @@
           "assetKey": "steals/him/tee",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Steals" },
-          "content": { "label": "Tees", "priceLine": "₹1499" }
+          "link": {
+            "route": "Steals"
+          },
+          "content": {
+            "label": "Tees",
+            "priceLine": "₹1499"
+          }
         },
         {
           "key": "steals-deal-him-eyewear",
@@ -772,8 +1111,13 @@
           "assetKey": "steals/him/eyewear",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Steals" },
-          "content": { "label": "Eyewear", "priceLine": "₹1999" }
+          "link": {
+            "route": "Steals"
+          },
+          "content": {
+            "label": "Eyewear",
+            "priceLine": "₹1999"
+          }
         },
         {
           "key": "steals-deal-him-jacket",
@@ -781,8 +1125,13 @@
           "assetKey": "steals/him/jacket",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Steals" },
-          "content": { "label": "Jackets", "priceLine": "₹2499" }
+          "link": {
+            "route": "Steals"
+          },
+          "content": {
+            "label": "Jackets",
+            "priceLine": "₹2499"
+          }
         }
       ]
     },
@@ -802,7 +1151,9 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "label": "All deals" }
+          "content": {
+            "label": "All deals"
+          }
         },
         {
           "key": "band-499",
@@ -811,7 +1162,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "label": "Under ₹499", "maxPaise": 49900 }
+          "content": {
+            "label": "Under ₹499",
+            "maxPaise": 49900
+          }
         },
         {
           "key": "band-999",
@@ -820,7 +1174,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "label": "Under ₹999", "maxPaise": 99900 }
+          "content": {
+            "label": "Under ₹999",
+            "maxPaise": 99900
+          }
         },
         {
           "key": "band-1499",
@@ -829,7 +1186,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "label": "Under ₹1499", "maxPaise": 149900 }
+          "content": {
+            "label": "Under ₹1499",
+            "maxPaise": 149900
+          }
         },
         {
           "key": "band-1999",
@@ -838,7 +1198,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "label": "Under ₹1999", "maxPaise": 199900 }
+          "content": {
+            "label": "Under ₹1999",
+            "maxPaise": 199900
+          }
         }
       ]
     },
@@ -857,13 +1220,22 @@
           "assetKey": "story-posters/her-60-min",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Ready in an Hour" } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Ready in an Hour"
+            }
+          },
           "content": {
             "tag": "60-Minute Edit",
             "title": "Ready in an Hour",
             "blurb": "The pieces that reach your door before you finish getting ready — styled for a night that starts now.",
             "read": "4 min",
-            "tags": ["Fast", "Party", "Heels"]
+            "tags": [
+              "Fast",
+              "Party",
+              "Heels"
+            ]
           }
         },
         {
@@ -872,13 +1244,22 @@
           "assetKey": "story-posters/her-friday",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Into the Weekend" } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Into the Weekend"
+            }
+          },
           "content": {
             "tag": "Friday Feeling",
             "title": "Into the Weekend",
             "blurb": "Clock-out to cocktails without a costume change. Soft tailoring that works twice as hard as you do.",
             "read": "3 min",
-            "tags": ["Work", "Evening", "Dresses"]
+            "tags": [
+              "Work",
+              "Evening",
+              "Dresses"
+            ]
           }
         },
         {
@@ -887,13 +1268,22 @@
           "assetKey": "story-posters/her-roommate",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Borrowed & Better" } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Borrowed & Better"
+            }
+          },
           "content": {
             "tag": "Roommate Picks",
             "title": "Borrowed & Better",
             "blurb": "The oversized, the cropped, the endlessly borrowable. A shared-closet capsule you will not want to give back.",
             "read": "5 min",
-            "tags": ["Casual", "Denim", "Layers"]
+            "tags": [
+              "Casual",
+              "Denim",
+              "Layers"
+            ]
           }
         },
         {
@@ -902,13 +1292,22 @@
           "assetKey": "story-posters/her-latest-drops",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "The Latest Drops" } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "The Latest Drops"
+            }
+          },
           "content": {
             "tag": "Just Dropped",
             "title": "The Latest Drops",
             "blurb": "Fresh off the rack and already trending. The first look at what everyone will be wearing next.",
             "read": "2 min",
-            "tags": ["New", "Trending", "Tops"]
+            "tags": [
+              "New",
+              "Trending",
+              "Tops"
+            ]
           }
         },
         {
@@ -917,13 +1316,22 @@
           "assetKey": "story-posters/her-casual-affair",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "A Casual Affair" } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "A Casual Affair"
+            }
+          },
           "content": {
             "tag": "Off Duty",
             "title": "A Casual Affair",
             "blurb": "Effortless never happens by accident. The relaxed uniform, engineered to look like you did not try.",
             "read": "4 min",
-            "tags": ["Everyday", "Comfort", "Sets"]
+            "tags": [
+              "Everyday",
+              "Comfort",
+              "Sets"
+            ]
           }
         },
         {
@@ -932,13 +1340,22 @@
           "assetKey": "story-posters/him-coffee",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "The Coffee Run" } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "The Coffee Run"
+            }
+          },
           "content": {
             "tag": "Morning Routine",
             "title": "The Coffee Run",
             "blurb": "Thrown on, never thrown together. The five-minute fit that carries you from the queue to the meeting.",
             "read": "3 min",
-            "tags": ["Casual", "Tees", "Denim"]
+            "tags": [
+              "Casual",
+              "Tees",
+              "Denim"
+            ]
           }
         },
         {
@@ -947,13 +1364,22 @@
           "assetKey": "story-posters/him-60-min",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Fast, Literally" } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Fast, Literally"
+            }
+          },
           "content": {
             "tag": "60-Minute Edit",
             "title": "Fast, Literally",
             "blurb": "Ordered at noon, worn by one. A full look at your door inside the hour — no compromise on the fit.",
             "read": "2 min",
-            "tags": ["Fast", "Street", "Sneakers"]
+            "tags": [
+              "Fast",
+              "Street",
+              "Sneakers"
+            ]
           }
         },
         {
@@ -962,13 +1388,22 @@
           "assetKey": "story-posters/him-friday",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Clock-Out Looks" } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Clock-Out Looks"
+            }
+          },
           "content": {
             "tag": "Friday Feeling",
             "title": "Clock-Out Looks",
             "blurb": "The pivot from desk to bar in one layer. Sharp enough for the office, loose enough for after.",
             "read": "4 min",
-            "tags": ["Work", "Evening", "Shirts"]
+            "tags": [
+              "Work",
+              "Evening",
+              "Shirts"
+            ]
           }
         },
         {
@@ -977,13 +1412,22 @@
           "assetKey": "story-posters/him-bros",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Rolling With the Crew" } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Rolling With the Crew"
+            }
+          },
           "content": {
             "tag": "Crew Love",
             "title": "Rolling With the Crew",
             "blurb": "Matching energy, not matching outfits. The group-chat-approved fits for whatever the weekend throws.",
             "read": "5 min",
-            "tags": ["Weekend", "Jackets", "Caps"]
+            "tags": [
+              "Weekend",
+              "Jackets",
+              "Caps"
+            ]
           }
         }
       ]
@@ -1159,7 +1603,6 @@
       "config": {},
       "items": []
     },
-
     {
       "key": "page.edit_her",
       "type": "edit_page",
@@ -1199,7 +1642,9 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "label": "60-MIN DELIVERY" }
+          "content": {
+            "label": "60-MIN DELIVERY"
+          }
         },
         {
           "key": "edit-her-chip-2",
@@ -1208,7 +1653,9 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "label": "NEW DROPS WEEKLY" }
+          "content": {
+            "label": "NEW DROPS WEEKLY"
+          }
         },
         {
           "key": "edit-her-chip-3",
@@ -1217,7 +1664,9 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "label": "EASY RETURNS" }
+          "content": {
+            "label": "EASY RETURNS"
+          }
         }
       ]
     },
@@ -1236,8 +1685,15 @@
           "assetKey": "github-import/women/dress",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Dresses" } },
-          "content": { "label": "Dresses" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Dresses"
+            }
+          },
+          "content": {
+            "label": "Dresses"
+          }
         },
         {
           "key": "edit-her-cat-tops",
@@ -1245,8 +1701,15 @@
           "assetKey": "github-import/women/top",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Tops" } },
-          "content": { "label": "Tops" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Tops"
+            }
+          },
+          "content": {
+            "label": "Tops"
+          }
         },
         {
           "key": "edit-her-cat-skirts",
@@ -1254,8 +1717,15 @@
           "assetKey": "github-import/women/skirts",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Skirts" } },
-          "content": { "label": "Skirts" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Skirts"
+            }
+          },
+          "content": {
+            "label": "Skirts"
+          }
         },
         {
           "key": "edit-her-cat-heels",
@@ -1263,8 +1733,15 @@
           "assetKey": "github-import/women/heels",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Heels" } },
-          "content": { "label": "Heels" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Heels"
+            }
+          },
+          "content": {
+            "label": "Heels"
+          }
         },
         {
           "key": "edit-her-cat-jewelry",
@@ -1272,8 +1749,15 @@
           "assetKey": "github-import/women/jwellery",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Jewelry" } },
-          "content": { "label": "Jewelry" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Jewelry"
+            }
+          },
+          "content": {
+            "label": "Jewelry"
+          }
         },
         {
           "key": "edit-her-cat-pants",
@@ -1281,8 +1765,15 @@
           "assetKey": "github-import/women/pants",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Pants" } },
-          "content": { "label": "Pants" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Pants"
+            }
+          },
+          "content": {
+            "label": "Pants"
+          }
         },
         {
           "key": "edit-her-cat-ethnic",
@@ -1290,8 +1781,15 @@
           "assetKey": "github-import/women/ethenic",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Ethnic" } },
-          "content": { "label": "Ethnic" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Ethnic"
+            }
+          },
+          "content": {
+            "label": "Ethnic"
+          }
         },
         {
           "key": "edit-her-cat-eyewear",
@@ -1299,8 +1797,15 @@
           "assetKey": "github-import/women/glasses",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Eyewear" } },
-          "content": { "label": "Eyewear" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Eyewear"
+            }
+          },
+          "content": {
+            "label": "Eyewear"
+          }
         }
       ]
     },
@@ -1319,7 +1824,12 @@
           "assetKey": "banners/her-closet",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "New week, new closet." } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "New week, new closet."
+            }
+          },
           "content": {
             "tag": "CLOSET REFRESH",
             "title": "New week,\nnew closet.",
@@ -1332,7 +1842,12 @@
           "assetKey": "banners/her-friday",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Off the clock." } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Off the clock."
+            }
+          },
           "content": {
             "tag": "FRIDAY FEELING",
             "title": "Off the\nclock.",
@@ -1380,7 +1895,9 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "label": "60-MIN DELIVERY" }
+          "content": {
+            "label": "60-MIN DELIVERY"
+          }
         },
         {
           "key": "edit-him-chip-2",
@@ -1389,7 +1906,9 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "label": "NEW DROPS WEEKLY" }
+          "content": {
+            "label": "NEW DROPS WEEKLY"
+          }
         },
         {
           "key": "edit-him-chip-3",
@@ -1398,7 +1917,9 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "label": "EASY RETURNS" }
+          "content": {
+            "label": "EASY RETURNS"
+          }
         }
       ]
     },
@@ -1417,8 +1938,15 @@
           "assetKey": "github-import/men/tshirt",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Tees" } },
-          "content": { "label": "Tees" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Tees"
+            }
+          },
+          "content": {
+            "label": "Tees"
+          }
         },
         {
           "key": "edit-him-cat-shirts",
@@ -1426,8 +1954,15 @@
           "assetKey": "github-import/men/shirt",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Shirts" } },
-          "content": { "label": "Shirts" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Shirts"
+            }
+          },
+          "content": {
+            "label": "Shirts"
+          }
         },
         {
           "key": "edit-him-cat-jeans",
@@ -1435,8 +1970,15 @@
           "assetKey": "github-import/men/jeans",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Jeans" } },
-          "content": { "label": "Jeans" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Jeans"
+            }
+          },
+          "content": {
+            "label": "Jeans"
+          }
         },
         {
           "key": "edit-him-cat-jackets",
@@ -1444,8 +1986,15 @@
           "assetKey": "github-import/men/jackets",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Jackets" } },
-          "content": { "label": "Jackets" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Jackets"
+            }
+          },
+          "content": {
+            "label": "Jackets"
+          }
         },
         {
           "key": "edit-him-cat-shoes",
@@ -1453,8 +2002,15 @@
           "assetKey": "github-import/men/shoes",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Shoes" } },
-          "content": { "label": "Shoes" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Shoes"
+            }
+          },
+          "content": {
+            "label": "Shoes"
+          }
         },
         {
           "key": "edit-him-cat-watches",
@@ -1462,8 +2018,15 @@
           "assetKey": "github-import/men/watchs",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Watches" } },
-          "content": { "label": "Watches" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Watches"
+            }
+          },
+          "content": {
+            "label": "Watches"
+          }
         },
         {
           "key": "edit-him-cat-caps",
@@ -1471,8 +2034,15 @@
           "assetKey": "github-import/men/cap",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Caps" } },
-          "content": { "label": "Caps" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Caps"
+            }
+          },
+          "content": {
+            "label": "Caps"
+          }
         },
         {
           "key": "edit-him-cat-shorts",
@@ -1480,8 +2050,15 @@
           "assetKey": "github-import/men/short",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Shorts" } },
-          "content": { "label": "Shorts" }
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Shorts"
+            }
+          },
+          "content": {
+            "label": "Shorts"
+          }
         }
       ]
     },
@@ -1500,7 +2077,12 @@
           "assetKey": "banners/him-coffee",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Five-minute fits." } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Five-minute fits."
+            }
+          },
           "content": {
             "tag": "THE COFFEE RUN",
             "title": "Five-minute\nfits.",
@@ -1513,7 +2095,12 @@
           "assetKey": "banners/him-closet",
           "imageUrl": null,
           "videoUrl": null,
-          "link": { "route": "Categories", "params": { "label": "Built different." } },
+          "link": {
+            "route": "Categories",
+            "params": {
+              "label": "Built different."
+            }
+          },
           "content": {
             "tag": "CLOSET RESET",
             "title": "Built\ndifferent.",
@@ -1522,7 +2109,6 @@
         }
       ]
     },
-
     {
       "key": "page.category_banners",
       "type": "category_banner_map",
@@ -1539,7 +2125,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "top" }
+          "content": {
+            "textH": "left",
+            "textV": "top"
+          }
         },
         {
           "key": "her-dresses",
@@ -1548,7 +2137,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "bottom" }
+          "content": {
+            "textH": "left",
+            "textV": "bottom"
+          }
         },
         {
           "key": "her-coords",
@@ -1557,7 +2149,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "bottom" }
+          "content": {
+            "textH": "left",
+            "textV": "bottom"
+          }
         },
         {
           "key": "her-bottoms",
@@ -1566,7 +2161,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "center", "textV": "top" }
+          "content": {
+            "textH": "center",
+            "textV": "top"
+          }
         },
         {
           "key": "her-denim",
@@ -1575,7 +2173,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "top" }
+          "content": {
+            "textH": "left",
+            "textV": "top"
+          }
         },
         {
           "key": "her-lounge",
@@ -1584,7 +2185,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "center", "textV": "top" }
+          "content": {
+            "textH": "center",
+            "textV": "top"
+          }
         },
         {
           "key": "her-active",
@@ -1593,7 +2197,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "top" }
+          "content": {
+            "textH": "left",
+            "textV": "top"
+          }
         },
         {
           "key": "her-swim",
@@ -1602,7 +2209,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "bottom" }
+          "content": {
+            "textH": "left",
+            "textV": "bottom"
+          }
         },
         {
           "key": "her-outerwear",
@@ -1611,7 +2221,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "center", "textV": "top" }
+          "content": {
+            "textH": "center",
+            "textV": "top"
+          }
         },
         {
           "key": "her-shoes",
@@ -1620,7 +2233,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "right", "textV": "bottom" }
+          "content": {
+            "textH": "right",
+            "textV": "bottom"
+          }
         },
         {
           "key": "her-bags",
@@ -1629,7 +2245,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "right", "textV": "bottom" }
+          "content": {
+            "textH": "right",
+            "textV": "bottom"
+          }
         },
         {
           "key": "her-accessories",
@@ -1638,7 +2257,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "right", "textV": "bottom" }
+          "content": {
+            "textH": "right",
+            "textV": "bottom"
+          }
         },
         {
           "key": "her-jewelry",
@@ -1647,7 +2269,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "right", "textV": "top" }
+          "content": {
+            "textH": "right",
+            "textV": "top"
+          }
         },
         {
           "key": "her-beauty",
@@ -1656,7 +2281,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "top" }
+          "content": {
+            "textH": "left",
+            "textV": "top"
+          }
         },
         {
           "key": "him-tops",
@@ -1665,7 +2293,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "top" }
+          "content": {
+            "textH": "left",
+            "textV": "top"
+          }
         },
         {
           "key": "him-bottoms",
@@ -1674,7 +2305,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "top" }
+          "content": {
+            "textH": "left",
+            "textV": "top"
+          }
         },
         {
           "key": "him-denim",
@@ -1683,7 +2317,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "top" }
+          "content": {
+            "textH": "left",
+            "textV": "top"
+          }
         },
         {
           "key": "him-ethnic",
@@ -1692,7 +2329,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "top" }
+          "content": {
+            "textH": "left",
+            "textV": "top"
+          }
         },
         {
           "key": "him-formal",
@@ -1701,7 +2341,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "right", "textV": "top" }
+          "content": {
+            "textH": "right",
+            "textV": "top"
+          }
         },
         {
           "key": "him-outerwear",
@@ -1710,7 +2353,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "bottom" }
+          "content": {
+            "textH": "left",
+            "textV": "bottom"
+          }
         },
         {
           "key": "him-active",
@@ -1719,7 +2365,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "left", "textV": "top" }
+          "content": {
+            "textH": "left",
+            "textV": "top"
+          }
         },
         {
           "key": "him-lounge",
@@ -1728,7 +2377,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "right", "textV": "top" }
+          "content": {
+            "textH": "right",
+            "textV": "top"
+          }
         },
         {
           "key": "him-swim",
@@ -1737,7 +2389,10 @@
           "imageUrl": null,
           "videoUrl": null,
           "link": null,
-          "content": { "textH": "right", "textV": "top" }
+          "content": {
+            "textH": "right",
+            "textV": "top"
+          }
         }
       ]
     }

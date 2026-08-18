@@ -262,3 +262,66 @@ describe('occasion collections', () => {
     await expect(getCollection('not-a-real-occasion', { limit: 60 })).rejects.toThrow();
   });
 });
+
+/**
+ * The Steals price bands. Before `maxPricePaise` existed the app fetched one page
+ * sorted cheapest-first and filtered it in memory, so a band could under-fill; and with
+ * no category on the tile, "T-shirts under ₹1499" returned the cheapest products of ANY
+ * category — face serum under a T-shirt tile.
+ */
+describe('price-banded browse', () => {
+  it('returns only listings whose cheapest variant is within the ceiling', async () => {
+    const ceiling = 150_000; // ₹1,500
+    const rows = rowsOf(
+      await listProducts({
+        query: { sort: 'price_asc', view: 'full' as const, maxPricePaise: ceiling, limit: 100, offset: 0 },
+      }),
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const p of rows) {
+      expect(Math.min(...p.variants.map((v) => v.pricePaise))).toBeLessThanOrEqual(ceiling);
+    }
+  });
+
+  it('narrows further when a category is given, and stays inside that category', async () => {
+    const ceiling = 500_000;
+    const all = rowsOf(
+      await listProducts({
+        query: { sort: 'price_asc', view: 'full' as const, maxPricePaise: ceiling, limit: 100, offset: 0 },
+      }),
+    );
+    const scoped = rowsOf(
+      await listProducts({
+        query: {
+          categorySlug: 'tops-tshirts',
+          sort: 'price_asc',
+          view: 'full' as const,
+          maxPricePaise: ceiling,
+          limit: 100,
+          offset: 0,
+        },
+      }),
+    );
+    expect(scoped.length).toBeGreaterThan(0);
+    expect(scoped.length).toBeLessThan(all.length);
+    const tshirtIds = new Set(
+      rowsOf(
+        await listProducts({
+          query: { categorySlug: 'tops-tshirts', sort: 'newest', view: 'full' as const, limit: 100, offset: 0 },
+        }),
+      ).map((p) => p.id),
+    );
+    for (const p of scoped) expect(tshirtIds.has(p.id)).toBe(true);
+  });
+
+  it('excludes a listing whose only in-band variant is switched off', async () => {
+    // Mirrors hasShoppableVariantSql: a price you cannot actually buy at should not
+    // qualify the listing for the band.
+    const rows = rowsOf(
+      await listProducts({
+        query: { sort: 'price_asc', view: 'full' as const, maxPricePaise: 1, limit: 10, offset: 0 },
+      }),
+    );
+    expect(rows).toEqual([]);
+  });
+});

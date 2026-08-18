@@ -98,6 +98,12 @@ export const ProductsQuery = z.object({
    * 'full' so existing callers are unaffected — the consumer grid opts in.
    */
   view: z.enum(['full', 'card']).default('full'),
+  /**
+   * Price ceiling in paise, matched against a listing's CHEAPEST shoppable variant —
+   * the same number the product card shows. Drives the Steals price bands, which
+   * previously filtered one already-fetched page in memory and so could under-fill.
+   */
+  maxPricePaise: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(100).default(50),
   offset: z.coerce.number().int().nonnegative().default(0),
 });
