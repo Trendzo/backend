@@ -934,48 +934,10 @@
       "subtitle": "Fresh looks served hot!",
       "kicker": null,
       "ctaLabel": "Under ₹999",
-      "config": {},
-      "items": [
-        {
-          "key": "flash-tshirt",
-          "gender": "all",
-          "assetKey": "github-import/men/tshirt",
-          "imageUrl": null,
-          "videoUrl": null,
-          "link": {
-            "route": "FlashFit"
-          },
-          "content": {
-            "label": "T-Shirt"
-          }
-        },
-        {
-          "key": "flash-shoes",
-          "gender": "all",
-          "assetKey": "github-import/men/shoes",
-          "imageUrl": null,
-          "videoUrl": null,
-          "link": {
-            "route": "FlashFit"
-          },
-          "content": {
-            "label": "Shoes"
-          }
-        },
-        {
-          "key": "flash-jeans",
-          "gender": "all",
-          "assetKey": "github-import/men/jeans",
-          "imageUrl": null,
-          "videoUrl": null,
-          "link": {
-            "route": "FlashFit"
-          },
-          "content": {
-            "label": "Jeans"
-          }
-        }
-      ]
+      "config": {
+        "collectionSlug": "drop-midnight-luxe"
+      },
+      "items": []
     },
     {
       "key": "home.try_on",

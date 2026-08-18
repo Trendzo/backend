@@ -33,7 +33,14 @@ export type CmsFieldKind =
    * silently missed the `streetwear` tag — a typo produces the wrong catalog with no
    * error anywhere. A picker cannot be mistyped.
    */
-  | 'category';
+  | 'category'
+  /**
+   * A collection slug, rendered by admin as a picker over the live collections.
+   *
+   * Same reasoning as `category`: the alternative is an admin typing a slug, and a
+   * mistyped one produces an empty section with no error anywhere.
+   */
+  | 'collection';
 
 export type CmsFieldSpec = {
   /** Key inside `content` (items) or `config` (sections). */
@@ -374,15 +381,27 @@ export const SECTION_SCHEMA = {
     type: 'flash_fit',
     tab: 'flash',
     label: 'Flash fit of the day',
-    description: 'The three-tile outfit grid with the countdown.',
+    description:
+      'The outfit grid and countdown. Pick a DROP: its members are the fit, and its end date is the countdown. Curate the drop in Collections to change what shows.',
     genderSplit: false,
-    media: 'image',
-    link: true,
-    minItems: 3,
-    maxItems: 3,
+    // No items. The three tiles used to be authored art with a label and nothing behind
+    // them — a caption saying "Jeans" over a stock photo, pointing at no product. They
+    // are the drop's real members now, so the drop is the single place this is edited.
+    media: 'none',
+    link: false,
+    minItems: 0,
+    maxItems: 0,
     copyFields: ['title', 'subtitle', 'ctaLabel'],
-    configFields: [],
-    itemFields: [{ ...LABEL, required: true }],
+    configFields: [
+      {
+        key: 'collectionSlug',
+        label: 'Featured drop',
+        kind: 'collection',
+        required: true,
+        help: 'Which drop is live. Its first three members are the fit; the rest fill the deals grid. Leave the drop\'s end date empty and the countdown simply does not render.',
+      },
+    ],
+    itemFields: [],
   },
 
   'home.try_on': {
