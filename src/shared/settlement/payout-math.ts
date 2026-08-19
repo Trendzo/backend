@@ -20,6 +20,8 @@ export type CycleAggregate = {
   grossPaise: bigint;
   commissionPaise: bigint;
   commissionTaxPaise: bigint;
+  /** Platform-funded discounts on this cycle's orders, paid back to the retailer. */
+  discountReimbursementPaise: bigint;
   refundsHeldPaise: bigint;
   adjustmentsPaise: bigint; // signed: manual-kind only (credit+, debit-)
   disputeLiabilitiesPaise: bigint; // signed: dispute_liability-kind only
@@ -47,6 +49,12 @@ export async function computeCycleAggregate(input: {
       id: orders.id,
       itemsSubtotalPaise: orders.itemsSubtotalPaise,
       grandTotalPaise: orders.grandTotalPaise,
+      // The four components netted out of grandTotalPaise. Reimbursed to the retailer:
+      // Trendzo funds promotions, the retailer does not.
+      retailerPromoPaise: orders.retailerPromoPaise,
+      platformPromoPaise: orders.platformPromoPaise,
+      couponPaise: orders.couponPaise,
+      pointsRedeemedPaise: orders.pointsRedeemedPaise,
       taxPaise: orders.taxPaise,
       platformFeeBpSnap: orders.platformFeeBpSnap,
       tcsRateBpSnap: orders.tcsRateBpSnap,
@@ -64,11 +72,38 @@ export async function computeCycleAggregate(input: {
     );
 
   let grossPaise = 0n;
+  let discountReimbursementPaise = 0n;
   let commissionPaise = 0n;
   let tcsPaise = 0n;
   const orderIds: string[] = [];
   for (const o of cycleOrders) {
     grossPaise += BigInt(o.grandTotalPaise);
+
+    /**
+     * Add back every discount that reduced grandTotalPaise.
+     *
+     * grandTotalPaise is built on `taxBasePaise = postPromoSubtotal − coupon − loyalty`
+     * (discounts/compute.ts:192-223), so paying out on it alone meant the retailer
+     * funded every promotion the platform ran — while commission and TCS were charged
+     * on the pre-discount `itemsSubtotalPaise`, so a discounted order cost the retailer
+     * twice. Trendzo bears promotion cost, so the retailer is made whole here.
+     *
+     * `walletAppliedPaise` is deliberately NOT included: wallet is a tender applied on
+     * top of grandTotal, not a discount, so it never reduced this base.
+     *
+     * All four buckets are reimbursed today because nothing in the system is genuinely
+     * retailer-funded yet — `promotions.issuerType` records who CREATED a promotion, not
+     * who pays for it, and no code reads it for money. When an explicit funding flag
+     * lands, retailer-funded promotions get excluded from this sum and nothing else here
+     * needs to change.
+     */
+    discountReimbursementPaise += BigInt(
+      o.retailerPromoPaise + o.platformPromoPaise + o.couponPaise + o.pointsRedeemedPaise,
+    );
+
+    // Commission and TCS stay on the pre-discount subtotal. That was previously
+    // inconsistent with a post-discount payout base; with the reimbursement above, both
+    // sides of the ledger now sit on the same pre-discount value.
     const commission = Math.floor((o.itemsSubtotalPaise * o.platformFeeBpSnap) / 10_000);
     commissionPaise += BigInt(commission);
     const tcs = Math.floor((o.itemsSubtotalPaise * o.tcsRateBpSnap) / 10_000);
@@ -137,9 +172,11 @@ export async function computeCycleAggregate(input: {
     unattachedAdjustmentIds.push(a.id);
   }
 
-  // Net = gross − commission − commissionTax − refundsHeld − tcs − holds + adjustments + disputeLiabilities
+  // Net = gross + discountReimbursement − commission − commissionTax − refundsHeld − tcs
+  //       − holds + adjustments + disputeLiabilities
   const netPaise =
-    grossPaise -
+    grossPaise +
+    discountReimbursementPaise -
     commissionPaise -
     commissionTaxPaise -
     refundsHeldPaise -
@@ -152,6 +189,7 @@ export async function computeCycleAggregate(input: {
     grossPaise,
     commissionPaise,
     commissionTaxPaise,
+    discountReimbursementPaise,
     refundsHeldPaise,
     adjustmentsPaise,
     disputeLiabilitiesPaise,

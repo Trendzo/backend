@@ -205,6 +205,18 @@ export const payouts = pgTable(
     commissionTaxPaise: bigint('commission_tax_paise', { mode: 'bigint' })
       .notNull()
       .default(sql`0`),
+    /**
+     * Discounts the PLATFORM funded on this cycle's orders, reimbursed to the retailer.
+     *
+     * A coupon or loyalty redemption reduces `orders.grandTotalPaise`, so paying out on
+     * that figure alone made the retailer fund every promotion Trendzo ran. Kept as its
+     * own column rather than folded into `grossPaise`: gross must keep matching the sum
+     * of order grand totals, and the retailer's statement has to show this as a distinct
+     * line or the payout looks like it was computed from thin air.
+     */
+    discountReimbursementPaise: bigint('discount_reimbursement_paise', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
     refundsHeldPaise: bigint('refunds_held_paise', { mode: 'bigint' }).notNull().default(sql`0`),
     adjustmentsPaise: bigint('adjustments_paise', { mode: 'bigint' }).notNull().default(sql`0`),
     netPaise: bigint('net_paise', { mode: 'bigint' }).notNull(),

@@ -75,6 +75,7 @@ export async function runCycle(input: RunCycleInput): Promise<RunCycleResult> {
       grossPaise: aggregate.grossPaise,
       commissionPaise: aggregate.commissionPaise,
       commissionTaxPaise: aggregate.commissionTaxPaise,
+      discountReimbursementPaise: aggregate.discountReimbursementPaise,
       refundsHeldPaise: aggregate.refundsHeldPaise,
       adjustmentsPaise: aggregate.adjustmentsPaise,
       disputeHoldPaise: aggregate.disputeHoldPaise,

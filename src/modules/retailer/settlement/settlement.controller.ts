@@ -208,6 +208,10 @@ export async function getUpcomingPayout(input: { auth: Auth }) {
       id: orders.id,
       grandTotalPaise: orders.grandTotalPaise,
       itemsSubtotalPaise: orders.itemsSubtotalPaise,
+      retailerPromoPaise: orders.retailerPromoPaise,
+      platformPromoPaise: orders.platformPromoPaise,
+      couponPaise: orders.couponPaise,
+      pointsRedeemedPaise: orders.pointsRedeemedPaise,
       platformFeeBpSnap: orders.platformFeeBpSnap,
       tcsRateBpSnap: orders.tcsRateBpSnap,
       deliveredAt: orders.deliveredAt,
@@ -222,22 +226,39 @@ export async function getUpcomingPayout(input: { auth: Auth }) {
     );
 
   let outstandingGrossPaise = 0n;
+  let outstandingReimbursementPaise = 0n;
   let outstandingCommissionPaise = 0n;
   let outstandingTcsPaise = 0n;
-  const orderBreakdown: Array<{ orderId: string; gross: number; commission: number; tcs: number; net: number }> = [];
+  const orderBreakdown: Array<{
+    orderId: string;
+    gross: number;
+    discountReimbursement: number;
+    commission: number;
+    tcs: number;
+    net: number;
+  }> = [];
   for (const o of pendingOrders) {
     const gross = BigInt(o.grandTotalPaise);
+    // Mirrors payout-math.ts: grandTotalPaise is already net of every discount, so the
+    // platform-funded portion is added back. This preview and the actual payout have to
+    // agree — a retailer seeing one number here and being paid another is worse than
+    // showing nothing.
+    const reimbursement = BigInt(
+      o.retailerPromoPaise + o.platformPromoPaise + o.couponPaise + o.pointsRedeemedPaise,
+    );
     const commission = BigInt(Math.floor((o.itemsSubtotalPaise * o.platformFeeBpSnap) / 10_000));
     const tcs = BigInt(Math.floor((o.itemsSubtotalPaise * o.tcsRateBpSnap) / 10_000));
     outstandingGrossPaise += gross;
+    outstandingReimbursementPaise += reimbursement;
     outstandingCommissionPaise += commission;
     outstandingTcsPaise += tcs;
     orderBreakdown.push({
       orderId: o.id,
       gross: Number(gross),
+      discountReimbursement: Number(reimbursement),
       commission: Number(commission),
       tcs: Number(tcs),
-      net: Number(gross - commission - tcs),
+      net: Number(gross + reimbursement - commission - tcs),
     });
   }
 
@@ -259,7 +280,12 @@ export async function getUpcomingPayout(input: { auth: Auth }) {
   }
 
   const outstandingPayable =
-    Number(outstandingGrossPaise - outstandingCommissionPaise - outstandingTcsPaise) -
+    Number(
+      outstandingGrossPaise +
+        outstandingReimbursementPaise -
+        outstandingCommissionPaise -
+        outstandingTcsPaise,
+    ) -
     heldPaise +
     Number(pendingAdjustmentsPaise);
 
@@ -269,6 +295,8 @@ export async function getUpcomingPayout(input: { auth: Auth }) {
     payoutCadenceDays: store.payoutCadenceDays,
     outstandingPayable,
     grossPaise: Number(outstandingGrossPaise),
+    /** Platform-funded discounts added back, so promotions never come out of the retailer. */
+    discountReimbursementPaise: Number(outstandingReimbursementPaise),
     commissionPaise: Number(outstandingCommissionPaise),
     tcsPaise: Number(outstandingTcsPaise),
     heldPaise,
