@@ -77,22 +77,25 @@ export async function computeCycleAggregate(input: {
   }
   const commissionTaxPaise = (commissionPaise * BigInt(COMMISSION_GST_RATE_BP)) / 10_000n;
 
-  // Refunds tied to those orders. Sum of refunds.totalRefundPaise where order in cycle.
+  /**
+   * Refunds tied to those orders.
+   *
+   * This deducted EVERY refund row regardless of status: the `status='succeeded'`
+   * filter was applied to a first query whose result was then thrown away with
+   * `void refundRows`, while the loop summed a second, unfiltered query. Pending and
+   * failed refunds were being taken out of retailer payouts — money the consumer never
+   * received. The filter now lives on the query that is actually summed.
+   */
   let refundsHeldPaise = 0n;
   if (orderIds.length > 0) {
-    const refundRows = await db
-      .select({ amount: refunds.totalRefundPaise })
-      .from(refunds)
-      .where(and(eq(refunds.status, 'succeeded')));
-    // crude filter to keep things simple — re-filter by order in JS to avoid SQL IN with many ids
     const idSet = new Set(orderIds);
     const refundOrderRows = await db
       .select({ amount: refunds.totalRefundPaise, orderId: refunds.orderId })
-      .from(refunds);
+      .from(refunds)
+      .where(eq(refunds.status, 'succeeded'));
     for (const r of refundOrderRows) {
       if (idSet.has(r.orderId)) refundsHeldPaise += BigInt(r.amount);
     }
-    void refundRows;
   }
 
   // Active holds (unattached or pre-attached to this future payout — we treat any active hold for the store).
