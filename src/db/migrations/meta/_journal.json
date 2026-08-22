@@ -540,6 +540,13 @@
       "when": 1786800000000,
       "tag": "0076_return_custody_and_gates",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1786900000000,
+      "tag": "0078_app_privacy_policies",
+      "breakpoints": true
     }
   ]
 }

@@ -102,6 +102,8 @@ export const IdPrefix = {
   // Retailer T&C acceptance (legal record) + admin-published versions
   TermsAcceptance: 'term',
   TermsVersion: 'tver',
+  // Per-app privacy policy pages (admin-editable)
+  LegalPage: 'lgpg',
   // Reels + social interactions (likes / saves / comments on reels and posts)
   Reel: 'reel',
   ReelComment: 'rcmt',

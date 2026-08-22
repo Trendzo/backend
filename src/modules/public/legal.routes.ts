@@ -1,8 +1,11 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { eq } from 'drizzle-orm';
 import { env } from '@/config/env.js';
 import { db } from '@/db/client.js';
 import { PRIVACY_POLICY_EFFECTIVE, privacyPolicySections } from '@/shared/privacy-policy.js';
 import { currentLegalDoc, LEGAL_DOC_LABELS, type LegalDocKind } from '@/shared/terms.js';
+import { appPrivacyPolicies, PRIVACY_APPS, type PrivacyApp } from '@/db/schema/legal-pages.js';
+import { defaultPolicy, defaultPolicyHtml } from '@/shared/app-privacy-content.js';
 
 function escapeHtml(value: string): string {
   return value
@@ -113,6 +116,37 @@ const publicLegalRoutes: FastifyPluginAsync = async (app) => {
     void reply
       .type('text/html; charset=utf-8')
       .send(layout('Privacy Policy', privacyPolicyHtml()));
+  });
+
+  // Per-app privacy policies (customer / retailer / driver) — each app ships a DIFFERENT
+  // policy, which is what Google Play's per-app review wants. Renders the admin-edited DB
+  // override when present, else the built-in default from shared/app-privacy-content.ts, so
+  // the URL is never blank. Async (DB read) → MUST return reply (else Content-Length: 0).
+  app.get<{ Params: { app: string } }>('/privacy/:app', async (req, reply) => {
+    const app = req.params.app as PrivacyApp;
+    if (!PRIVACY_APPS.includes(app)) {
+      return reply.status(404).type('text/html; charset=utf-8').send(
+        layout('Not found', `<h1>Not found</h1><p>No privacy policy for "${escapeHtml(req.params.app)}".</p><p><a href="/privacy">View the general Privacy Policy</a>.</p>`),
+      );
+    }
+    // Tolerate the table not existing yet (migration not applied) — fall back to default.
+    let row: typeof appPrivacyPolicies.$inferSelect | undefined;
+    try {
+      row = await db.query.appPrivacyPolicies.findFirst({
+        where: eq(appPrivacyPolicies.app, app),
+      });
+    } catch {
+      row = undefined;
+    }
+    const title = row?.title ?? defaultPolicy(app).title;
+    const effective = row?.effectiveDate ?? defaultPolicy(app).effectiveDate;
+    const body = row?.bodyHtml ?? defaultPolicyHtml(app);
+    const content = `
+      <h1>${escapeHtml(title)}</h1>
+      <p class="meta">Effective ${escapeHtml(effective)}</p>
+      <div class="card">${body}</div>
+      ${grievanceBlock()}`;
+    return reply.type('text/html; charset=utf-8').send(layout(title, content));
   });
 
   // Terms still render the CURRENT admin-published document (retailer_terms via
