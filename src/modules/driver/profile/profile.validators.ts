@@ -10,3 +10,7 @@ export const UpdateProfileBody = z.object({
   rcDocUrl: z.string().url().optional(),
   insuranceDocUrl: z.string().url().optional(),
 });
+
+export const DeleteAccountRequestBody = z.object({
+  reason: z.string().trim().max(500).optional(),
+});

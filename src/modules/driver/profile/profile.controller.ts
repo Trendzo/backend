@@ -5,8 +5,9 @@ import { db } from '@/db/client.js';
 import { deliveryAgents } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
+import { recordAudit } from '@/shared/audit.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
-import type { UpdateProfileBody } from './profile.validators.js';
+import type { DeleteAccountRequestBody, UpdateProfileBody } from './profile.validators.js';
 
 function shapeDriver(d: typeof deliveryAgents.$inferSelect) {
   return {
@@ -60,4 +61,31 @@ export async function updateProfile(input: {
   const driver = updated[0];
   if (!driver) throw new AppError(404, ErrorCode.NotFound, 'Driver not found');
   return ok(shapeDriver(driver));
+}
+
+/**
+ * Self-service account-deletion request. Stub for now: records the request on the
+ * audit log for ops to action manually — no automated deletion/retention pipeline
+ * exists for drivers yet (unlike consumers' accountDeletionRequests flow).
+ */
+export async function requestAccountDeletion(input: {
+  auth: AccessTokenPayload;
+  body: z.infer<typeof DeleteAccountRequestBody>;
+  requestId: string;
+}) {
+  const driver = await db.query.deliveryAgents.findFirst({
+    where: eq(deliveryAgents.id, input.auth.sub),
+  });
+  if (!driver) throw new AppError(404, ErrorCode.NotFound, 'Driver not found');
+
+  await recordAudit({
+    actor: input.auth,
+    action: 'driver.account_deletion.requested',
+    resourceKind: 'delivery_agent',
+    resourceId: driver.id,
+    note: input.body.reason ?? null,
+    requestId: input.requestId,
+  });
+
+  return ok({ received: true });
 }
