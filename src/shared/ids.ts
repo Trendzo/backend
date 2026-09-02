@@ -121,4 +121,7 @@ export const IdPrefix = {
   CmsSection: 'cmss',
   CmsItem: 'cmsi',
   CmsPublication: 'cmsp',
+  // Festival themes (server-driven theming: remote tokens/chrome/decor/copy)
+  CmsTheme: 'cmst',
+  CmsThemePublication: 'cmstp',
 } as const;

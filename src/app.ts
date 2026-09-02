@@ -132,6 +132,7 @@ import pincodeRoutes from '@/modules/_shared/pincode/pincode.routes.js';
 import appConfigRoutes from '@/modules/public/app-config.routes.js';
 import publicCmsRoutes from '@/modules/public/cms.routes.js';
 import adminCmsRoutes from '@/modules/admin/cms/cms.routes.js';
+import adminCmsThemeRoutes from '@/modules/admin/cms-themes/cms-themes.routes.js';
 import consumerNotificationRoutes from '@/modules/consumer/notifications/notifications.routes.js';
 import spinRoutes from '@/modules/public/spin/spin.routes.js';
 import consumerRewardsRoutes from '@/modules/consumer/rewards/rewards.routes.js';
@@ -277,6 +278,7 @@ export function buildApp() {
       await api.register(adminPromotionRoutes, { prefix: '/admin/promotions' });
       await api.register(adminSpinWheelRoutes, { prefix: '/admin/spin-wheels' });
       await api.register(adminCmsRoutes, { prefix: '/admin/cms' });
+      await api.register(adminCmsThemeRoutes, { prefix: '/admin/cms/themes' });
       await api.register(adminVoucherRoutes, { prefix: '/admin/promotions' });
       await api.register(adminClubbingRoutes, { prefix: '/admin/clubbing-matrix' });
       await api.register(adminLoyaltyRoutes, { prefix: '/admin/loyalty' });

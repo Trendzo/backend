@@ -45,4 +45,5 @@ export * from './pos.js';
 export * from './terms.js';
 export * from './spin.js';
 export * from './cms.js';
+export * from './cms-themes.js';
 export * from './legal-pages.js';

@@ -47,6 +47,79 @@ export function assertListingMedia(
   }
 }
 
+/**
+ * Festival-theme assets carry per-purpose caps: this art ships to every phone on every
+ * launch, so a 9 MB overlay is a bug, not a choice. Lottie files are additionally sanity
+ * checked as Lottie (a `v` string, a `layers` array, a numeric `op`) so an arbitrary JSON
+ * blob cannot masquerade as an animation.
+ */
+export const THEME_UPLOAD_RULES: Readonly<
+  Record<string, { maxBytes: number; label: string; mimes: ReadonlySet<string> }>
+> = {
+  'theme-wordmark': {
+    maxBytes: 1 * 1024 * 1024,
+    label: '1 MB',
+    mimes: new Set(['image/png', 'image/webp']),
+  },
+  'theme-overlay': {
+    maxBytes: 2 * 1024 * 1024,
+    label: '2 MB',
+    mimes: new Set(['image/png', 'image/webp']),
+  },
+  'theme-lottie': {
+    maxBytes: 512 * 1024,
+    label: '512 KB',
+    mimes: new Set(['application/json']),
+  },
+};
+
+export function isThemePurpose(purpose: UploadPurpose): boolean {
+  return purpose !== undefined && purpose in THEME_UPLOAD_RULES;
+}
+
+export function assertLottieJson(buffer: Buffer): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(buffer.toString('utf8'));
+  } catch {
+    throw AppError.validation('File is not valid JSON');
+  }
+  const p = parsed as { v?: unknown; layers?: unknown; op?: unknown } | null;
+  if (
+    typeof p !== 'object' ||
+    p === null ||
+    typeof p.v !== 'string' ||
+    !Array.isArray(p.layers) ||
+    typeof p.op !== 'number' ||
+    !Number.isFinite(p.op)
+  ) {
+    throw AppError.validation(
+      'File is not a Lottie animation - expected JSON with "v", "layers" and a numeric "op"',
+    );
+  }
+}
+
+/** Enforce the theme caps and formats. No-op for other purposes. */
+export function assertThemeMedia(
+  purpose: UploadPurpose,
+  bytes: number,
+  mimetype: string,
+  buffer: Buffer,
+): void {
+  if (purpose === undefined) return;
+  const rule = THEME_UPLOAD_RULES[purpose];
+  if (!rule) return;
+  if (bytes > rule.maxBytes) {
+    throw AppError.validation(`File too large - ${purpose} uploads are capped at ${rule.label}`);
+  }
+  if (!rule.mimes.has(mimetype)) {
+    throw AppError.validation(
+      `Unsupported format '${mimetype}' for ${purpose} - allowed: ${[...rule.mimes].join(', ')}`,
+    );
+  }
+  if (purpose === 'theme-lottie') assertLottieJson(buffer);
+}
+
 /** The plugin truncates silently at the limit, so this must be checked after reading. */
 export function assertNotTruncated(truncated: boolean): void {
   if (truncated) {

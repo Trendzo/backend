@@ -11,5 +11,14 @@ export const UploadQuery = z.object({
    * JPEG/PNG/WebP filter per spec US-5.2.4. Omitted purpose stays on the 25 MB
    * lax ceiling for KYC docs, storefront photos, support attachments, etc.
    */
-  purpose: z.enum(['listing-gallery', 'listing-description']).optional(),
+  purpose: z
+    .enum([
+      'listing-gallery',
+      'listing-description',
+      // Festival-theme assets — tighter caps + format allowlists (see shared/uploads/limits.ts).
+      'theme-wordmark',
+      'theme-overlay',
+      'theme-lottie',
+    ])
+    .optional(),
 });

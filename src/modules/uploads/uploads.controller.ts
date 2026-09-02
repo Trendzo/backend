@@ -2,7 +2,7 @@ import type { FastifyRequest } from 'fastify';
 import { AppError } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { uploadObject } from '@/shared/storage/index.js';
-import { assertListingMedia, assertNotTruncated } from '@/shared/uploads/limits.js';
+import { assertListingMedia, assertNotTruncated, assertThemeMedia } from '@/shared/uploads/limits.js';
 import { UploadQuery } from './uploads.validators.js';
 
 /**
@@ -33,6 +33,7 @@ export async function uploadMedia(req: FastifyRequest) {
   const buffer = await file.toBuffer();
   assertNotTruncated(file.file.truncated);
   assertListingMedia(parsedQuery.data.purpose, buffer.length, file.mimetype);
+  assertThemeMedia(parsedQuery.data.purpose, buffer.length, file.mimetype, buffer);
 
   const folderSuffix = parsedQuery.data.folder ?? 'uploads';
   const folder = `closetx/${folderSuffix.replace(/^\/+|\/+$/g, '')}`;
