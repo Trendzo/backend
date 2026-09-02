@@ -60,7 +60,12 @@ export const ThemeHeaderSchema = z
     wordmarkUrl: z.string().url().max(2000).optional(),
     /** Doubles as the full-bleed header image when kind === 'image'. */
     overlayUrl: z.string().url().max(2000).optional(),
-    overlayHeight: z.number().int().min(1).max(300).optional(),
+    /**
+     * Bounds are the RENDERER's, not an arbitrary range: the app clamps this to
+     * 24-160 (theme/remoteTheme.ts), so accepting 300 here would let an admin save
+     * — and preview — a height the device silently rewrites.
+     */
+    overlayHeight: z.number().int().min(24).max(160).optional(),
   })
   .strict();
 

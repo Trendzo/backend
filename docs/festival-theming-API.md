@@ -147,6 +147,15 @@ caps, png/webp for images, `application/json` sanity-checked as a real Lottie (`
 
 ## Known limitations / phase 2
 
+- **Asset size/format is enforced at UPLOAD, not at publish.** The caps above apply when a
+  caller passes `?purpose=theme-*`; publish only re-checks that a theme's asset URLs are
+  https and point at a trusted host. The portal always uploads through the purpose-gated
+  path (and its paste-a-URL fallback is hidden for theme fields for exactly this reason), so
+  the caps hold for the real workflow — but an admin crafting raw API calls could upload a
+  20 MB PNG with no `purpose` and reference it from a theme. Closing this properly means
+  re-reading object metadata at publish, or writing theme assets under a dedicated key prefix
+  that only the purpose-gated upload can produce.
+
 - Deep-stack screens already mounted repaint body accents on their next natural render
   (chrome is live everywhere).
 - No percentage rollout / cohorts / country targeting (deterministic bucketing needs a
