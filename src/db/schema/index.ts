@@ -40,6 +40,7 @@ export * from './moodboards.js';
 export * from './referrals.js';
 export * from './analytics-events.js';
 export * from './notifications-extra.js';
+export * from './device-tokens.js';
 export * from './pos.js';
 export * from './terms.js';
 export * from './spin.js';

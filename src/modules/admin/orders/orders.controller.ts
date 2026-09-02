@@ -491,7 +491,7 @@ export async function closeDoorVisit(input: {
     db,
     input.orderId,
     { type: 'admin', id: input.adminId },
-    input.items,
+    { decisions: input.items, trigger: 'all_at_once' },
   );
   return ok(r);
 }

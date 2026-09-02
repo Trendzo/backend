@@ -15,18 +15,26 @@ import { ok } from '@/shared/http/envelope.js';
 import { transitionOrder } from '@/shared/orders/transition.js';
 import { arriveOrderAtStore } from '@/shared/orders/arrive-at-store.js';
 import { settleCodPaymentOnDelivery } from '@/shared/payments/settle-cod.js';
-import { recordDriverEarnings } from '@/shared/orders/driver-earnings.js';
-import { openDoor, extendDoor, closeDoor } from '@/shared/orders/door-visit.js';
+import {
+  openDoor,
+  extendDoor,
+  closeDoor,
+  recordAgentDoorDecision,
+} from '@/shared/orders/door-visit.js';
+import { pushConsumer } from '@/shared/push/notify-push.js';
 import { recordUndelivered } from '@/shared/orders/undelivered.js';
 import { type OrderStatus, transitionsFrom } from '@/shared/orders/state-machine.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import type {
+  AcceptReturnBody,
   DeliverBody,
   DoorCloseBody,
   DoorExtendBody,
+  DoorOpenBody,
   ListDeliveriesQuery,
   MarkUndeliveredBody,
+  RejectReturnBody,
 } from './deliveries.validators.js';
 
 type Auth = AccessTokenPayload;
@@ -127,6 +135,11 @@ export async function listDeliveries(input: {
           qty: true,
           listingId: true,
           listingPolicySnap: true,
+          galleryImageSnap: true,
+          // Live customer-driven door staging so the driver UI can show pending returns.
+          customerDoorChoice: true,
+          agentDoorDecision: true,
+          agentReturnReason: true,
         },
       },
     },
@@ -224,19 +237,74 @@ export async function deliver(input: { auth: Auth; id: string; body: z.infer<typ
   }).catch((err) => {
     console.error(`[driver-deliver] settle COD ${input.id}: ${(err as Error).message}`);
   });
-  await recordDriverEarnings(db, {
-    orderId: input.id,
-    driverId,
-    deliveryMethod: order.deliveryMethod,
-  });
+  // Driver earnings are recorded centrally in transitionOrder's →delivered block (see
+  // shared/orders/transition.ts) so every completion path pays — not just this one.
   return ok(transition);
 }
 
-export async function doorOpen(input: { auth: Auth; id: string }) {
+/**
+ * Handover: the driver enters the OTP the customer reads out. This is the ONLY place the
+ * delivery OTP is checked for a Try-and-Buy order — verifying it opens the door and starts
+ * the try-on window. `openDoor`'s transition asserts source `out_for_delivery`, so the OTP
+ * can't be bypassed by a wrong-state call.
+ */
+export async function doorOpen(input: { auth: Auth; id: string; body: z.infer<typeof DoorOpenBody> }) {
   const driverId = await getDriverId(input.auth);
-  await loadAssignedOrder(input.id, driverId);
+  const order = await loadAssignedOrder(input.id, driverId);
+  if (!otpOk(order.deliveryOtp, input.body.otp)) {
+    throw new AppError(403, ErrorCode.ValidationError, 'Delivery OTP missing or incorrect');
+  }
   const r = await openDoor(db, input.id, actorOf(input.auth));
+  // Tell the customer their try-on window is live.
+  void pushConsumer(order.consumerId, {
+    title: 'Your try-on has started',
+    body: 'Try your items and choose Keep or Return for each in the app.',
+    data: { type: 'door_opened', orderId: input.id },
+  }).catch(() => undefined);
   return ok(r);
+}
+
+/** Driver accepts a customer's requested return (goods travel back to the store). */
+export async function acceptReturn(input: {
+  auth: Auth;
+  id: string;
+  itemId: string;
+  body: z.infer<typeof AcceptReturnBody>;
+}) {
+  const driverId = await getDriverId(input.auth);
+  const order = await loadAssignedOrder(input.id, driverId);
+  const r = await recordAgentDoorDecision(db, input.id, input.itemId, 'accept_return', {}, actorOf(input.auth));
+  void pushConsumer(order.consumerId, {
+    title: 'Return accepted',
+    body: 'The rider accepted your return. Your refund starts once it reaches the store.',
+    data: { type: 'return_accepted', orderId: input.id, orderItemId: input.itemId },
+  }).catch(() => undefined);
+  return ok({ orderItemId: input.itemId, agentDoorDecision: 'accept_return', ...r });
+}
+
+/** Driver inspects and rejects a return at the door (item stays with the customer; evidence required). */
+export async function rejectReturn(input: {
+  auth: Auth;
+  id: string;
+  itemId: string;
+  body: z.infer<typeof RejectReturnBody>;
+}) {
+  const driverId = await getDriverId(input.auth);
+  const order = await loadAssignedOrder(input.id, driverId);
+  const r = await recordAgentDoorDecision(
+    db,
+    input.id,
+    input.itemId,
+    'reject_return',
+    { reason: input.body.reason, photos: input.body.photos },
+    actorOf(input.auth),
+  );
+  void pushConsumer(order.consumerId, {
+    title: 'Return not accepted',
+    body: `The rider could not accept this return: ${input.body.reason}`,
+    data: { type: 'return_rejected', orderId: input.id, orderItemId: input.itemId },
+  }).catch(() => undefined);
+  return ok({ orderItemId: input.itemId, agentDoorDecision: 'reject_return', ...r });
 }
 
 export async function doorExtend(input: {
@@ -250,28 +318,29 @@ export async function doorExtend(input: {
   return ok(r);
 }
 
+/**
+ * Driver "finish the visit" — used on timer expiry ("mark remaining kept") or to close a
+ * fully-resolved window. OTP already proved handover at door/open, so none is needed here.
+ * With no `items` body it closes from the accumulated per-item staging (undecided → kept),
+ * and refuses if a customer-requested return is still awaiting the driver's response. An
+ * explicit `items` payload keeps the legacy all-at-once close. Earnings + COD settle happen
+ * inside closeDoor/transitionOrder on the delivered branch.
+ */
 export async function doorClose(input: {
   auth: Auth;
   id: string;
   body: z.infer<typeof DoorCloseBody>;
 }) {
   const driverId = await getDriverId(input.auth);
-  const order = await loadAssignedOrder(input.id, driverId);
-  // Handover proof: orders that carry a delivery OTP can only be closed with the
-  // consumer-spoken code. Legacy orders (NULL otp) close without one.
-  if (!otpOk(order.deliveryOtp, input.body.otp)) {
-    throw new AppError(403, ErrorCode.ValidationError, 'Delivery OTP missing or incorrect');
-  }
-  const r = await closeDoor(db, input.id, actorOf(input.auth), input.body.items);
-  // Try-and-buy that ends with the customer keeping ≥1 item counts as a delivery — pay out.
-  // (closeDoor itself settles any pending COD payment on the delivered branch.)
-  if (r.toStatus === 'delivered') {
-    await recordDriverEarnings(db, {
-      orderId: input.id,
-      driverId,
-      deliveryMethod: order.deliveryMethod,
-    });
-  }
+  await loadAssignedOrder(input.id, driverId);
+  const r = await closeDoor(
+    db,
+    input.id,
+    actorOf(input.auth),
+    input.body.items
+      ? { decisions: input.body.items, trigger: 'all_at_once' }
+      : { trigger: 'driver_finish' },
+  );
   return ok(r);
 }
 

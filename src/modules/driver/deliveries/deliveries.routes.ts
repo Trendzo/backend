@@ -7,12 +7,16 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
 import * as ctrl from './deliveries.controller.js';
 import {
+  AcceptReturnBody,
   DeliverBody,
   DoorCloseBody,
   DoorExtendBody,
+  DoorOpenBody,
   IdParam,
+  ItemParam,
   ListDeliveriesQuery,
   MarkUndeliveredBody,
+  RejectReturnBody,
 } from './deliveries.validators.js';
 
 const driverDeliveriesRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -44,8 +48,8 @@ const driverDeliveriesRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post(
     '/:id/door/open',
-    { schema: { params: IdParam } },
-    async (req) => ctrl.doorOpen({ auth: getAuth(req), id: req.params.id }),
+    { schema: { params: IdParam, body: DoorOpenBody } },
+    async (req) => ctrl.doorOpen({ auth: getAuth(req), id: req.params.id, body: req.body }),
   );
 
   app.post(
@@ -58,6 +62,31 @@ const driverDeliveriesRoutes: FastifyPluginAsyncZod = async (app) => {
     '/:id/door/close',
     { schema: { params: IdParam, body: DoorCloseBody } },
     async (req) => ctrl.doorClose({ auth: getAuth(req), id: req.params.id, body: req.body }),
+  );
+
+  // Driver responds to a customer-requested return during the try-on window.
+  app.post(
+    '/:id/items/:itemId/accept-return',
+    { schema: { params: ItemParam, body: AcceptReturnBody } },
+    async (req) =>
+      ctrl.acceptReturn({
+        auth: getAuth(req),
+        id: req.params.id,
+        itemId: req.params.itemId,
+        body: req.body,
+      }),
+  );
+
+  app.post(
+    '/:id/items/:itemId/reject-return',
+    { schema: { params: ItemParam, body: RejectReturnBody } },
+    async (req) =>
+      ctrl.rejectReturn({
+        auth: getAuth(req),
+        id: req.params.id,
+        itemId: req.params.itemId,
+        body: req.body,
+      }),
   );
 
   app.post(

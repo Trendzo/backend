@@ -16,6 +16,8 @@ import {
   actorType,
   deliveryAttemptOutcome,
   deliveryMethod,
+  doorAgentDecision,
+  doorCustomerChoice,
   listingPolicy,
   orderGroupStatus,
   orderItemOutcome,
@@ -365,6 +367,17 @@ export const orderItems = pgTable(
     netLinePaise: integer('net_line_paise').notNull(), // after discounts + tax
 
     outcome: orderItemOutcome('outcome').notNull().default('pending_delivery'),
+
+    // ── Try-and-Buy door staging (in-flight during the try-on window) ──
+    // The customer's live keep/return choice (consumer app) and the agent's response
+    // to a requested return (driver app). These drive the per-item UI on both apps
+    // and are resolved into the final `outcome` above when the door visit closes.
+    customerDoorChoice: doorCustomerChoice('customer_door_choice'),
+    customerChoiceAt: timestamp('customer_choice_at', { withTimezone: true, mode: 'date' }),
+    agentDoorDecision: doorAgentDecision('agent_door_decision'),
+    agentDecidedAt: timestamp('agent_decided_at', { withTimezone: true, mode: 'date' }),
+    agentReturnReason: text('agent_return_reason'),
+    agentReturnPhotos: jsonb('agent_return_photos').$type<string[]>().notNull().default([]),
   },
   (t) => ({
     orderIdx: index('order_items_order_idx').on(t.orderId),
@@ -372,6 +385,18 @@ export const orderItems = pgTable(
     qtyPriceGuard: check(
       'order_items_qty_price_guard',
       sql`${t.qty} > 0 AND ${t.unitPricePaise} > 0`,
+    ),
+    // An agent decision can only exist once the customer requested a return.
+    agentDecisionRequiresReturnGuard: check(
+      'order_items_agent_decision_requires_return_guard',
+      sql`${t.agentDoorDecision} IS NULL OR ${t.customerDoorChoice} = 'return'`,
+    ),
+    // Rejecting a return at the door must carry evidence (reason + ≥1 photo).
+    rejectRequiresEvidenceGuard: check(
+      'order_items_reject_requires_evidence_guard',
+      sql`${t.agentDoorDecision} <> 'reject_return'
+          OR (length(coalesce(${t.agentReturnReason}, '')) >= 3
+              AND jsonb_array_length(${t.agentReturnPhotos}) >= 1)`,
     ),
   }),
 );

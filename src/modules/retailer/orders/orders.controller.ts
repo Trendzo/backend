@@ -724,7 +724,7 @@ export async function doorClose(input: {
     db,
     input.id,
     { type: 'retailer', id: input.auth.sub },
-    input.body.items,
+    { decisions: input.body.items, trigger: 'all_at_once' },
   );
   return ok(r);
 }

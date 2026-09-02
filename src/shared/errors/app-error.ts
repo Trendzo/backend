@@ -88,6 +88,10 @@ export const ErrorCode = {
   DoorVisitMustChooseAllItems: 'door_visit_must_choose_all_items',
   DoorVisitExtensionExhausted: 'door_visit_extension_exhausted',
   DoorVisitRefuseRequiresEvidence: 'door_visit_refuse_requires_evidence',
+  // Customer-driven door flow.
+  DoorWindowExpired: 'door_window_expired',
+  DoorVisitReturnUnresolved: 'door_visit_return_unresolved',
+  DoorItemNotReturnRequested: 'door_item_not_return_requested',
 
   // Returns
   ReturnNotFound: 'return_not_found',

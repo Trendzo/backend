@@ -326,6 +326,11 @@ export const orderItemOutcome = pgEnum('order_item_outcome', [
   'dispute_resolved_no_refund',
   'cancelled',
 ]);
+// Customer-driven Try-and-Buy door staging (in-flight, per order item). These record the
+// live keep/return decision DURING the try-on window; the final `order_item_outcome` above
+// is still written only when the door visit closes.
+export const doorCustomerChoice = pgEnum('door_customer_choice', ['keep', 'return']);
+export const doorAgentDecision = pgEnum('door_agent_decision', ['accept_return', 'reject_return']);
 export const taxSplitKind = pgEnum('tax_split_kind', ['intra_state', 'inter_state']);
 export const paymentStatus = pgEnum('payment_status', [
   'pending',
