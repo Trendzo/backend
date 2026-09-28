@@ -16,6 +16,20 @@ import { retailerStores } from './store.js';
  * The actual sellable model (productListings + variants) lives in `products.ts`.
  */
 
+/**
+ * AI-drafted listing copy, generated from the retailer's photos on the same call
+ * as the mockups (shared/ai-catalog/product-copy.ts). Plain text — descriptionLong
+ * is newline-separated with `• ` bullet lines, no HTML. Stored on the submission /
+ * bulk job so the app can prefill the product wizard without a second request.
+ */
+export type ProductCopy = {
+  name: string;
+  description: string;
+  descriptionLong: string;
+  model: string;
+  generatedAt: string;
+};
+
 export const attributeTemplates = pgTable('attribute_templates', {
   id: text('id').primaryKey(),
   ownerStoreId: text('owner_store_id').references(() => retailerStores.id), // null for platform templates
@@ -83,6 +97,8 @@ export const aiCatalogSubmissions = pgTable('ai_catalog_submissions', {
   costPaise: integer('cost_paise'),
   parentSubmissionId: text('parent_submission_id'),
   thirdPartyRequestId: text('third_party_request_id'),
+  // AI-drafted name + descriptions (null when copy generation failed/disabled).
+  copy: jsonb('copy').$type<ProductCopy>(),
   at: timestamp('at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
 });
 

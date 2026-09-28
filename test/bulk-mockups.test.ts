@@ -17,11 +17,22 @@ vi.mock('@/shared/ai-catalog/generate-views.js', () => ({
   })),
 }));
 
+vi.mock('@/shared/ai-catalog/product-copy.js', () => ({
+  generateProductCopy: vi.fn(async () => ({
+    name: 'Black Cotton Tee',
+    description: 'A classic black tee.',
+    descriptionLong: 'Everyday staple.\n\n• Soft cotton',
+    model: 'test',
+    generatedAt: '2026-01-01T00:00:00.000Z',
+  })),
+}));
+
 import { db, pool } from '@/db/client.js';
 import { bulkMockupJobs, retailerAccounts, retailerStores } from '@/db/schema/index.js';
 import { signAccessToken } from '@/shared/auth/jwt.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { processBulkMockupQueue } from '@/shared/bulk-mockups/worker.js';
+import { generateProductCopy } from '@/shared/ai-catalog/product-copy.js';
 import { buildApp } from '@/app.js';
 
 type App = ReturnType<typeof buildApp>;
@@ -101,6 +112,33 @@ describe('bulk-mockup queue', () => {
     expect(job?.status).toBe('ready');
     expect(job?.outputUrls.length).toBe(2);
     expect(job?.finishedAt).not.toBeNull();
+    expect(job?.copy?.name).toBe('Black Cotton Tee');
+    expect(job?.copy?.description).toBe('A classic black tee.');
+    // Copy is on by default (zod default), and the stored request carries it.
+    expect(vi.mocked(generateProductCopy).mock.lastCall?.[0]).toMatchObject({ withCopy: true });
+  });
+
+  it('persists a withCopy:false opt-out and hands it to the copy generator', async () => {
+    const created = data(
+      (await app.inject({
+        method: 'POST',
+        url: '/api/v1/retailer/bulk-mockups',
+        headers: auth(token),
+        payload: {
+          mode: 'without_model',
+          apparelImageUrls: ['https://example.com/a.jpg'],
+          withCopy: false,
+        },
+      })) as InjectRes,
+    );
+    expect(created.request.withCopy).toBe(false);
+    // Drain any older queued jobs so the opt-out job is the one generated last.
+    let claimed: string | null;
+    do {
+      claimed = await processBulkMockupQueue(db);
+    } while (claimed !== null && claimed !== created.id);
+    expect(claimed).toBe(created.id);
+    expect(vi.mocked(generateProductCopy).mock.lastCall?.[0]).toMatchObject({ withCopy: false });
   });
 
   it('cancels a queued job', async () => {

@@ -14,6 +14,7 @@ import {
   generateMockupViews,
   type GenerateViewsInput,
 } from '@/shared/ai-catalog/generate-views.js';
+import { generateProductCopy } from '@/shared/ai-catalog/product-copy.js';
 
 const BULK_FOLDER = 'closetx/bulk-mockups';
 const MAX_ATTEMPTS = 3;
@@ -51,11 +52,16 @@ export async function processBulkMockupQueue(database: typeof Db): Promise<strin
 
     try {
       const input = claimed.request as unknown as GenerateViewsInput;
-      const { printedUrl, views } = await generateMockupViews(input, BULK_FOLDER);
+      // Copy runs alongside the images and resolves null on failure — it never
+      // fails or requeues the job.
+      const [{ printedUrl, views }, copy] = await Promise.all([
+        generateMockupViews(input, BULK_FOLDER),
+        generateProductCopy(input),
+      ]);
       const outputUrls = [...(printedUrl ? [printedUrl] : []), ...views.map((v) => v.url)];
       await database
         .update(bulkMockupJobs)
-        .set({ status: 'ready', outputUrls, finishedAt: new Date(), errorMessage: null })
+        .set({ status: 'ready', outputUrls, copy, finishedAt: new Date(), errorMessage: null })
         .where(eq(bulkMockupJobs.id, claimed.id));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';

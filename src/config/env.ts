@@ -131,6 +131,15 @@ const EnvSchema = z
     OPENROUTER_SITE_URL: z.string().url().optional(),
     OPENROUTER_APP_NAME: z.string().default('ClosetX'),
 
+    // AI product copy (name + short/long description) generated alongside mockups,
+    // from the same retailer photos, on the same request. Uses the provider picked by
+    // AI_IMAGE_PROVIDER with a TEXT model. 'false' = kill switch (images unaffected).
+    AI_PRODUCT_COPY_ENABLED: z.enum(['true', 'false']).default('true'),
+    // Alias, not a pinned version: the 2.5 text models already 404 on AI Studio
+    // (2026-09). Vertex may need an explicit version here (e.g. gemini-3.5-flash).
+    AI_TEXT_MODEL: z.string().default('gemini-flash-latest'),
+    OPENROUTER_TEXT_MODEL: z.string().default('google/gemini-2.5-flash'),
+
     // Seed defaults — only consumed by the seed CLI (`npm run db:seed`).
     ADMIN_SEED_EMAIL: z.string().email().default('admin@trendzo.local'),
     ADMIN_SEED_PASSWORD: z.string().min(4).default('admin1234'),

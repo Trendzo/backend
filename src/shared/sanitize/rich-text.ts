@@ -100,3 +100,59 @@ export function sanitizeRichText(input: string): string | null {
   if (!text && !hasMedia) return null;
   return clean;
 }
+
+/**
+ * True when the input contains at least one HTML tag. Tag-free input is treated as
+ * plain text (e.g. the retailer app's multiline input or AI-drafted copy) and is
+ * converted with `plainTextToHtml` before sanitizing, so the column always holds
+ * HTML that every renderer (dashboard, consumer app) displays with its structure.
+ */
+export function looksLikeHtml(input: string): boolean {
+  return /<\/?[a-z][a-z0-9]*(?:\s[^<>]*)?\/?>/i.test(input);
+}
+
+const BULLET_LINE = /^\s*[•\-*]\s+/;
+
+function escapeText(s: string): string {
+  return s
+    .replace(/&(?!(?:[a-z][a-z0-9]*|#\d+|#x[0-9a-f]+);)/gi, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * Plain text → the simple HTML subset the rich-text editors produce. Blank lines
+ * separate paragraphs; single newlines inside a paragraph become `<br>`; runs of
+ * lines starting with `•`, `-` or `*` become one `<ul>`. The retailer app's
+ * `htmlToEditableText` is the inverse for exactly this subset (p/br/ul/li).
+ */
+export function plainTextToHtml(input: string): string {
+  const out: string[] = [];
+  let para: string[] = [];
+  let items: string[] = [];
+  const flushPara = () => {
+    if (para.length) out.push(`<p>${para.join('<br>')}</p>`);
+    para = [];
+  };
+  const flushList = () => {
+    if (items.length) out.push(`<ul>${items.map((i) => `<li>${i}</li>`).join('')}</ul>`);
+    items = [];
+  };
+  for (const raw of input.replace(/\r\n?/g, '\n').split('\n')) {
+    const line = raw.trim();
+    if (!line) {
+      flushPara();
+      flushList();
+    } else if (BULLET_LINE.test(line)) {
+      flushPara();
+      const item = line.replace(BULLET_LINE, '').trim();
+      if (item) items.push(escapeText(item));
+    } else {
+      flushList();
+      para.push(escapeText(line));
+    }
+  }
+  flushPara();
+  flushList();
+  return out.join('');
+}

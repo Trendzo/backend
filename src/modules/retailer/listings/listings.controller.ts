@@ -24,7 +24,12 @@ import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { assertTermsAcceptedForGoLive } from '@/shared/terms.js';
 import { compact } from '@/shared/object.js';
-import { LONG_DESC_MAX_BYTES, sanitizeRichText } from '@/shared/sanitize/rich-text.js';
+import {
+  LONG_DESC_MAX_BYTES,
+  looksLikeHtml,
+  plainTextToHtml,
+  sanitizeRichText,
+} from '@/shared/sanitize/rich-text.js';
 import { previewListingEffectivePricing } from '@/shared/discounts/preview-effective-price.js';
 import { generateSku } from '@/shared/sku.js';
 import { categoryDefaultHsn } from '@/shared/pos/gst-rates.js';
@@ -341,7 +346,9 @@ function sanitizeLongDescription(
 ): string | null | undefined {
   if (raw === undefined) return undefined;
   if (raw === null) return null;
-  const clean = sanitizeRichText(raw);
+  // Plain-text writers (retailer app, AI copy via publish) are normalized to HTML
+  // so the column has one format for every renderer.
+  const clean = sanitizeRichText(looksLikeHtml(raw) ? raw : plainTextToHtml(raw));
   if (clean !== null && Buffer.byteLength(clean, 'utf8') > LONG_DESC_MAX_BYTES) {
     throw new AppError(
       422,

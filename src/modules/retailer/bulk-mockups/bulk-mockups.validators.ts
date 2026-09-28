@@ -18,6 +18,10 @@ export const EnqueueBody = z.object({
   tagLabelUrl: z.string().url().optional(),
   modelGender: z.enum(['her', 'him']).optional(),
   only: z.array(z.string()).optional(),
+  // Also draft listing copy (name + descriptions) from the same photos. Callers
+  // that won't use it (e.g. per-colour variant mockups) send false to skip the
+  // text call.
+  withCopy: z.boolean().default(true),
 });
 
 export const ListQuery = z.object({

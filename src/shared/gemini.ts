@@ -94,7 +94,8 @@ function logGeminiErrorDetail(err: unknown, attempt: number): void {
 export const CATALOG_IMAGE_ASPECT_RATIO = '3:4';
 
 let client: GoogleGenAI | null = null;
-function getClient(): GoogleGenAI {
+/** Shared AI Studio client (also used by the product-copy text path). */
+export function getClient(): GoogleGenAI {
   if (!env.GEMINI_API_KEY) {
     throw new AppError(
       503,
@@ -157,8 +158,11 @@ export function composePrompt(input: GenerateInput): string {
     .join('\n');
 }
 
-export async function fetchReferenceImage(url: string): Promise<{ data: string; mimeType: string }> {
-  const res = await fetch(url);
+export async function fetchReferenceImage(
+  url: string,
+  signal?: AbortSignal,
+): Promise<{ data: string; mimeType: string }> {
+  const res = await fetch(url, signal ? { signal } : undefined);
   if (!res.ok) {
     throw new AppError(
       502,

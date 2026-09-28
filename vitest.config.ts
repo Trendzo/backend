@@ -26,6 +26,8 @@ export default defineConfig({
       // In-process storage: uploads exercise the real key derivation, sniffing and guards
       // without touching Cloudinary or S3. A developer's .env may carry live credentials.
       STORAGE_DRIVER: 'memory',
+      // AI listing copy is best-effort network I/O to Gemini/OpenRouter — off in tests.
+      AI_PRODUCT_COPY_ENABLED: 'false',
     },
     pool: 'forks',
     poolOptions: { forks: { singleFork: true } },

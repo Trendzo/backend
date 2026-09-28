@@ -28,6 +28,9 @@ export interface GenerateViewsInput {
   tagLabelUrl?: string | undefined;
   modelGender?: 'him' | 'her' | undefined;
   only?: string[] | undefined;
+  /** Draft listing copy alongside (read by generateProductCopy; ignored here).
+   *  Absent = true, so bulk rows queued before this field existed keep copy. */
+  withCopy?: boolean | undefined;
 }
 
 /** Generate one image and store it in object storage; returns the URL. */

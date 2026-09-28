@@ -10,6 +10,7 @@ import { virtualTryOn } from '@/shared/vertex-tryon.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import { createListing, createVariant } from '@/modules/retailer/listings/listings.controller.js';
 import { generateMockupViews } from '@/shared/ai-catalog/generate-views.js';
+import { generateProductCopy } from '@/shared/ai-catalog/product-copy.js';
 import type {
   DecisionBody,
   ListQuery,
@@ -98,12 +99,17 @@ export async function createSubmission(input: {
   });
 
   try {
-    const { printedUrl, views } = await generateMockupViews(body, BETA_FOLDER);
+    // Listing copy is drafted from the same photos in parallel; it resolves null on
+    // failure, so it can never fail (or noticeably slow) the image generation.
+    const [{ printedUrl, views }, copy] = await Promise.all([
+      generateMockupViews(body, BETA_FOLDER),
+      generateProductCopy(body),
+    ]);
     const outputUrls = [...(printedUrl ? [printedUrl] : []), ...views.map((v) => v.url)];
 
     const [row] = await db
       .update(aiCatalogSubmissions)
-      .set({ outputUrls, status: 'ready_for_review', errorMessage: null })
+      .set({ outputUrls, copy, status: 'ready_for_review', errorMessage: null })
       .where(eq(aiCatalogSubmissions.id, id))
       .returning();
     if (!row) throw AppError.internal('submission update returned no row');
@@ -183,12 +189,18 @@ export async function publish(input: {
     throw new AppError(409, ErrorCode.InvalidState, 'No images available to publish');
   }
 
+  // Missing or blank → fall back to the AI-drafted copy (plain text; createListing
+  // normalizes descriptionLong to HTML).
+  const description = body.description?.trim() || sub.copy?.description || undefined;
+  const descriptionLong = body.descriptionLong?.trim() || sub.copy?.descriptionLong || undefined;
+
   const listingRes = await createListing({
     auth,
     body: {
       name: body.name,
-      ...(body.description !== undefined && { description: body.description }),
-      ...(body.descriptionLong !== undefined && { descriptionLong: body.descriptionLong }),
+      // Fall back to the AI-drafted copy when the caller didn't supply descriptions.
+      ...(description !== undefined && { description }),
+      ...(descriptionLong !== undefined && { descriptionLong }),
       brandId: body.brandId,
       categoryId: body.categoryId,
       gender: body.gender,
@@ -254,8 +266,11 @@ export async function getSubmission(input: { auth: Auth; id: string }) {
  */
 export async function quickMockups(input: { auth: Auth; body: z.infer<typeof MockupsBody> }) {
   await loadStore(input.auth.sub);
-  const { printedUrl, views } = await generateMockupViews(input.body, BETA_FOLDER);
-  return ok({ printed: printedUrl, images: views });
+  const [{ printedUrl, views }, copy] = await Promise.all([
+    generateMockupViews(input.body, BETA_FOLDER),
+    generateProductCopy(input.body),
+  ]);
+  return ok({ printed: printedUrl, images: views, copy });
 }
 
 /**

@@ -1,6 +1,7 @@
 import { relations } from 'drizzle-orm';
 import { index, integer, jsonb, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 import { aiCatalogMode, bulkMockupStatus } from './enums.js';
+import type { ProductCopy } from './catalog.js';
 import { retailerStores } from './store.js';
 
 /**
@@ -24,6 +25,8 @@ export const bulkMockupJobs = pgTable(
     request: jsonb('request').$type<Record<string, unknown>>().notNull(),
     referenceImageUrls: jsonb('reference_image_urls').$type<string[]>().notNull().default([]),
     outputUrls: jsonb('output_urls').$type<string[]>().notNull().default([]),
+    // AI-drafted name + descriptions from the same photos (null on failure/disabled).
+    copy: jsonb('copy').$type<ProductCopy>(),
     status: bulkMockupStatus('status').notNull().default('queued'),
     errorMessage: text('error_message'),
     attempts: integer('attempts').notNull().default(0),
