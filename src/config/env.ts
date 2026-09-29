@@ -20,6 +20,10 @@ const EnvSchema = z
     // only when you need to inspect raw DB queries.
     DB_QUERY_LOG: z.enum(['true', 'false']).default('false'),
 
+    // Background sweeps + bulk-mockup worker (src/background-jobs.ts). They act on
+    // real orders/refunds, so a mirror or standby on a copy of prod data sets 'false'.
+    BACKGROUND_JOBS_ENABLED: z.enum(['true', 'false']).default('true'),
+
     DATABASE_URL: z.string().url(),
 
     JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 chars'),
