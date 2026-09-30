@@ -14,7 +14,7 @@
  *
  * Idempotent: every step skips what already exists.
  * Requires ADMIN_SEED_EMAIL / ADMIN_SEED_PASSWORD to be set explicitly — it refuses the
- * built-in development defaults.
+ * built-in development defaults unless SEED_ALLOW_DEFAULT_ADMIN=true is passed.
  */
 import { db, pool } from '@/db/client.js';
 import { seedAdmin } from './admin.js';
@@ -33,11 +33,19 @@ const DEV_ADMIN_EMAIL = 'admin@trendzo.local';
 const DEV_ADMIN_PASSWORD = 'admin1234';
 
 async function main(): Promise<void> {
-  if (!process.env.ADMIN_SEED_EMAIL || process.env.ADMIN_SEED_EMAIL === DEV_ADMIN_EMAIL) {
-    throw new Error('Set ADMIN_SEED_EMAIL to the real admin email before a production seed.');
+  // The dev defaults are public (they are prefilled on the web portal's admin login), so a
+  // production seed refuses them unless the operator explicitly accepts that risk.
+  const allowDefault = process.env.SEED_ALLOW_DEFAULT_ADMIN === 'true';
+  const email = process.env.ADMIN_SEED_EMAIL;
+  const password = process.env.ADMIN_SEED_PASSWORD;
+  if (!allowDefault && (!email || email === DEV_ADMIN_EMAIL)) {
+    throw new Error('Set ADMIN_SEED_EMAIL to the real admin email (or SEED_ALLOW_DEFAULT_ADMIN=true).');
   }
-  if (!process.env.ADMIN_SEED_PASSWORD || process.env.ADMIN_SEED_PASSWORD === DEV_ADMIN_PASSWORD) {
-    throw new Error('Set ADMIN_SEED_PASSWORD to a strong password before a production seed.');
+  if (!allowDefault && (!password || password === DEV_ADMIN_PASSWORD)) {
+    throw new Error('Set ADMIN_SEED_PASSWORD to a strong password (or SEED_ALLOW_DEFAULT_ADMIN=true).');
+  }
+  if (allowDefault && (!password || password === DEV_ADMIN_PASSWORD)) {
+    console.warn('WARNING: seeding the super-admin with the PUBLIC default password — change it after first login.');
   }
 
   console.log('Seeding platform_config…');
