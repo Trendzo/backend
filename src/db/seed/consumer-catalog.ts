@@ -274,8 +274,13 @@ const COLLECTION_SPECS: CollectionSpec[] = [
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-export async function seedConsumerCatalog(database: typeof Db): Promise<void> {
-  // 1. Brands — skip by slug; onConflictDoNothing guards the lower(name) unique index.
+/**
+ * The consumer brand vocabulary (Zara, Nike, …) on its own, without any listings.
+ * Other catalog seeders (e.g. the Indore market seed) reference these brands by slug,
+ * so a production bootstrap seeds them without the demo products below.
+ * Skips by slug; onConflictDoNothing guards the lower(name) unique index.
+ */
+export async function seedConsumerBrands(database: typeof Db): Promise<Map<string, string>> {
   const brandIdBySlug = new Map<string, string>();
   for (const b of BRAND_SPECS) {
     const existing = await database.query.brands.findFirst({ where: eq(brands.slug, b.slug) });
@@ -300,6 +305,12 @@ export async function seedConsumerCatalog(database: typeof Db): Promise<void> {
     if (row) brandIdBySlug.set(b.slug, row.id);
     console.log(`  → seeded brand '${b.slug}'`);
   }
+  return brandIdBySlug;
+}
+
+export async function seedConsumerCatalog(database: typeof Db): Promise<void> {
+  // 1. Brands.
+  const brandIdBySlug = await seedConsumerBrands(database);
 
   // 2. Categories — resolve the taxonomy leaves these listings belong to. The tree is
   // seeded by `category-taxonomy.ts`, which runs before this.
