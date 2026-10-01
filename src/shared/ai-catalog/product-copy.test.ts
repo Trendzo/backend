@@ -33,6 +33,19 @@ describe('normalizeProductCopy', () => {
     });
   });
 
+  it('strips emoji the model slipped in, keeping bullets and punctuation', () => {
+    const out = normalizeProductCopy({
+      name: '✨ Olive Kurta 🔥',
+      description: 'Breezy olive kurta ✅ for summer 🇮🇳 – easy fit.',
+      descriptionLong: 'Easy everyday kurta 👌🏽\n\n• ✨ Soft cotton\n- 🧵 Straight fit',
+    });
+    expect(out).toEqual({
+      name: 'Olive Kurta',
+      description: 'Breezy olive kurta for summer – easy fit.',
+      descriptionLong: 'Easy everyday kurta\n\n• Soft cotton\n• Straight fit',
+    });
+  });
+
   it('strips code fences, HTML, tolerates raw newlines in strings, normalises bullets', () => {
     const out = normalizeProductCopy(
       '```json\n{"name":"<b>Tee</b>","description":"<p>Black   tee.</p>","descriptionLong":"Intro\n\n\n\n- one\n* two"}\n```',
@@ -56,7 +69,9 @@ describe('normalizeProductCopy', () => {
   it('returns null on invalid JSON, wrong shape or empty description', () => {
     expect(normalizeProductCopy('not json')).toBeNull();
     expect(normalizeProductCopy({ name: 'x' })).toBeNull();
-    expect(normalizeProductCopy({ name: 'x', description: '   ', descriptionLong: 'y' })).toBeNull();
+    expect(
+      normalizeProductCopy({ name: 'x', description: '   ', descriptionLong: 'y' }),
+    ).toBeNull();
   });
 });
 
@@ -81,10 +96,18 @@ describe('generateProductCopy', () => {
 
     it('returns normalized copy stamped with the model', async () => {
       generateContent.mockResolvedValue({
-        text: JSON.stringify({ name: 'Tee', description: 'A tee.', descriptionLong: 'Intro\n\n- a' }),
+        text: JSON.stringify({
+          name: 'Tee',
+          description: 'A tee.',
+          descriptionLong: 'Intro\n\n- a',
+        }),
       });
       const out = await generateProductCopy(input);
-      expect(out).toMatchObject({ name: 'Tee', description: 'A tee.', descriptionLong: 'Intro\n\n• a' });
+      expect(out).toMatchObject({
+        name: 'Tee',
+        description: 'A tee.',
+        descriptionLong: 'Intro\n\n• a',
+      });
       expect(out?.model).toBe(env.AI_TEXT_MODEL);
     });
 

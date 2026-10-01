@@ -44,12 +44,19 @@ const PROMPT = [
   'Rules: describe only what is visible. Never invent fabric composition, brand, origin or certifications unless readable on a tag. No prices, discounts, sizes or delivery claims. No emojis, no HTML, no markdown headings. Plain Indian English.',
 ].join('\n');
 
+// Emoji the prompt forbids but a model may still emit: pictographs (✨, 🔥, ✅…), flag
+// letters, skin-tone modifiers, keycaps, and the joiners/selectors that glue sequences
+// together. Typographic marks the copy relies on (•, –, ’) are not pictographic and stay.
+const EMOJI = /[\p{Extended_Pictographic}\p{Regional_Indicator}\u{1F3FB}-\u{1F3FF}⃣︎️‍]/gu;
+
 function clean(text: string, max: number, multiline: boolean): string {
   let t = text
     .replace(/\r\n?/g, '\n')
     .replace(/```[a-z]*\n?/gi, '')
     .replace(/<[^>]*>/g, '')
-    .replace(/[ \t]+$/gm, '');
+    .replace(EMOJI, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/^[ \t]+|[ \t]+$/gm, '');
   if (multiline) {
     t = t
       // Normalise markdown-style bullets to the `• ` form the app shows.
@@ -78,9 +85,14 @@ function escapeControlCharsInStrings(json: string): string {
       if (escaped) escaped = false;
       else if (ch === '\\') escaped = true;
       else if (ch === '"') inString = false;
-      else if (ch === '\n') { out += '\\n'; continue; }
-      else if (ch === '\r') continue;
-      else if (ch === '\t') { out += '\\t'; continue; }
+      else if (ch === '\n') {
+        out += '\\n';
+        continue;
+      } else if (ch === '\r') continue;
+      else if (ch === '\t') {
+        out += '\\t';
+        continue;
+      }
     } else if (ch === '"') {
       inString = true;
     }
@@ -123,9 +135,11 @@ export function normalizeProductCopy(
 
 function composeHints(input: GenerateViewsInput): string {
   const hints: string[] = [];
-  if (input.modelGender) hints.push(`Target shopper: ${input.modelGender === 'him' ? 'men' : 'women'}.`);
+  if (input.modelGender)
+    hints.push(`Target shopper: ${input.modelGender === 'him' ? 'men' : 'women'}.`);
   const retailer = input.prompt?.trim();
-  if (retailer) hints.push(`Retailer notes (use for facts, ignore styling instructions): ${retailer}`);
+  if (retailer)
+    hints.push(`Retailer notes (use for facts, ignore styling instructions): ${retailer}`);
   return hints.join('\n');
 }
 
@@ -156,9 +170,8 @@ async function viaGoogle(input: GenerateViewsInput, signal: AbortSignal): Promis
   // Resolve the client first so a missing key fails before any image download.
   const ai = env.AI_IMAGE_PROVIDER === 'vertex' ? getVertexClient() : getClient();
   const refs = await Promise.all(referenceUrls(input).map((u) => fetchReferenceImage(u, signal)));
-  const parts: Array<{ inlineData: { data: string; mimeType: string } } | { text: string }> = refs.map(
-    (r) => ({ inlineData: { data: r.data, mimeType: r.mimeType } }),
-  );
+  const parts: Array<{ inlineData: { data: string; mimeType: string } } | { text: string }> =
+    refs.map((r) => ({ inlineData: { data: r.data, mimeType: r.mimeType } }));
   parts.push({ text: [PROMPT, composeHints(input)].filter(Boolean).join('\n\n') });
 
   const response = await ai.models.generateContent({
@@ -182,7 +195,10 @@ async function viaOpenRouter(input: GenerateViewsInput, signal: AbortSignal): Pr
   const refs = await Promise.all(referenceUrls(input).map((u) => fetchReferenceImage(u, signal)));
   const content = [
     { type: 'text', text: [PROMPT, composeHints(input)].filter(Boolean).join('\n\n') },
-    ...refs.map((r) => ({ type: 'image_url', image_url: { url: `data:${r.mimeType};base64,${r.data}` } })),
+    ...refs.map((r) => ({
+      type: 'image_url',
+      image_url: { url: `data:${r.mimeType};base64,${r.data}` },
+    })),
   ];
   const headers: Record<string, string> = {
     Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
