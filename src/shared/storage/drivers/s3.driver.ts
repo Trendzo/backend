@@ -47,6 +47,9 @@ function s3(): S3Client {
     // retry layer on top would just multiply the wait.
     maxAttempts: 4,
     retryMode: 'adaptive',
+    // S3-compatible stores (MinIO): custom endpoint + path-style addressing. Unset for AWS.
+    ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
+    ...(env.S3_FORCE_PATH_STYLE === 'true' ? { forcePathStyle: true } : {}),
     // Omitted entirely in AWS-hosted environments so the default provider chain picks up
     // the task/instance role rather than long-lived keys.
     ...(env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY

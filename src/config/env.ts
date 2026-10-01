@@ -111,6 +111,11 @@ const EnvSchema = z
     // Empty in production for clean URLs.
     S3_KEY_PREFIX: z.string().default(''),
 
+    // S3-compatible object storage (e.g. MinIO) instead of AWS S3. Leave unset for AWS.
+    // MinIO and most self-hosted stores need path-style addressing (<endpoint>/<bucket>/<key>).
+    S3_ENDPOINT: z.string().url().optional(),
+    S3_FORCE_PATH_STYLE: z.enum(['true', 'false']).default('false'),
+
     // AI image generation provider switch — selects which backend the AI catalog
     // module calls. Both providers ultimately run Gemini's image model; OpenRouter
     // is the no-billing-card alternative path.
