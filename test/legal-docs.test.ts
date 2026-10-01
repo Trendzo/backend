@@ -230,10 +230,16 @@ describe('privacy policy pipeline (mirror of the T&C)', () => {
     const privacy = await app.inject({ method: 'GET', url: '/api/v1/legal/privacy' });
     expect(data(privacy).shortText).toBe(marker);
 
+    // The bare /privacy URL is retired in favour of one policy per app; it now just
+    // redirects rather than rendering the retailer_terms 'privacy' digest itself.
     const html = await app.inject({ method: 'GET', url: '/privacy' });
-    expect(html.statusCode).toBe(200);
-    expect(html.headers['content-type']).toContain('text/html');
-    expect(html.body).toContain('Public-view marker');
+    expect(html.statusCode).toBe(301);
+    expect(html.headers.location).toBe('/privacy/customer');
+
+    const appPrivacy = await app.inject({ method: 'GET', url: '/privacy/customer' });
+    expect(appPrivacy.statusCode).toBe(200);
+    expect(appPrivacy.headers['content-type']).toContain('text/html');
+
     // Terms page renders the terms document, not the privacy one.
     const termsHtml = await app.inject({ method: 'GET', url: '/terms' });
     expect(termsHtml.body).not.toContain('Public-view marker');

@@ -2,7 +2,6 @@ import type { FastifyPluginAsync } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { env } from '@/config/env.js';
 import { db } from '@/db/client.js';
-import { PRIVACY_POLICY_EFFECTIVE, privacyPolicySections } from '@/shared/privacy-policy.js';
 import { currentLegalDoc, LEGAL_DOC_LABELS, type LegalDocKind } from '@/shared/terms.js';
 import { appPrivacyPolicies, PRIVACY_APPS, type PrivacyApp } from '@/db/schema/legal-pages.js';
 import { defaultPolicy, defaultPolicyHtml } from '@/shared/app-privacy-content.js';
@@ -74,27 +73,6 @@ function grievanceBlock(): string {
   return `<div class="card"><h2>Contact us</h2><p>For any question about this policy, or to exercise any right described in it, contact us:</p><ul>${officer}<li>Email: <a href="mailto:${email}">${email}</a></li>${address}</ul><p>We acknowledge complaints within 24 hours and aim to resolve them within 15 days.</p></div>`;
 }
 
-/** Render the full Privacy Policy — the authoritative store-listing document. */
-function privacyPolicyHtml(): string {
-  const body = privacyPolicySections()
-    .map((section) => {
-      const paragraphs = (section.paragraphs ?? [])
-        .map((text) => `<p>${escapeHtml(text)}</p>`)
-        .join('');
-      const bullets = section.bullets?.length
-        ? `<ul>${section.bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
-        : '';
-      return `<h2>${escapeHtml(section.heading)}</h2>${paragraphs}${bullets}`;
-    })
-    .join('');
-
-  return `
-      <h1>Privacy Policy</h1>
-      <p class="meta">Effective ${escapeHtml(PRIVACY_POLICY_EFFECTIVE)}</p>
-      <div class="card">${body}</div>
-      ${grievanceBlock()}`;
-}
-
 const publicLegalRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', (_req, reply) => {
     void reply
@@ -107,15 +85,12 @@ const publicLegalRoutes: FastifyPluginAsync = async (app) => {
       );
   });
 
-  // The Privacy Policy is the FULL text from shared/privacy-policy.ts, covering every
-  // Trendzo app. It is intentionally independent of `retailer_terms`: that table holds
-  // the short in-app acceptance digest, which is a summary and was rejected by Google
-  // Play as "not a valid privacy policy page". Static text also means this URL cannot
-  // go blank or stale because of a database state.
+  // Retired: /privacy used to serve one combined policy for every app. Each app now
+  // ships its OWN policy at /privacy/:app (see below) — Google Play's per-app review
+  // wants a policy that reflects only what that app collects. This bare URL is kept
+  // as a redirect (not deleted) so old app-store listings / bookmarks don't 404.
   app.get('/privacy', (_req, reply) => {
-    void reply
-      .type('text/html; charset=utf-8')
-      .send(layout('Privacy Policy', privacyPolicyHtml()));
+    void reply.redirect('/privacy/customer', 301);
   });
 
   // Per-app privacy policies (customer / retailer / driver) — each app ships a DIFFERENT
