@@ -46,6 +46,49 @@ function buildVideoThumbnailUrl(publicId: string): string {
   });
 }
 
+/** A transformation segment such as `c_fill,w_200` or `f_auto` (never a folder name). */
+const TRANSFORMATION_SEGMENT = /^[a-z]{1,3}_[^/]+$/;
+
+/**
+ * Signed Admin-API download URL for a plain delivery URL on our own cloud — the way to read
+ * an original the CDN refuses to serve unsigned (PDFs and ZIPs are blocked by default).
+ * Returns null when Cloudinary is not configured, the URL is on another cloud, or it carries
+ * a transformation (the download API serves originals only).
+ */
+export function cloudinarySignedDownloadUrl(deliveryUrl: string): string | null {
+  if (!cloudinaryDriver.isConfigured()) return null;
+  let u: URL;
+  try {
+    u = new URL(deliveryUrl);
+  } catch {
+    return null;
+  }
+  if (u.hostname !== 'res.cloudinary.com') return null;
+  const [cloud, resourceType, type, ...rest] = u.pathname
+    .split('/')
+    .filter(Boolean)
+    .map(decodeURIComponent);
+  if (cloud !== env.CLOUDINARY_CLOUD_NAME || !resourceType || !type || !rest.length) return null;
+  if (!['image', 'video', 'raw'].includes(resourceType)) return null;
+  const v = rest.findIndex((s) => /^v\d+$/.test(s));
+  const idParts = v >= 0 ? rest.slice(v + 1) : rest;
+  if (v > 0 || (v < 0 && TRANSFORMATION_SEGMENT.test(rest[0] ?? '')) || !idParts.length)
+    return null;
+  const path = idParts.join('/');
+  // Raw assets keep their extension in the public id; image/video ids exclude it.
+  const dot = path.lastIndexOf('.');
+  const [publicId, format] =
+    resourceType === 'raw' || dot <= path.lastIndexOf('/')
+      ? [path, undefined]
+      : [path.slice(0, dot), path.slice(dot + 1)];
+  ensureConfigured();
+  return cloudinary.utils.private_download_url(publicId, format as string, {
+    resource_type: resourceType,
+    type,
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+  });
+}
+
 async function toBuffer(body: Buffer | Readable): Promise<Buffer> {
   if (Buffer.isBuffer(body)) return body;
   const chunks: Buffer[] = [];
@@ -91,7 +134,9 @@ function uploadBuffer(buffer: Buffer, opts: UploadOptions): Promise<UploadResult
           return;
         }
         if (!result) {
-          finish(() => reject(new AppError(502, 'internal_error', 'Cloudinary returned no result')));
+          finish(() =>
+            reject(new AppError(502, 'internal_error', 'Cloudinary returned no result')),
+          );
           return;
         }
         const wantsThumb = opts.videoThumbnail === true && result.resource_type === 'video';

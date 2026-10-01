@@ -72,4 +72,11 @@ export function isStorageConfigured(): boolean {
   return driver.isConfigured();
 }
 
+/**
+ * Signed download URL for a legacy Cloudinary delivery URL whose original the CDN refuses
+ * to serve unsigned (PDFs). Independent of STORAGE_DRIVER — used to migrate media off
+ * Cloudinary. Null when not applicable.
+ */
+export { cloudinarySignedDownloadUrl } from './drivers/cloudinary.driver.js';
+
 export type { UploadOptions, UploadResult, ResourceKind, Visibility } from './types.js';

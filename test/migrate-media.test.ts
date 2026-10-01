@@ -23,6 +23,13 @@ const CLD_ASSET = 'https://res.cloudinary.com/demo/image/upload/v1700000002/clos
 const CF = 'https://dgwf2q4dx1fzq.cloudfront.net/uploads/2026/08/med_mig.png';
 const UNSPLASH = 'https://images.unsplash.com/photo-1?w=900';
 const GONE = 'https://res.cloudinary.com/demo/image/upload/v1/closetx/listings/gone.png';
+// Same object as CLD — only the query differs, so it must share CLD's copy.
+const CLD_QUERY = `${CLD}?mock=1786530890`;
+// A PDF the CDN refuses unsigned (401); its original is readable via the signed fallback.
+const PDF = 'https://res.cloudinary.com/demo/image/upload/v1700000003/closetx/applications/doc.pdf';
+const SIGNED_PDF = 'https://api.cloudinary.test/v1_1/demo/image/download?public_id=doc&signature=x';
+const PDF_BYTES = Buffer.from('%PDF-1.4\n%%EOF\n');
+const signedSourceUrl = (url: string) => (url === PDF ? SIGNED_PDF : null);
 
 const NEW_CLD =
   'https://memory.test/legacy/cloudinary/demo/image/upload/v1700000000/closetx/listings/kurta.png';
@@ -31,6 +38,8 @@ const NEW_CLD_DESC =
 const NEW_CLD_ASSET =
   'https://memory.test/legacy/cloudinary/demo/image/upload/v1700000002/closetx/cms/banner.png';
 const NEW_CF = 'https://memory.test/uploads/2026/08/med_mig.png';
+const NEW_PDF =
+  'https://memory.test/legacy/cloudinary/demo/image/upload/v1700000003/closetx/applications/doc.pdf';
 
 const DESC = (src: string) => `<p>Detail</p><img src="${src}" />`;
 
@@ -40,6 +49,13 @@ const fakeFetch: typeof fetch = async (input, init) => {
   const method = init?.method ?? 'GET';
   calls.push({ url, method });
   if (url === GONE) return new Response(null, { status: 404 });
+  if (url === PDF) return new Response(null, { status: 401 });
+  if (url === SIGNED_PDF) {
+    return new Response(new Uint8Array(PDF_BYTES), {
+      status: 200,
+      headers: { 'content-type': 'application/pdf' },
+    });
+  }
   return new Response(method === 'HEAD' ? null : new Uint8Array(PNG), {
     status: 200,
     headers: { 'content-type': 'image/png' },
@@ -86,7 +102,7 @@ beforeAll(async () => {
     categoryId,
     name: 'Kurta',
     gender: 'unisex',
-    galleryUrls: [CLD, CF, UNSPLASH, GONE],
+    galleryUrls: [CLD, CF, UNSPLASH, GONE, CLD_QUERY, PDF],
     descriptionLong: DESC(CLD_DESC),
   });
   assetKey = `mediamig/${listingId}`;
@@ -101,10 +117,11 @@ describe('migrateMedia', () => {
   it('dry run probes with HEAD, reports unreachable sources and writes nothing', async () => {
     calls.length = 0;
     const stored = memoryObjects.size;
-    const dry = await migrateMedia(db, { apply: false, fetchImpl: fakeFetch });
+    const dry = await migrateMedia(db, { apply: false, fetchImpl: fakeFetch, signedSourceUrl });
 
-    expect(dry.failed).toContainEqual({ url: GONE, reason: 'HTTP 404' });
-    expect(dry.reachable).toBeGreaterThanOrEqual(4);
+    expect(dry.failed).toEqual([{ url: GONE, reason: 'HTTP 404' }]);
+    expect(dry.reachable).toBeGreaterThanOrEqual(5);
+    expect(dry.aliased).toBe(1);
     expect(dry.copied).toBe(0);
     expect(dry.rowsRewritten).toBe(0);
     for (const col of ['gallery_urls', 'description_long']) {
@@ -116,26 +133,29 @@ describe('migrateMedia', () => {
       expect.objectContaining({ table: 'cms_assets', column: 'preview_url' }),
     );
     expect(calls.map((c) => c.url)).not.toContain(UNSPLASH);
-    expect(calls.every((c) => c.method === 'HEAD')).toBe(true);
+    expect(calls.map((c) => c.url)).not.toContain(CLD_QUERY);
+    // Sources are only HEAD-probed; the signed download endpoint is GET-only.
+    expect(calls.filter((c) => c.url !== SIGNED_PDF).every((c) => c.method === 'HEAD')).toBe(true);
 
     expect(memoryObjects.size).toBe(stored);
     expect(await readListing()).toEqual({
-      gallery: [CLD, CF, UNSPLASH, GONE],
+      gallery: [CLD, CF, UNSPLASH, GONE, CLD_QUERY, PDF],
       desc: DESC(CLD_DESC),
     });
     expect(await readAsset()).toBe(CLD_ASSET);
   });
 
   it('apply copies into the store and rewrites jsonb + text links, leaving the rest alone', async () => {
-    const res = await migrateMedia(db, { apply: true, fetchImpl: fakeFetch });
+    const res = await migrateMedia(db, { apply: true, fetchImpl: fakeFetch, signedSourceUrl });
 
-    expect(res.failed).toContainEqual({ url: GONE, reason: 'HTTP 404' });
-    expect(res.copied).toBeGreaterThanOrEqual(4);
+    expect(res.failed).toEqual([{ url: GONE, reason: 'HTTP 404' }]);
+    expect(res.copied).toBeGreaterThanOrEqual(5);
+    expect(res.aliased).toBe(1);
     expect(res.rowsRewritten).toBeGreaterThanOrEqual(2);
 
     // Gallery + description live on the same row: both must land (one UPDATE per row).
     expect(await readListing()).toEqual({
-      gallery: [NEW_CLD, NEW_CF, UNSPLASH, GONE],
+      gallery: [NEW_CLD, NEW_CF, UNSPLASH, GONE, NEW_CLD, NEW_PDF],
       desc: DESC(NEW_CLD_DESC),
     });
     expect(await readAsset()).toBe(NEW_CLD_ASSET);
@@ -152,10 +172,33 @@ describe('migrateMedia', () => {
         'legacy/cloudinary/demo/image/upload/v1700000000/closetx/listings/kurta.png',
       )?.body,
     ).toEqual(PNG);
+    expect(
+      memoryObjects.get(
+        'legacy/cloudinary/demo/image/upload/v1700000003/closetx/applications/doc.pdf',
+      ),
+    ).toEqual({ body: PDF_BYTES, contentType: 'application/pdf' });
+  });
+
+  it('without a signed fallback a refused source is reported, not copied', async () => {
+    await db
+      .update(productListings)
+      .set({ galleryUrls: [NEW_CLD, PDF] })
+      .where(eq(productListings.id, listingId));
+    const res = await migrateMedia(db, {
+      apply: true,
+      fetchImpl: fakeFetch,
+      signedSourceUrl: () => null,
+    });
+    expect(res.failed).toContainEqual({ url: PDF, reason: 'HTTP 401' });
+    expect((await readListing()).gallery).toEqual([NEW_CLD, PDF]);
+    await db
+      .update(productListings)
+      .set({ galleryUrls: [NEW_CLD, NEW_CF, UNSPLASH, GONE] })
+      .where(eq(productListings.id, listingId));
   });
 
   it('a re-run is a no-op: only the unreachable link is left to retry', async () => {
-    const again = await migrateMedia(db, { apply: true, fetchImpl: fakeFetch });
+    const again = await migrateMedia(db, { apply: true, fetchImpl: fakeFetch, signedSourceUrl });
     expect(again.urls).toBe(1);
     expect(again.failed).toEqual([{ url: GONE, reason: 'HTTP 404' }]);
     expect(again.copied).toBe(0);
@@ -166,7 +209,7 @@ describe('migrateMedia', () => {
       .update(productListings)
       .set({ galleryUrls: [NEW_CLD, NEW_CF, UNSPLASH] })
       .where(eq(productListings.id, listingId));
-    const done = await migrateMedia(db, { apply: true, fetchImpl: fakeFetch });
+    const done = await migrateMedia(db, { apply: true, fetchImpl: fakeFetch, signedSourceUrl });
     expect(done.urls).toBe(0);
     expect(done.rowsRewritten).toBe(0);
   });

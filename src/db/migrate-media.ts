@@ -18,6 +18,7 @@
 import { sql } from 'drizzle-orm';
 import type { db as Db } from '@/db/client.js';
 import {
+  cloudinarySignedDownloadUrl,
   isStorageConfigured,
   publicUrlFor,
   storageDriverName,
@@ -46,6 +47,8 @@ export type MediaMigrationReport = {
   reachable: number;
   /** Apply: sources uploaded to the configured store. */
   copied: number;
+  /** URLs differing from another source only by query string — they share its copy. */
+  aliased: number;
   failed: Array<{ url: string; reason: string }>;
   rowsRewritten: number;
   /** Apply: source → new URL. Dry run: source → planned object key. */
@@ -58,6 +61,11 @@ export type MediaMigrationOptions = {
   hosts?: readonly string[];
   concurrency?: number;
   fetchImpl?: typeof fetch;
+  /**
+   * Second chance for a source the CDN refuses unsigned (401/403): a signed URL for the same
+   * original, or null. Defaults to the Cloudinary download API when credentials are set.
+   */
+  signedSourceUrl?: (url: string) => string | null;
   log?: (msg: string) => void;
 };
 
@@ -118,15 +126,55 @@ async function fetchWithRetry(
   throw last instanceof Error ? last : new Error(String(last));
 }
 
-/** HEAD a source; servers that refuse HEAD get a GET whose body is dropped unread. */
-async function probe(f: typeof fetch, url: string): Promise<void> {
-  let res = await fetchWithRetry(f, url, 'HEAD');
-  if (res.status === 405 || res.status === 501) {
+type Signer = (url: string) => string | null;
+
+/**
+ * Fetch a source; a 401/403 is retried once through `signer` (the original behind a signed
+ * URL). Resolves to the 2xx response, or throws with the status that stopped it.
+ */
+async function fetchSource(
+  f: typeof fetch,
+  url: string,
+  method: 'GET' | 'HEAD',
+  signer: Signer,
+): Promise<Response> {
+  let res = await fetchWithRetry(f, url, method);
+  if (method === 'HEAD' && (res.status === 405 || res.status === 501)) {
     await discard(res);
     res = await fetchWithRetry(f, url, 'GET');
   }
-  await discard(res);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (res.status === 401 || res.status === 403) {
+    const signed = signer(url);
+    if (signed) {
+      await discard(res);
+      // Signed download endpoints are GET-only.
+      const viaSigned = await fetchWithRetry(f, signed, 'GET');
+      if (viaSigned.ok) return viaSigned;
+      await discard(viaSigned);
+      throw new Error(`HTTP ${res.status} (signed fallback HTTP ${viaSigned.status})`);
+    }
+  }
+  if (!res.ok) {
+    await discard(res);
+    throw new Error(`HTTP ${res.status}`);
+  }
+  return res;
+}
+
+/** Reachability only: the body is dropped unread. */
+async function probe(f: typeof fetch, url: string, signer: Signer): Promise<void> {
+  await discard(await fetchSource(f, url, 'HEAD', signer));
+}
+
+/** Same resource, different query string (`…/a.png?mock=1` vs `…/a.png`). */
+function sameResource(a: string, b: string): boolean {
+  try {
+    const x = new URL(a);
+    const y = new URL(b);
+    return x.origin === y.origin && x.pathname === y.pathname;
+  } catch {
+    return false;
+  }
 }
 
 async function mapLimit<T>(
@@ -171,6 +219,7 @@ export async function migrateMedia(
   const log = opts.log ?? (() => {});
   const f = opts.fetchImpl ?? fetch;
   const concurrency = opts.concurrency ?? 6;
+  const signer: Signer = opts.signedSourceUrl ?? cloudinarySignedDownloadUrl;
   const re = hostRegex(hosts);
   const report: MediaMigrationReport = {
     apply: opts.apply,
@@ -178,6 +227,7 @@ export async function migrateMedia(
     urls: 0,
     reachable: 0,
     copied: 0,
+    aliased: 0,
     failed: [],
     rowsRewritten: 0,
     samples: [],
@@ -206,6 +256,8 @@ export async function migrateMedia(
   // ── plan keys ───────────────────────────────────────────────────────────────
   const work: Array<{ url: string; key: string }> = [];
   const keyOwner = new Map<string, string>();
+  /** alias URL → the URL whose copy it reuses. */
+  const aliases = new Map<string, string>();
   for (const url of allUrls) {
     const key = mediaKeyFor(url);
     let storedKey: string | null = null;
@@ -221,11 +273,17 @@ export async function migrateMedia(
       report.failed.push({ url, reason: 'unmappable URL' });
       continue;
     }
-    // Two URLs differing only by query string (or by characters the facade sanitises away)
-    // would share a key; keep the first, flag the rest.
+    // URLs differing only by query string are the same object (neither CDN varies on the
+    // query), so they share one copy. Anything else landing on the same key — characters
+    // the facade sanitises away — is a genuine collision: flagged, not overwritten.
     const owner = keyOwner.get(storedKey);
     if (owner !== undefined && owner !== url) {
-      report.failed.push({ url, reason: `key collision with ${owner}` });
+      if (sameResource(owner, url)) {
+        aliases.set(url, owner);
+        report.aliased += 1;
+      } else {
+        report.failed.push({ url, reason: `key collision with ${owner}` });
+      }
       continue;
     }
     keyOwner.set(storedKey, url);
@@ -237,7 +295,7 @@ export async function migrateMedia(
     let done = 0;
     await mapLimit(work, concurrency, async ({ url }) => {
       try {
-        await probe(f, url);
+        await probe(f, url, signer);
         report.reachable += 1;
       } catch (err) {
         report.failed.push({ url, reason: errMessage(err) });
@@ -246,7 +304,14 @@ export async function migrateMedia(
       if (done % 100 === 0) log(`  probed ${done}/${work.length}`);
     });
     report.samples = work.slice(0, 5).map(({ url, key }) => ({ from: url, to: key }));
-    log(`probed ${work.length}: ${report.reachable} reachable, ${report.failed.length} failed`);
+    for (const [alias, owner] of aliases) {
+      if (report.failed.some((x) => x.url === owner)) {
+        report.failed.push({ url: alias, reason: `shares unreachable ${owner}` });
+      }
+    }
+    log(
+      `probed ${work.length}: ${report.reachable} reachable, ${report.failed.length} failed, ${report.aliased} query alias(es)`,
+    );
     return report;
   }
 
@@ -255,11 +320,7 @@ export async function migrateMedia(
   let done = 0;
   await mapLimit(work, concurrency, async ({ url, key }) => {
     try {
-      const res = await fetchWithRetry(f, url, 'GET');
-      if (!res.ok) {
-        await discard(res);
-        throw new Error(`HTTP ${res.status}`);
-      }
+      const res = await fetchSource(f, url, 'GET', signer);
       const buffer = Buffer.from(await res.arrayBuffer());
       const { folder, publicId } = splitKey(key);
       const out = await uploadObject(buffer, {
@@ -275,6 +336,11 @@ export async function migrateMedia(
     done += 1;
     if (done % 50 === 0) log(`  copied ${done}/${work.length}`);
   });
+  for (const [alias, owner] of aliases) {
+    const to = map.get(owner);
+    if (to) map.set(alias, to);
+    else report.failed.push({ url: alias, reason: `shares failed ${owner}` });
+  }
   report.samples = [...map].slice(0, 5).map(([from, to]) => ({ from, to }));
   log(`copied ${report.copied}/${work.length}; ${report.failed.length} failed`);
 

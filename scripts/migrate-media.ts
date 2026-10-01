@@ -44,9 +44,9 @@ async function main(): Promise<void> {
   console.log(
     apply
       ? `${r.urls} source URL(s) in ${r.columns.length} column(s): ${r.copied} copied, ` +
-          `${r.failed.length} failed; ${r.rowsRewritten} row(s) rewritten.`
+          `${r.aliased} query alias(es), ${r.failed.length} failed; ${r.rowsRewritten} row(s) rewritten.`
       : `${r.urls} source URL(s) in ${r.columns.length} column(s): ${r.reachable} reachable, ` +
-          `${r.failed.length} would fail.`,
+          `${r.aliased} query alias(es), ${r.failed.length} would fail.`,
   );
 }
 
