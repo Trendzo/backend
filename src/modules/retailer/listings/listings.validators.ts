@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PaiseSchema, PositivePaiseSchema, StockSchema } from '@/shared/validation/common.js';
+import { PositivePaiseSchema, StockSchema } from '@/shared/validation/common.js';
 
 /**
  * Per-item price ceiling. The hard limit is the int4 column (₹2,14,74,836.47), but
@@ -11,10 +11,19 @@ export const MAX_PRICE_RUPEES = 1_00_00_000;
 const MAX_PRICE_PAISE = MAX_PRICE_RUPEES * 100;
 const priceCeilingMsg = `Price must be ₹${MAX_PRICE_RUPEES.toLocaleString('en-IN')} or less`;
 
-/** Selling price in paise; 0 allowed so an in-progress draft can exist without one. */
-const ListingPaiseSchema = PaiseSchema.max(MAX_PRICE_PAISE, priceCeilingMsg);
-/** Strictly positive price in paise (selling price on a complete variant, MRP). */
+/**
+ * Strictly positive price in paise: a variant's selling price, and MRP. A variant always
+ * has a real price (the DB enforces price_paise > 0); a draft that has no price yet simply
+ * has no variant yet — the listing is saved on its own and the variant is created once the
+ * retailer prices it.
+ */
 const ListingPricePaiseSchema = PositivePaiseSchema.max(MAX_PRICE_PAISE, priceCeilingMsg);
+const priceRequiredMsg = 'Enter a selling price greater than 0 to save this variant';
+const SellingPriceSchema = z
+  .number({ required_error: priceRequiredMsg, invalid_type_error: priceRequiredMsg })
+  .int(priceRequiredMsg)
+  .positive(priceRequiredMsg)
+  .max(MAX_PRICE_PAISE, priceCeilingMsg);
 
 export const GenderEnum = z.enum(['her', 'him', 'unisex']);
 
@@ -111,9 +120,7 @@ const GroupVariantInput = z
   .object({
     size: z.string().trim().min(1).max(40).optional(),
     sku: z.string().trim().min(1).max(64).optional(),
-    // 0 allowed so an in-progress draft variant can exist without a price yet;
-    // the publish guard (assertVariantComplete) still requires pricePaise > 0.
-    pricePaise: ListingPaiseSchema,
+    pricePaise: SellingPriceSchema,
     compareAtPrice: ListingPricePaiseSchema.optional(),
     stock: StockSchema.default(0),
     imageUrls: z.array(z.string().url()).default([]),
@@ -133,8 +140,7 @@ export const BulkCreateGroupVariantsBody = z.object({
 export const DefaultVariantBody = z
   .object({
     sku: z.string().trim().min(1).max(64).optional(),
-    // 0 allowed for an in-progress draft; publish guard enforces pricePaise > 0.
-    pricePaise: ListingPaiseSchema,
+    pricePaise: SellingPriceSchema,
     compareAtPrice: ListingPricePaiseSchema.nullable().optional(),
     stock: StockSchema.default(0),
     imageUrls: z.array(z.string().url()).default([]),
