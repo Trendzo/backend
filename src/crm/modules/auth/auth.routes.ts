@@ -1,9 +1,11 @@
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { ok } from '@/shared/http/envelope.js';
+import { OtpLoginBody } from '@/shared/otp/body.js';
+import { getOtpConfig } from '@/shared/otp/config.js';
 import { getAuth } from '@/shared/auth/middleware.js';
 import { requireAnyCrmAuth, resolveActor } from '../../auth.js';
 import * as ctrl from './auth.controller.js';
-import { CrmMsg91Body, CrmRequestOtpBody, CrmVerifyOtpBody } from './auth.validators.js';
+import { CrmRequestOtpBody, CrmVerifyOtpBody } from './auth.validators.js';
 
 /**
  * CRM auth surface. Mounted at `/crm/auth`.
@@ -14,11 +16,14 @@ import { CrmMsg91Body, CrmRequestOtpBody, CrmVerifyOtpBody } from './auth.valida
  */
 const crmAuthRoutes: FastifyPluginAsyncZod = async (app) => {
   /** Tells the client which sign-in paths are live, so the login page can adapt. */
-  app.get('/config', () => ok({ devOtp: ctrl.devOtpEnabled() }));
+  app.get('/config', async () => ok({ devOtp: ctrl.devOtpEnabled(), otp: await getOtpConfig() }));
 
-  app.post('/otp/msg91', { schema: { body: CrmMsg91Body } }, async (req) =>
-    ctrl.salesMsg91Login({ body: req.body }),
-  );
+  // Provider-neutral path, plus the legacy one shipped builds still call.
+  for (const path of ['/otp/login', '/otp/msg91']) {
+    app.post(path, { schema: { body: OtpLoginBody } }, async (req) =>
+      ctrl.salesMsg91Login({ body: req.body }),
+    );
+  }
 
   // Available in both modes: validates the number (and names the person) before the client
   // spends an SMS. Only returns a code when the local OTP path is armed.

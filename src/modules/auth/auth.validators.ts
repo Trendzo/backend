@@ -19,10 +19,3 @@ export const SignupBody = z.object({
   gstin: GstinSchema,
 });
 
-/**
- * MSG91 OTP-widget access token, produced client-side after a successful OTP verify.
- * The backend re-verifies it against MSG91 before trusting the phone number.
- */
-export const Msg91VerifyBody = z.object({
-  accessToken: z.string().min(20).max(2048),
-});

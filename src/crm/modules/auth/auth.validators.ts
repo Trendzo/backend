@@ -7,11 +7,6 @@ export const CrmPhoneSchema = z
   .transform((v) => v.replace(/\D/g, ''))
   .refine((v) => v.length === 10, 'Enter a valid 10-digit mobile number');
 
-/** MSG91 widget access token, produced client-side after a successful OTP verify. */
-export const CrmMsg91Body = z.object({
-  accessToken: z.string().min(20).max(2048),
-});
-
 export const CrmRequestOtpBody = z.object({
   phone: CrmPhoneSchema,
 });

@@ -4,11 +4,12 @@ import { env } from '@/config/env.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { signAccessToken } from '@/shared/auth/jwt.js';
-import { verifyMsg91AccessToken } from '@/shared/msg91/verify.js';
+import type { OtpLoginBody } from '@/shared/otp/body.js';
+import { verifyOtpPhone } from '@/shared/otp/index.js';
 import { crm } from '../../db/client.js';
 import type { CrmUser } from '../../db/types.js';
 import { CrmIdPrefix, crmId, nowIso } from '../../store.js';
-import type { CrmRequestOtpBody, CrmMsg91Body, CrmVerifyOtpBody } from './auth.validators.js';
+import type { CrmRequestOtpBody, CrmVerifyOtpBody } from './auth.validators.js';
 
 /**
  * Sales sign-in for the field CRM.
@@ -88,21 +89,13 @@ async function issueSession(user: CrmUser) {
 }
 
 /** Production sign-in: re-verify the MSG91 widget token, then match the attested phone. */
-export async function salesMsg91Login(input: { body: z.infer<typeof CrmMsg91Body> }) {
-  // The CRM's web widget lives under the same MSG91 account as the retailer portal widget,
-  // so the retailer account authkey verifies its tokens (verification is account-scoped,
-  // not widget-scoped).
-  const authKey = env.MSG91_RETAILER_AUTH_KEY;
-  if (!authKey) {
-    throw new AppError(
-      503,
-      ErrorCode.InternalError,
-      'OTP verification is not configured (missing MSG91 credentials).',
-    );
-  }
-  const phone = await verifyMsg91AccessToken(input.body.accessToken, {
+export async function salesMsg91Login(input: { body: z.infer<typeof OtpLoginBody> }) {
+  // The CRM's web widget lives under the same MSG91 account as the retailer portal widget
+  // (verification is account-scoped, not widget-scoped); the provider handles that.
+  const phone = await verifyOtpPhone(input.body.accessToken, {
+    audience: 'crm',
     format: 'national',
-    authKey,
+    provider: input.body.provider,
   });
   const user = await findActiveSalesUser(phone);
   return issueSession(user);

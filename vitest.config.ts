@@ -28,6 +28,16 @@ export default defineConfig({
       STORAGE_DRIVER: 'memory',
       // AI listing copy is best-effort network I/O to Gemini/OpenRouter — off in tests.
       AI_PRODUCT_COPY_ENABLED: 'false',
+      // Login tests mint `fake:<phone>` OTP tokens instead of calling MSG91/Slide, and a
+      // developer's .env must not change which provider the suite exercises.
+      OTP_PROVIDER: 'fake',
+      OTP_ACCEPT_LEGACY_MSG91: 'false',
+      MSG91_AUTH_KEY: '',
+      MSG91_RETAILER_AUTH_KEY: '',
+      MSG91_DRIVER_AUTH_KEY: '',
+      SLIDE_API_KEY: '',
+      SLIDE_WIDGET_ID: '',
+      SLIDE_CLIENT_TOKEN: '',
     },
     pool: 'forks',
     poolOptions: { forks: { singleFork: true } },

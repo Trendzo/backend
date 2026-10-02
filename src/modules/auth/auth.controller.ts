@@ -13,9 +13,10 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { signAccessToken } from '@/shared/auth/jwt.js';
 import { hashPassword, verifyPassword } from '@/shared/auth/password.js';
-import { verifyMsg91AccessToken } from '@/shared/msg91/verify.js';
+import type { OtpLoginBody } from '@/shared/otp/body.js';
+import { verifyOtpPhone } from '@/shared/otp/index.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
-import type { LoginBody, Msg91VerifyBody, SignupBody } from './auth.validators.js';
+import type { LoginBody, SignupBody } from './auth.validators.js';
 
 /**
  * Auth controller. Three identity domains; each login produces a token tagged with `kind`
@@ -168,8 +169,12 @@ function shapeConsumer(c: typeof consumers.$inferSelect) {
  * then find-or-create the consumer by verified phone. Login and signup are the same
  * endpoint — first OTP verify creates the account.
  */
-export async function consumerOtpLogin(input: { body: z.infer<typeof Msg91VerifyBody> }) {
-  const phone = await verifyMsg91AccessToken(input.body.accessToken);
+export async function consumerOtpLogin(input: { body: z.infer<typeof OtpLoginBody> }) {
+  const phone = await verifyOtpPhone(input.body.accessToken, {
+    audience: 'consumer',
+    format: 'national',
+    provider: input.body.provider,
+  });
 
   let consumer = await db.query.consumers.findFirst({
     where: eq(consumers.phone, phone),
@@ -231,20 +236,13 @@ function shapeDriver(d: typeof deliveryAgents.$inferSelect) {
  * its own MSG91 account, so it needs a dedicated authkey (503 if unconfigured), same as the
  * retailer flow. First OTP verify creates the account.
  */
-export async function driverOtpLogin(input: { body: z.infer<typeof Msg91VerifyBody> }) {
-  // The driver app reuses the retailer MSG91 widget/account, so its tokens verify against the
-  // retailer authkey. Prefer a dedicated driver key if one is ever configured.
-  const driverAuthKey = env.MSG91_DRIVER_AUTH_KEY ?? env.MSG91_RETAILER_AUTH_KEY;
-  if (!driverAuthKey) {
-    throw new AppError(
-      503,
-      ErrorCode.InternalError,
-      'Driver OTP verification is not configured (missing MSG91 credentials).',
-    );
-  }
-  const phone = await verifyMsg91AccessToken(input.body.accessToken, {
+export async function driverOtpLogin(input: { body: z.infer<typeof OtpLoginBody> }) {
+  // Which provider account/key verifies a driver token (MSG91: the retailer account unless a
+  // dedicated driver key is set) is the provider's concern — see shared/otp.
+  const phone = await verifyOtpPhone(input.body.accessToken, {
+    audience: 'driver',
     format: 'e164',
-    authKey: driverAuthKey,
+    provider: input.body.provider,
   });
 
   let driver = await db.query.deliveryAgents.findFirst({
@@ -356,21 +354,13 @@ export async function retailerLogin(input: { body: z.infer<typeof LoginBody> }) 
  * this NEVER creates an account — retailers must onboard/be approved first. Onboarding does no
  * phone verification; OTP only happens here at login.
  */
-export async function retailerOtpLogin(input: { body: z.infer<typeof Msg91VerifyBody> }) {
-  // Retailer widget is a different MSG91 account than consumer, so it needs its own
-  // authkey; don't fall back to the consumer key (that would verify against the wrong
-  // account and fail confusingly). Surface a clear 503 when it's not configured.
-  const retailerAuthKey = env.MSG91_RETAILER_AUTH_KEY;
-  if (!retailerAuthKey) {
-    throw new AppError(
-      503,
-      ErrorCode.InternalError,
-      'Retailer OTP verification is not configured (missing MSG91 credentials).',
-    );
-  }
-  const phone = await verifyMsg91AccessToken(input.body.accessToken, {
+export async function retailerOtpLogin(input: { body: z.infer<typeof OtpLoginBody> }) {
+  // MSG91's retailer widget is a different account than consumer; the provider picks the
+  // right authkey (never the consumer one) and answers 503 when it is not configured.
+  const phone = await verifyOtpPhone(input.body.accessToken, {
+    audience: 'retailer',
     format: 'e164',
-    authKey: retailerAuthKey,
+    provider: input.body.provider,
   });
 
   const retailer = await db.query.retailerAccounts.findFirst({

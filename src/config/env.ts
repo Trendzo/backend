@@ -41,9 +41,29 @@ const EnvSchema = z
     // set (same pattern as Cloudinary below). Consumer and retailer widgets live under
     // SEPARATE MSG91 accounts, so each has its own account authkey — a token issued by
     // one account only verifies against that account's authkey.
-    MSG91_AUTH_KEY: z.string().min(10).optional(), // consumer widget's account
-    MSG91_RETAILER_AUTH_KEY: z.string().min(10).optional(), // retailer widget's account
-    MSG91_DRIVER_AUTH_KEY: z.string().min(10).optional(), // driver widget's account
+    // optionalSecret: a blank value means "unset" instead of failing min(10) and killing boot.
+    MSG91_AUTH_KEY: optionalSecret(10), // consumer widget's account
+    MSG91_RETAILER_AUTH_KEY: optionalSecret(10), // retailer widget's account
+    MSG91_DRIVER_AUTH_KEY: optionalSecret(10), // driver widget's account
+
+    // ---- OTP provider (shared/otp) ----
+    // Which provider's tokens the backend verifies, and which one clients are told to use
+    // (GET /auth/otp-config). 'fake' is for tests only and is refused in production.
+    OTP_PROVIDER: z.enum(['msg91', 'slide', 'fake']).default('msg91'),
+    // While another provider is active, still verify MSG91 widget tokens from app builds
+    // that predate the switch (they cannot change provider without an update). Set 'false'
+    // once those builds are retired.
+    OTP_ACCEPT_LEGACY_MSG91: z.enum(['true', 'false']).default('true'),
+    // Slide (Synquic) OTP. The API key is a SECRET (server-side verify-token only). The
+    // widget id and client token are the PUBLIC pair the clients use to send/verify OTPs;
+    // they are served to clients via GET /auth/otp-config.
+    SLIDE_API_BASE_URL: z.string().url().default('https://slide.synquic.com/api'),
+    SLIDE_API_KEY: optionalSecret(10),
+    SLIDE_WIDGET_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(8).optional()),
+    SLIDE_CLIENT_TOKEN: optionalSecret(8),
+    // Used when Slide's widget-config cannot be read (see shared/otp/config.ts).
+    SLIDE_OTP_LENGTH: z.coerce.number().int().min(4).max(8).default(6),
+    SLIDE_RESEND_SECONDS: z.coerce.number().int().min(10).max(300).default(30),
 
     // Firebase service-account JSON (as a string) for sending driver push via FCM. Optional —
     // if unset (and GOOGLE_APPLICATION_CREDENTIALS also unset), push is disabled and drivers
@@ -194,6 +214,26 @@ const EnvSchema = z
     // Seed defaults for the CRM sales users (`npm run crm:seed`).
     CRM_SEED_ADMIN_PHONE: z.string().default('9000000001'),
     CRM_SEED_EXEC_PHONE: z.string().default('9000000011'),
+  })
+  .superRefine((v, ctx) => {
+    if (v.OTP_PROVIDER === 'fake' && v.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['OTP_PROVIDER'],
+        message: "OTP_PROVIDER='fake' is for tests and cannot run in production",
+      });
+    }
+    if (v.OTP_PROVIDER === 'slide') {
+      for (const key of ['SLIDE_API_KEY', 'SLIDE_WIDGET_ID', 'SLIDE_CLIENT_TOKEN'] as const) {
+        if (!v[key]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when OTP_PROVIDER=slide`,
+          });
+        }
+      }
+    }
   });
 
 const parsed = EnvSchema.safeParse(process.env);
