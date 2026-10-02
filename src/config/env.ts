@@ -55,14 +55,17 @@ const EnvSchema = z
     // once those builds are retired.
     OTP_ACCEPT_LEGACY_MSG91: z.enum(['true', 'false']).default('true'),
     // Slide (Synquic) OTP. The API key is a SECRET (server-side verify-token only). The
-    // widget id and client token are the PUBLIC pair the clients use to send/verify OTPs;
-    // they are served to clients via GET /auth/otp-config.
+    // client token and the widget ids are PUBLIC: the clients use them to send/verify OTPs and
+    // get them from GET /auth/otp-config. There are two widgets (different settings and
+    // analytics): one for the mobile apps, one for the web portal + sales CRM; both are
+    // accepted at verify time.
     SLIDE_API_BASE_URL: z.string().url().default('https://slide.synquic.com/api'),
     SLIDE_API_KEY: optionalSecret(10),
-    SLIDE_WIDGET_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(8).optional()),
+    SLIDE_APP_WIDGET_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(8).optional()),
+    SLIDE_WEB_WIDGET_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(8).optional()),
     SLIDE_CLIENT_TOKEN: optionalSecret(8),
     // Used when Slide's widget-config cannot be read (see shared/otp/config.ts).
-    SLIDE_OTP_LENGTH: z.coerce.number().int().min(4).max(8).default(6),
+    SLIDE_OTP_LENGTH: z.coerce.number().int().min(4).max(8).default(4),
     SLIDE_RESEND_SECONDS: z.coerce.number().int().min(10).max(300).default(30),
 
     // Firebase service-account JSON (as a string) for sending driver push via FCM. Optional —
@@ -224,7 +227,12 @@ const EnvSchema = z
       });
     }
     if (v.OTP_PROVIDER === 'slide') {
-      for (const key of ['SLIDE_API_KEY', 'SLIDE_WIDGET_ID', 'SLIDE_CLIENT_TOKEN'] as const) {
+      for (const key of [
+        'SLIDE_API_KEY',
+        'SLIDE_APP_WIDGET_ID',
+        'SLIDE_WEB_WIDGET_ID',
+        'SLIDE_CLIENT_TOKEN',
+      ] as const) {
         if (!v[key]) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,

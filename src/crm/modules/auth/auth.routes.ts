@@ -16,7 +16,7 @@ import { CrmRequestOtpBody, CrmVerifyOtpBody } from './auth.validators.js';
  */
 const crmAuthRoutes: FastifyPluginAsyncZod = async (app) => {
   /** Tells the client which sign-in paths are live, so the login page can adapt. */
-  app.get('/config', async () => ok({ devOtp: ctrl.devOtpEnabled(), otp: await getOtpConfig() }));
+  app.get('/config', async () => ok({ devOtp: ctrl.devOtpEnabled(), otp: await getOtpConfig('web') }));
 
   // Provider-neutral path, plus the legacy one shipped builds still call.
   for (const path of ['/otp/login', '/otp/msg91']) {

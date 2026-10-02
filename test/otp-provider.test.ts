@@ -47,7 +47,8 @@ const useSlide = (extra: Mutable = {}) =>
     OTP_PROVIDER: 'slide',
     SLIDE_API_BASE_URL: 'https://slide.test/api',
     SLIDE_API_KEY: 'sk_live_test_key_123',
-    SLIDE_WIDGET_ID: 'wgt-12345678',
+    SLIDE_APP_WIDGET_ID: 'wgt-app-12345678',
+    SLIDE_WEB_WIDGET_ID: 'wgt-web-12345678',
     SLIDE_CLIENT_TOKEN: 'client-token-123',
     ...extra,
   });
@@ -172,14 +173,17 @@ describe('slide provider', () => {
     await expect(verify()).rejects.toMatchObject({ httpStatus: 401 });
   });
 
-  it('accepts the token when the reply names OUR widget', async () => {
-    useSlide();
-    routes.push([
-      SLIDE_VERIFY,
-      () => slideReply({ valid: true, identifier: '+919876543210', widgetId: 'wgt-12345678' }),
-    ]);
-    expect(await verify()).toBe('+919876543210');
-  });
+  it.each(['wgt-app-12345678', 'wgt-web-12345678'])(
+    'accepts the token when the reply names one of OUR widgets (%s)',
+    async (widgetId) => {
+      useSlide();
+      routes.push([
+        SLIDE_VERIFY,
+        () => slideReply({ valid: true, identifier: '+919876543210', widgetId }),
+      ]);
+      expect(await verify()).toBe('+919876543210');
+    },
+  );
 
   it('reports our own rejected API key as 503, not as a wrong code', async () => {
     useSlide();
@@ -276,23 +280,48 @@ describe('public otp config', () => {
   it('slide: serves the PUBLIC pair and Slide-reported length/resend, never the API key', async () => {
     useSlide({ OTP_ACCEPT_LEGACY_MSG91: 'true' });
     routes.push([
-      'https://slide.test/api/otp/public/widget-config/wgt-12345678?tokenAuth=client-token-123',
+      'https://slide.test/api/otp/public/widget-config/wgt-app-12345678?tokenAuth=client-token-123',
       () =>
-        slideReply({ widgetId: 'wgt-12345678', settings: { otpLength: 5, resendAfterSec: 45 } }),
+        slideReply({ otpLength: 4, resendAfterSec: 10, resendCount: 2, contactPoint: 'MOBILE' }),
     ]);
     const cfg = await getOtpConfig();
     expect(cfg).toMatchObject({
       provider: 'slide',
       accepts: ['slide', 'msg91'],
-      otpLength: 5,
-      resendSeconds: 45,
+      otpLength: 4,
+      resendSeconds: 10,
       slide: {
         baseUrl: 'https://slide.test/api',
-        widgetId: 'wgt-12345678',
+        widgetId: 'wgt-app-12345678',
         tokenAuth: 'client-token-123',
       },
     });
     expect(JSON.stringify(cfg)).not.toContain('sk_live');
+  });
+
+  it('slide: the web client gets the WEB widget (its own settings, cached separately)', async () => {
+    useSlide();
+    routes.push([
+      'https://slide.test/api/otp/public/widget-config/wgt-app-12345678',
+      () => slideReply({ otpLength: 4, resendAfterSec: 10 }),
+    ]);
+    routes.push([
+      'https://slide.test/api/otp/public/widget-config/wgt-web-12345678',
+      () => slideReply({ settings: { otpLength: 6, resendAfterSec: 20 } }),
+    ]);
+    const app = await getOtpConfig('app');
+    const web = await getOtpConfig('web');
+    expect(app).toMatchObject({
+      otpLength: 4,
+      resendSeconds: 10,
+      slide: { widgetId: 'wgt-app-12345678' },
+    });
+    expect(web).toMatchObject({
+      otpLength: 6,
+      resendSeconds: 20,
+      slide: { widgetId: 'wgt-web-12345678' },
+    });
+    expect(web.slide?.tokenAuth).toBe(app.slide?.tokenAuth); // one client token for both
   });
 
   it('slide: falls back to env defaults when widget-config is unreadable, and does not hammer it', async () => {

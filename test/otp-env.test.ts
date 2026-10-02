@@ -43,7 +43,8 @@ const boot = (extra: Record<string, string>) => {
 const SLIDE = {
   OTP_PROVIDER: 'slide',
   SLIDE_API_KEY: 'sk_live_abcdefghij',
-  SLIDE_WIDGET_ID: '95710d09-6fd3-4932-82c7-79b14dd11ca0',
+  SLIDE_APP_WIDGET_ID: '95710d09-6fd3-4932-82c7-79b14dd11ca0',
+  SLIDE_WEB_WIDGET_ID: '75863bae-37c2-48ba-af4d-a5e3b8db6558',
   SLIDE_CLIENT_TOKEN: 'tok_abcdefgh',
 };
 
@@ -60,7 +61,7 @@ describe('OTP env validation', () => {
     expect(r.stdout).toContain('BOOT_OK slide');
   });
 
-  it.each(['SLIDE_API_KEY', 'SLIDE_WIDGET_ID', 'SLIDE_CLIENT_TOKEN'])(
+  it.each(['SLIDE_API_KEY', 'SLIDE_APP_WIDGET_ID', 'SLIDE_WEB_WIDGET_ID', 'SLIDE_CLIENT_TOKEN'])(
     'slide without %s fails and names it',
     (missing) => {
       const r = boot({ ...SLIDE, [missing]: '' });

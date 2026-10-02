@@ -12,6 +12,9 @@ import { acceptedProviders, type OtpProviderName } from './index.js';
  *   POST {baseUrl}/otp/public/retry  {requestId, channel?}                                 -> {requestId}
  *   POST {baseUrl}/otp/public/verify {requestId, otp}                                      -> {accessToken}
  */
+/** Which Slide widget a client uses: the mobile apps, or the web portal + sales CRM. */
+export type OtpClientKind = 'app' | 'web';
+
 export type OtpConfig = {
   provider: OtpProviderName;
   /** Providers whose tokens this server verifies right now (active + legacy MSG91). */
@@ -28,13 +31,20 @@ const CACHE_FAIL_MS = 30_000;
 const FETCH_TIMEOUT_MS = 4_000;
 
 type SlideSettings = { otpLength: number; resendSeconds: number };
-let cache: { at: number; ttl: number; value: SlideSettings } | null = null;
+const cache = new Map<string, { at: number; ttl: number; value: SlideSettings }>();
 
 /** Depth-limited search for a numeric setting whose key matches `re` (field names are undocumented). */
-export function findNumber(obj: unknown, re: RegExp, min: number, max: number, depth = 0): number | null {
+export function findNumber(
+  obj: unknown,
+  re: RegExp,
+  min: number,
+  max: number,
+  depth = 0,
+): number | null {
   if (!obj || typeof obj !== 'object' || depth > 3) return null;
   for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-    const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : NaN;
+    const n =
+      typeof v === 'number' ? v : typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : NaN;
     if (re.test(k) && Number.isInteger(n) && n >= min && n <= max) return n;
   }
   for (const v of Object.values(obj as Record<string, unknown>)) {
@@ -44,47 +54,57 @@ export function findNumber(obj: unknown, re: RegExp, min: number, max: number, d
   return null;
 }
 
-async function slideSettings(): Promise<SlideSettings> {
+const widgetIdFor = (client: OtpClientKind): string =>
+  (client === 'web' ? env.SLIDE_WEB_WIDGET_ID : env.SLIDE_APP_WIDGET_ID) ?? '';
+
+async function slideSettings(widgetId: string): Promise<SlideSettings> {
   const fallback = { otpLength: env.SLIDE_OTP_LENGTH, resendSeconds: env.SLIDE_RESEND_SECONDS };
-  if (cache && Date.now() - cache.at < cache.ttl) return cache.value;
+  const hit = cache.get(widgetId);
+  if (hit && Date.now() - hit.at < hit.ttl) return hit.value;
   try {
     const url =
       `${env.SLIDE_API_BASE_URL.replace(/\/+$/, '')}/otp/public/widget-config/` +
-      `${encodeURIComponent(env.SLIDE_WIDGET_ID ?? '')}?tokenAuth=${encodeURIComponent(env.SLIDE_CLIENT_TOKEN ?? '')}`;
+      `${encodeURIComponent(widgetId)}?tokenAuth=${encodeURIComponent(env.SLIDE_CLIENT_TOKEN ?? '')}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body: unknown = await res.json();
     const value = {
-      otpLength: findNumber(body, /(otp|code).*(length|digits)|^(length|digits)$/i, 4, 8) ?? fallback.otpLength,
+      otpLength:
+        findNumber(body, /(otp|code).*(length|digits)|^(length|digits)$/i, 4, 8) ??
+        fallback.otpLength,
       resendSeconds:
-        findNumber(body, /resend.*(sec|cooldown|after|delay)|cooldown/i, 10, 300) ?? fallback.resendSeconds,
+        findNumber(body, /resend.*(sec|cooldown|after|delay)|cooldown/i, 10, 300) ??
+        fallback.resendSeconds,
     };
-    cache = { at: Date.now(), ttl: CACHE_OK_MS, value };
+    cache.set(widgetId, { at: Date.now(), ttl: CACHE_OK_MS, value });
     return value;
   } catch (err) {
-    console.error(`[otp-config] Slide widget-config unavailable, using env defaults: ${String(err)}`);
-    cache = { at: Date.now(), ttl: CACHE_FAIL_MS, value: fallback };
+    console.error(
+      `[otp-config] Slide widget-config unavailable, using env defaults: ${String(err)}`,
+    );
+    cache.set(widgetId, { at: Date.now(), ttl: CACHE_FAIL_MS, value: fallback });
     return fallback;
   }
 }
 
 /** Test hook: forget the cached Slide settings. */
 export function resetOtpConfigCache(): void {
-  cache = null;
+  cache.clear();
 }
 
-export async function getOtpConfig(): Promise<OtpConfig> {
+export async function getOtpConfig(client: OtpClientKind = 'app'): Promise<OtpConfig> {
   const base = { provider: env.OTP_PROVIDER, accepts: acceptedProviders() };
   if (env.OTP_PROVIDER !== 'slide') {
     return { ...base, otpLength: MSG91_LENGTH, resendSeconds: MSG91_RESEND_SECONDS };
   }
-  const settings = await slideSettings();
+  const widgetId = widgetIdFor(client);
+  const settings = await slideSettings(widgetId);
   return {
     ...base,
     ...settings,
     slide: {
       baseUrl: env.SLIDE_API_BASE_URL.replace(/\/+$/, ''),
-      widgetId: env.SLIDE_WIDGET_ID ?? '',
+      widgetId,
       tokenAuth: env.SLIDE_CLIENT_TOKEN ?? '',
     },
   };
