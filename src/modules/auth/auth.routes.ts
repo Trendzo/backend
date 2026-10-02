@@ -3,6 +3,7 @@ import { ok } from '@/shared/http/envelope.js';
 import * as ctrl from './auth.controller.js';
 import { OtpLoginBody } from '@/shared/otp/body.js';
 import { getOtpConfig } from '@/shared/otp/config.js';
+import { OtpConfigQuery } from '@/shared/otp/body.js';
 import { LoginBody, SignupBody } from './auth.validators.js';
 
 const authRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -12,9 +13,12 @@ const authRoutes: FastifyPluginAsyncZod = async (app) => {
 
   /**
    * Which OTP provider clients must use and how (length, resend, Slide's public widget
-   * id + client token). Public by design; never carries a server secret.
+   * id + client token). `?client=web` for the web portal (its own Slide widget); the mobile
+   * apps omit it. Public by design; never carries a server secret.
    */
-  app.get('/otp-config', async () => ok(await getOtpConfig()));
+  app.get('/otp-config', { schema: { querystring: OtpConfigQuery } }, async (req) =>
+    ok(await getOtpConfig(req.query.client)),
+  );
 
   // Phone-OTP logins. `/otp/login` is the provider-neutral path; `/otp/msg91` is kept
   // because shipped app builds only know that one (they send untagged MSG91 tokens).

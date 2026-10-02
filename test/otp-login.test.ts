@@ -39,6 +39,19 @@ describe('GET /auth/otp-config', () => {
     expect(typeof json(res).data.otpLength).toBe('number');
     expect(res.body).not.toMatch(/sk_|api_?key/i);
   });
+
+  it('accepts ?client=web and rejects an unknown client', async () => {
+    const web = (await app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/otp-config?client=web',
+    })) as Res;
+    expect(web.statusCode).toBe(200);
+    const bad = (await app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/otp-config?client=tv',
+    })) as Res;
+    expect(bad.statusCode).toBe(422);
+  });
 });
 
 describe('consumer', () => {

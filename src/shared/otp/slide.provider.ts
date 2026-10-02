@@ -12,7 +12,8 @@ import type { OtpProvider } from './types.js';
  *
  * The reply is `{verified, identifier, verifiedAt}` in Slide's docs and
  * `{valid, identifier, widgetId, verifiedAt}` in the dashboard's integration snippet, so
- * both spellings are accepted; when `widgetId` is present it must be OUR widget.
+ * both spellings are accepted; when `widgetId` is present it must be one of OUR widgets
+ * (app or web).
  */
 const TIMEOUT_MS = 8_000;
 
@@ -74,7 +75,8 @@ export const slideProvider: OtpProvider = {
       console.error(`[slide] verify-token rejected (HTTP ${status}): ${JSON.stringify(data)}`);
       throw invalid();
     }
-    if (data.widgetId && env.SLIDE_WIDGET_ID && data.widgetId !== env.SLIDE_WIDGET_ID) {
+    const ours = [env.SLIDE_APP_WIDGET_ID, env.SLIDE_WEB_WIDGET_ID].filter(Boolean);
+    if (data.widgetId && ours.length && !ours.includes(data.widgetId)) {
       // A valid token, but minted by another widget/tenant: not ours to trust.
       console.error('[slide] verify-token accepted a token from a different widget');
       throw invalid();
