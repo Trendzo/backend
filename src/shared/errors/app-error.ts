@@ -66,6 +66,10 @@ export const ErrorCode = {
   ReferralSelf: 'referral_self',
   ReferralAlreadyUsed: 'referral_already_used',
 
+  // POS counter returns
+  /** A POS return/exchange line would take cumulative returned qty above what was sold. */
+  PosReturnQtyExceeded: 'pos_return_qty_exceeded',
+
   // Idempotency
   AlreadyClaimed: 'already_claimed',
   AlreadySpun: 'already_spun',

@@ -462,6 +462,85 @@ export async function holdPosSale(
   return { saleId, alreadyExisted: false };
 }
 
+// ───────────────────────── returned-qty accounting ─────────────────────────
+
+type SaleItemRow = typeof posSaleItems.$inferSelect;
+
+/**
+ * Qty already handed back per ORIGINAL sale line, summed over every completed (non-voided)
+ * return / exchange document that references it (`pos_return_lines.original_sale_item_id`).
+ */
+export async function loadReturnedQtyByItem(
+  database: Pick<typeof Db, 'select'>,
+  itemIds: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (itemIds.length === 0) return out;
+  const rows = await database
+    .select({
+      itemId: posReturnLines.originalSaleItemId,
+      qty: sql<number>`coalesce(sum(${posReturnLines.qty}), 0)::int`,
+    })
+    .from(posReturnLines)
+    .innerJoin(posSales, eq(posSales.id, posReturnLines.returnSaleId))
+    .where(and(inArray(posReturnLines.originalSaleItemId, itemIds), eq(posSales.status, 'completed')))
+    .groupBy(posReturnLines.originalSaleItemId);
+  for (const r of rows) out.set(r.itemId, Number(r.qty));
+  return out;
+}
+
+/**
+ * Serialise returns/exchanges/voids on one sale: take its row lock so two concurrent
+ * returns cannot both read "nothing returned yet" and each refund the same unit.
+ */
+async function lockSale(tx: Tx, saleId: string): Promise<void> {
+  await tx.select({ id: posSales.id }).from(posSales).where(eq(posSales.id, saleId)).for('update');
+}
+
+/**
+ * Validate requested return lines against what was SOLD and what has ALREADY come back.
+ * Call inside the transaction, after {@link lockSale}.
+ *  - line not on the sale -> 404; non-positive qty, or a single request asking for more than
+ *    was sold (duplicate lines are summed) -> 422;
+ *  - requested + already returned > sold -> 409 `pos_return_qty_exceeded` (the double-refund guard).
+ */
+function assertReturnWithinSold(
+  lines: { originalSaleItemId: string; qty: number }[],
+  itemById: Map<string, SaleItemRow>,
+  returnedByItem: Map<string, number>,
+): void {
+  const requested = new Map<string, number>();
+  for (const rl of lines) {
+    const orig = itemById.get(rl.originalSaleItemId);
+    if (!orig) throw new AppError(404, ErrorCode.NotFound, 'Return line not on original sale');
+    if (rl.qty <= 0 || rl.qty > orig.qty) {
+      throw AppError.validation('Return qty exceeds purchased qty');
+    }
+    requested.set(orig.id, (requested.get(orig.id) ?? 0) + rl.qty);
+  }
+  for (const [itemId, want] of requested) {
+    const orig = itemById.get(itemId)!;
+    if (want > orig.qty) throw AppError.validation('Return qty exceeds purchased qty');
+    const already = returnedByItem.get(itemId) ?? 0;
+    if (already + want > orig.qty) {
+      const returnable = Math.max(0, orig.qty - already);
+      throw new AppError(
+        409,
+        ErrorCode.PosReturnQtyExceeded,
+        `Cannot return ${want} x ${orig.listingNameSnap} (${orig.attributesLabelSnap}): ` +
+          `${already} of ${orig.qty} already returned, only ${returnable} left to return`,
+        {
+          originalSaleItemId: itemId,
+          soldQty: orig.qty,
+          returnedQty: already,
+          returnableQty: returnable,
+          requestedQty: want,
+        },
+      );
+    }
+  }
+}
+
 // ───────────────────────── void ─────────────────────────
 
 export async function voidPosSale(
@@ -469,6 +548,7 @@ export async function voidPosSale(
   input: { storeId: string; saleId: string; actorId: string; reason: string },
 ): Promise<{ saleId: string; creditNoteId: string | null }> {
   return await database.transaction(async (tx) => {
+    await lockSale(tx, input.saleId);
     const sale = await tx.query.posSales.findFirst({
       where: eq(posSales.id, input.saleId),
       with: { items: true },
@@ -478,6 +558,24 @@ export async function voidPosSale(
     }
     if (sale.status !== 'completed') {
       throw new AppError(409, ErrorCode.InvalidState, `Cannot void a ${sale.status} sale`);
+    }
+    // A return / exchange document is already a reversal: voiding it would flip its status
+    // without undoing the refund or the restock, re-opening the returnable qty for a second refund.
+    if (sale.originalSaleId) {
+      throw new AppError(409, ErrorCode.InvalidState, 'A return or exchange cannot be voided');
+    }
+    // Void is a FULL reversal (restocks every line, credit-notes the whole invoice); doing that
+    // after part of the sale was already returned / exchanged would reverse those units twice.
+    const alreadyReturned = await loadReturnedQtyByItem(
+      tx,
+      sale.items.map((i) => i.id),
+    );
+    if ([...alreadyReturned.values()].some((q) => q > 0)) {
+      throw new AppError(
+        409,
+        ErrorCode.InvalidState,
+        'This sale already has returns or exchanges and can no longer be voided',
+      );
     }
 
     // Restore stock.
@@ -536,14 +634,33 @@ export async function createPosReturn(
   database: typeof Db,
   input: PosReturnInput,
 ): Promise<{ returnSaleId: string; refundPaise: number; creditNoteId: string | null }> {
+  const replayOf = (existing: typeof posSales.$inferSelect) => {
+    // An idempotency key is bound to ONE return of ONE sale in ONE store.
+    if (existing.storeId !== input.storeId || existing.originalSaleId !== input.originalSaleId) {
+      throw new AppError(
+        409,
+        ErrorCode.IdempotencyConflict,
+        'This idempotency key was already used for a different request',
+      );
+    }
+    // A return row stores its refund as a negative payable.
+    return { returnSaleId: existing.id, refundPaise: -existing.payablePaise, creditNoteId: null };
+  };
+  // Replays answer with the original result BEFORE any over-return check runs.
   const existing = await database.query.posSales.findFirst({
     where: eq(posSales.idempotencyKey, input.idempotencyKey),
   });
-  if (existing) {
-    return { returnSaleId: existing.id, refundPaise: existing.payablePaise, creditNoteId: null };
-  }
+  if (existing) return replayOf(existing);
 
   return await database.transaction(async (tx) => {
+    // Row lock on the original sale: concurrent returns of the same sale run one at a time.
+    await lockSale(tx, input.originalSaleId);
+    // ...so a same-key request that lost the race sees the winner here and replays it.
+    const raced = await tx.query.posSales.findFirst({
+      where: eq(posSales.idempotencyKey, input.idempotencyKey),
+    });
+    if (raced) return replayOf(raced);
+
     const original = await tx.query.posSales.findFirst({
       where: eq(posSales.id, input.originalSaleId),
       with: { items: true },
@@ -556,6 +673,14 @@ export async function createPosReturn(
     }
 
     const itemById = new Map(original.items.map((i) => [i.id, i]));
+    assertReturnWithinSold(
+      input.lines,
+      itemById,
+      await loadReturnedQtyByItem(
+        tx,
+        original.items.map((i) => i.id),
+      ),
+    );
     let refundPaise = 0;
     let taxableReversed = 0;
     let taxReversed = 0;
@@ -671,6 +796,54 @@ export async function createPosReturn(
   });
 }
 
+type PosExchangeResult = {
+  exchangeSaleId: string;
+  newInvoiceId: string;
+  newInvoiceNumber: string;
+  returnRefundPaise: number;
+  newPayablePaise: number;
+  netPaise: number;
+  creditNoteId: string | null;
+};
+
+/**
+ * Rebuild an exchange's result from its stored rows for an idempotent replay. A key is bound to
+ * ONE exchange of ONE sale in ONE store; reuse for anything else is a conflict, not a replay.
+ */
+async function exchangeReplay(
+  q: Pick<typeof Db, 'select' | 'query'>,
+  existing: typeof posSales.$inferSelect,
+  input: { storeId: string; originalSaleId: string },
+): Promise<PosExchangeResult> {
+  if (existing.storeId !== input.storeId || existing.originalSaleId !== input.originalSaleId) {
+    throw new AppError(
+      409,
+      ErrorCode.IdempotencyConflict,
+      'This idempotency key was already used for a different request',
+    );
+  }
+  const returned = await q
+    .select({ refundPaise: posReturnLines.refundPaise })
+    .from(posReturnLines)
+    .where(eq(posReturnLines.returnSaleId, existing.id));
+  const returnRefundPaise = returned.reduce((s, l) => s + l.refundPaise, 0);
+  const invoice = existing.invoiceId
+    ? await q.query.invoices.findFirst({
+        where: eq(invoices.id, existing.invoiceId),
+        columns: { invoiceNumber: true },
+      })
+    : undefined;
+  return {
+    exchangeSaleId: existing.id,
+    newInvoiceId: existing.invoiceId ?? '',
+    newInvoiceNumber: invoice?.invoiceNumber ?? '',
+    returnRefundPaise,
+    newPayablePaise: existing.payablePaise + returnRefundPaise,
+    netPaise: existing.payablePaise,
+    creditNoteId: null,
+  };
+}
+
 export type PosExchangeInput = {
   storeId: string;
   cashierAccountId: string;
@@ -708,20 +881,11 @@ export async function createPosExchange(
   netPaise: number;
   creditNoteId: string | null;
 }> {
+  // Replays answer with the original result BEFORE any over-return check runs.
   const existing = await database.query.posSales.findFirst({
     where: eq(posSales.idempotencyKey, input.idempotencyKey),
   });
-  if (existing) {
-    return {
-      exchangeSaleId: existing.id,
-      newInvoiceId: existing.invoiceId ?? '',
-      newInvoiceNumber: '',
-      returnRefundPaise: 0,
-      newPayablePaise: 0,
-      netPaise: existing.payablePaise,
-      creditNoteId: null,
-    };
-  }
+  if (existing) return await exchangeReplay(database, existing, input);
 
   const store = await loadActiveStore(database, input.storeId);
   const newLines = mergeLines(input.newLines);
@@ -751,7 +915,31 @@ export async function createPosExchange(
   const exchangeSaleId = newId(IdPrefix.PosSale);
 
   const result = await database.transaction(async (tx) => {
+    // Row lock on the original sale: concurrent returns/exchanges of it run one at a time.
+    await lockSale(tx, input.originalSaleId);
+    // ...so a same-key request that lost the race replays the winner instead of failing.
+    const raced = await tx.query.posSales.findFirst({
+      where: eq(posSales.idempotencyKey, input.idempotencyKey),
+    });
+    if (raced) return { replay: await exchangeReplay(tx, raced, input) };
+    // The pre-transaction read had no lock; re-check the sale is still completed.
+    const locked = await tx.query.posSales.findFirst({
+      where: eq(posSales.id, input.originalSaleId),
+      columns: { status: true },
+    });
+    if (locked?.status !== 'completed') {
+      throw new AppError(409, ErrorCode.InvalidState, 'Can only exchange against a completed sale');
+    }
+
     const itemById = new Map(original.items.map((i) => [i.id, i]));
+    assertReturnWithinSold(
+      input.returnLines,
+      itemById,
+      await loadReturnedQtyByItem(
+        tx,
+        original.items.map((i) => i.id),
+      ),
+    );
 
     // ── Return side: restock + accumulate reversed value ──
     let refundValue = 0;
@@ -947,6 +1135,8 @@ export async function createPosExchange(
 
     return { invoiceId, invoiceNumber, invoiceData, refundValue, newPayable: N, net, creditNoteId };
   });
+
+  if ('replay' in result) return result.replay;
 
   schedulePosInvoicePdf({
     invoiceId: result.invoiceId,

@@ -20,6 +20,7 @@ import {
   createPosExchange,
   createPosReturn,
   holdPosSale,
+  loadReturnedQtyByItem,
   quotePosSale,
   voidPosSale,
 } from '@/shared/pos/create-pos-sale.js';
@@ -346,7 +347,19 @@ export async function getSale(input: { auth: Auth; id: string }) {
     },
   });
   if (!sale) throw new AppError(404, ErrorCode.NotFound, 'Sale not found');
-  return ok(sale);
+  // Per original line: how much has already come back through completed returns / exchanges, so
+  // the app can cap the return qty picker (the server enforces it regardless, 409).
+  const returned = await loadReturnedQtyByItem(
+    db,
+    sale.items.map((i) => i.id),
+  );
+  return ok({
+    ...sale,
+    items: sale.items.map((i) => {
+      const returnedQty = returned.get(i.id) ?? 0;
+      return { ...i, returnedQty, returnableQty: Math.max(0, i.qty - returnedQty) };
+    }),
+  });
 }
 
 export async function listHeld(input: { auth: Auth }) {
