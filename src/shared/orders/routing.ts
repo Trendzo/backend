@@ -13,7 +13,7 @@
  * Cancellation through this path writes a transition with `reason='routing_exhausted'`.
  */
 
-import { and, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { db as Db } from '@/db/client.js';
 import { orders, platformConfig } from '@/db/schema/index.js';
 
@@ -27,8 +27,24 @@ async function readConfigNumber(key: string, fallback: number): Promise<number> 
 }
 
 /**
+ * Best-effort "new order" alert to the order's store (inbox + push). Idempotent per
+ * (order, store) inside notifyStoreOfNewOrder, and NEVER allowed to fail routing: the order
+ * is already dispatched by the time this runs.
+ */
+async function alertStoreOfNewOrder(orderId: string): Promise<void> {
+  try {
+    const { notifyStoreOfNewOrder } = await import('./notify-new-order.js');
+    await notifyStoreOfNewOrder(orderId);
+  } catch (e) {
+    console.error('[routing] new-order notification failed for', orderId, (e as Error).message);
+  }
+}
+
+/**
  * Idempotent. Sets `acceptanceDeadlineAt` and appends one `pending` row to
- * `routingHistory` if this is the first dispatch. Re-calls are no-ops.
+ * `routingHistory` if this is the first dispatch. Re-calls are no-ops. The first dispatch is
+ * claimed atomically (UPDATE ... WHERE acceptance_deadline_at IS NULL), and only the winner
+ * alerts the store, so concurrent / replayed calls cannot double-notify.
  */
 export async function dispatchOrder(orderId: string): Promise<void> {
   const order = await Db.query.orders.findFirst({ where: eq(orders.id, orderId) });
@@ -50,9 +66,12 @@ export async function dispatchOrder(orderId: string): Promise<void> {
     decidedAt: new Date().toISOString(),
     decision: 'pending',
   });
-  await Db.update(orders)
+  const claimed = await Db.update(orders)
     .set({ acceptanceDeadlineAt: deadline, routingHistory: history })
-    .where(eq(orders.id, orderId));
+    .where(and(eq(orders.id, orderId), isNull(orders.acceptanceDeadlineAt)))
+    .returning({ id: orders.id });
+  if (claimed.length === 0) return; // a concurrent dispatch won the claim
+  await alertStoreOfNewOrder(orderId);
 }
 
 /**
@@ -111,7 +130,10 @@ export async function rerouteOrder(
     return { orderId, attempts: nextAttempts, cancelled: true };
   }
 
-  // Still have budget — extend the acceptance window and stay pending.
+  // Still have budget — extend the acceptance window and stay pending. If the candidate is a
+  // store this order was NOT offered to before (never true while routing is single-candidate,
+  // true once a re-route picks another store), it gets its own "new order" alert below.
+  const alreadyOffered = history.some((h) => h.candidateStoreId === order.storeId);
   const acceptanceWindowSeconds = await readConfigNumber(
     'acceptance_window_seconds',
     DEFAULT_ACCEPTANCE_WINDOW_SECONDS,
@@ -129,6 +151,7 @@ export async function rerouteOrder(
       routingHistory: history,
     })
     .where(eq(orders.id, orderId));
+  if (!alreadyOffered) await alertStoreOfNewOrder(orderId);
   return { orderId, attempts: nextAttempts, cancelled: false };
 }
 

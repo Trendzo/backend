@@ -12,6 +12,24 @@ export const ListQuery = z.object({
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
 
+/**
+ * Stock adjustment. Exactly one of `delta` (signed change) or `newStock` (absolute count).
+ * `reason` is one of the named reasons below (mapped onto the adjustment-reason enum) or a
+ * free-text explanation (<= 200 chars) which is recorded as the adjustment note.
+ */
+export const ADJUST_REASONS = ['manual_edit', 'damaged', 'returned', 'recount', 'other'] as const;
+const INT4_MAX = 2_147_483_647;
+export const AdjustBody = z
+  .object({
+    delta: z.number().int().min(-INT4_MAX).max(INT4_MAX).optional(),
+    newStock: StockSchema.optional(),
+    reason: z.string().trim().min(1).max(200),
+  })
+  .refine((v) => (v.delta === undefined) !== (v.newStock === undefined), {
+    message: 'Provide exactly one of delta or newStock',
+    path: ['delta'],
+  });
+
 export const SettingsBody = z.object({
   lowStockThreshold: z.number().int().min(0).max(100_000),
 });

@@ -1,15 +1,17 @@
 /**
  * Native push device-token registry. One active row per FCM/APNs token; re-registering an
  * existing token reactivates it (mirrors registerPushSubscription for web-push). Used to
- * resolve a recipient (consumer / delivery_agent) → their live tokens for targeted push.
+ * resolve a recipient (consumer / delivery_agent / retailer) → their live tokens for targeted
+ * push. A retailer recipient is the retailer ACCOUNT id (owner, manager and each staff member
+ * sign in as separate accounts and each has their own phone).
  */
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db as defaultDb } from '@/db/client.js';
 import type { db as Db } from '@/db/client.js';
 import { deviceTokens } from '@/db/schema/index.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 
-type RecipientKind = 'consumer' | 'delivery_agent';
+export type RecipientKind = 'consumer' | 'delivery_agent' | 'retailer';
 type Platform = 'ios' | 'android';
 
 export async function registerDeviceToken(
@@ -97,4 +99,22 @@ export async function listActiveTokens(
     columns: { token: true },
   });
   return rows.map((r) => r.token);
+}
+
+/** Live tokens for several recipients of one kind at once (de-duplicated). */
+export async function listActiveTokensForRecipients(
+  recipientKind: RecipientKind,
+  recipientIds: string[],
+  database: typeof Db = defaultDb,
+): Promise<string[]> {
+  if (recipientIds.length === 0) return [];
+  const rows = await database.query.deviceTokens.findMany({
+    where: and(
+      eq(deviceTokens.recipientKind, recipientKind),
+      inArray(deviceTokens.recipientId, recipientIds),
+      isNull(deviceTokens.revokedAt),
+    ),
+    columns: { token: true },
+  });
+  return [...new Set(rows.map((r) => r.token))];
 }

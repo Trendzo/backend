@@ -1,7 +1,7 @@
 /**
  * Retailer-side order management. Scoped to the authenticated retailer's storeId.
  */
-import { and, asc, eq, desc, inArray, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, desc, gte, ilike, inArray, lte, or, sql, type SQL } from 'drizzle-orm';
 import type { z } from 'zod';
 import { db } from '@/db/client.js';
 import {
@@ -87,6 +87,30 @@ async function loadOwnedOrder(orderId: string, storeId: string) {
 
 const ACTIVE_STATUSES: OrderStatus[] = ['pending', 'routing', 'accepted', 'packed', 'picked_up'];
 
+/** Escape LIKE wildcards so user input is matched literally. */
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/**
+ * Free-text order search: id PREFIX (with or without the `ord_` tag), consumer name
+ * (contains), consumer phone (contains, digits only so `+91 98765` matches `+9198765...`).
+ */
+function orderSearchCondition(raw: string): SQL | undefined {
+  const term = raw.trim();
+  if (!term) return undefined;
+  const clauses: SQL[] = [
+    ilike(orders.id, `${escapeLike(term)}%`),
+    ilike(orders.id, `ord\\_${escapeLike(term)}%`),
+    ilike(orders.consumerNameSnap, `%${escapeLike(term)}%`),
+  ];
+  const digits = term.replace(/[\s\-()+]/g, '');
+  if (/^\d{3,}$/.test(digits)) {
+    clauses.push(ilike(orders.consumerPhoneSnap, `%${digits}%`));
+  }
+  return or(...clauses);
+}
+
 export async function listOrders(input: { auth: Auth; query: z.infer<typeof ListQuery> }) {
   const storeId = await getOwnStoreId(input.auth);
   const conds: SQL[] = [eq(orders.storeId, storeId)];
@@ -105,13 +129,24 @@ export async function listOrders(input: { auth: Auth; query: z.infer<typeof List
       requestedStatuses.push(...statuses);
     }
   }
+  const { from, to, q, deliveryMethod } = input.query;
+  if (from && to && from.getTime() > to.getTime()) {
+    throw new AppError(422, ErrorCode.ValidationError, "'from' must not be after 'to'");
+  }
+  if (from) conds.push(gte(orders.placedAt, from));
+  if (to) conds.push(lte(orders.placedAt, to));
+  if (deliveryMethod) conds.push(eq(orders.deliveryMethod, deliveryMethod));
+  const search = q ? orderSearchCondition(q) : undefined;
+  if (search) conds.push(search);
   const where = conds.length === 1 ? conds[0] : and(...conds);
   const oldestFirst =
     requestedStatuses.length === 0 || requestedStatuses.some((s) => ACTIVE_STATUSES.includes(s));
   const rows = await db.query.orders.findMany({
     ...(where && { where }),
-    orderBy: oldestFirst ? asc(orders.placedAt) : desc(orders.placedAt),
+    // `id` breaks placedAt ties so offset paging never repeats or skips a row.
+    orderBy: oldestFirst ? [asc(orders.placedAt), asc(orders.id)] : [desc(orders.placedAt), desc(orders.id)],
     limit: input.query.limit,
+    ...(input.query.offset > 0 && { offset: input.query.offset }),
     with: { items: { columns: { id: true, listingNameSnap: true, qty: true, listingId: true } } },
   });
 

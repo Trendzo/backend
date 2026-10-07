@@ -368,6 +368,34 @@ export async function listHeld(input: { auth: Auth }) {
   );
 }
 
+/**
+ * DELETE /retailer/pos/sales/:id — discard a PARKED bill. Only `held` sales qualify: a held
+ * bill has moved no stock, taken no payment and consumed no invoice number, so there is
+ * nothing to reverse — the row (and its lines) is simply removed. Completed / voided sales
+ * are immutable here (use void / return / exchange), hence 409.
+ */
+export async function discardHeld(input: { auth: Auth; id: string }) {
+  const storeId = await getStoreId(input.auth.sub);
+  return await db.transaction(async (tx) => {
+    const [sale] = await tx
+      .select({ id: posSales.id, status: posSales.status })
+      .from(posSales)
+      .where(and(eq(posSales.id, input.id), eq(posSales.storeId, storeId)))
+      .for('update');
+    if (!sale) throw new AppError(404, ErrorCode.NotFound, 'Held bill not found');
+    if (sale.status !== 'held') {
+      throw new AppError(
+        409,
+        ErrorCode.InvalidState,
+        `Only a held bill can be discarded (this sale is ${sale.status})`,
+      );
+    }
+    await tx.delete(posSaleItems).where(eq(posSaleItems.saleId, sale.id));
+    await tx.delete(posSales).where(eq(posSales.id, sale.id));
+    return ok({ id: sale.id, discarded: true });
+  });
+}
+
 export async function listCustomers(input: { auth: Auth; query: z.infer<typeof CustomersQuery> }) {
   const storeId = await getStoreId(input.auth.sub);
   const rows = await db.query.posCustomers.findMany({

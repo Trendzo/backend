@@ -3,6 +3,7 @@ import { getAuth, requireAuth } from '@/shared/auth/middleware.js';
 import { requirePermission } from '@/shared/permissions.js';
 import * as ctrl from './inventory.controller.js';
 import {
+  AdjustBody,
   AdjustmentsQuery,
   BestSellersQuery,
   ExportQuery,
@@ -32,6 +33,18 @@ const inventoryRoutes: FastifyPluginAsyncZod = async (app) => {
       schema: { body: SettingsBody },
     },
     async (req) => ctrl.patchSettings({ auth: getAuth(req), body: req.body }),
+  );
+
+  // Floor-staff stock correction. `inventory.adjust` only: staff hold it, `listings.edit` is
+  // deliberately NOT required (PATCH /variants/:id needs it).
+  app.post(
+    '/:variantId/adjust',
+    {
+      preHandler: requirePermission('inventory.adjust'),
+      schema: { params: VariantIdParam, body: AdjustBody },
+    },
+    async (req) =>
+      ctrl.adjustStock({ auth: getAuth(req), variantId: req.params.variantId, body: req.body }),
   );
 
   app.get(

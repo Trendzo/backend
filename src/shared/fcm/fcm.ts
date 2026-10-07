@@ -67,6 +67,8 @@ export type PushMessage = {
   title?: string;
   body?: string;
   data?: Record<string, string>;
+  /** Android notification channel the OS posts the notification on (e.g. 'orders'). */
+  androidChannelId?: string;
 };
 
 /**
@@ -90,7 +92,10 @@ export async function sendToTokens(
       tokens,
       ...(msg.title || msg.body ? { notification } : {}),
       ...(msg.data ? { data: msg.data } : {}),
-      android: { priority: 'high' },
+      android: {
+        priority: 'high',
+        ...(msg.androidChannelId ? { notification: { channelId: msg.androidChannelId } } : {}),
+      },
       apns: { headers: { 'apns-priority': '10' }, payload: { aps: { sound: 'default' } } },
     };
     const res = await getMessaging().sendEachForMulticast(message);

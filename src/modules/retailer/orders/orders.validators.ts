@@ -20,10 +20,48 @@ export const OrderStatusEnum = z.enum([
 
 export const IdParam = z.object({ id: z.string() });
 
+/** Query strings arrive as '' for a cleared filter box — treat that as "not provided". */
+const blankToUndefined = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
+
+/**
+ * `from`/`to` bound `placedAt`. Accepts a full ISO-8601 timestamp (`2026-10-01T00:00:00+05:30`)
+ * or a bare `YYYY-MM-DD` date: a bare `from` is the START of that UTC day and a bare `to` is
+ * the END of it (inclusive), so `from=2026-10-01&to=2026-10-01` is exactly one day.
+ */
+const PlacedAtBound = (edge: 'start' | 'end') =>
+  z.preprocess(
+    blankToUndefined,
+    z
+      .string()
+      .trim()
+      .transform((raw, ctx) => {
+        const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+        const d = new Date(dateOnly ? `${raw}T${edge === 'start' ? '00:00:00.000' : '23:59:59.999'}Z` : raw);
+        if (Number.isNaN(d.getTime())) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Expected an ISO-8601 date or timestamp' });
+          return z.NEVER;
+        }
+        return d;
+      })
+      .optional(),
+  );
+
 export const ListQuery = z.object({
   status: OrderStatusEnum.optional(),
   statusIn: z.string().optional(),
   limit: z.coerce.number().int().positive().max(200).default(50),
+  /** Skip this many rows (same ordering as the unpaged list) — for "load more". */
+  offset: z.coerce.number().int().min(0).default(0),
+  /** placedAt >= from. */
+  from: PlacedAtBound('start'),
+  /** placedAt <= to. */
+  to: PlacedAtBound('end'),
+  /** Case-insensitive match on order id PREFIX, consumer name, or consumer phone. */
+  q: z.preprocess(blankToUndefined, z.string().trim().max(100).optional()),
+  deliveryMethod: z.preprocess(
+    blankToUndefined,
+    z.enum(['express', 'standard', 'pickup', 'try_and_buy']).optional(),
+  ),
 });
 
 export const PickupHandoverBody = z.object({

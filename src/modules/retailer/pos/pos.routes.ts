@@ -104,6 +104,12 @@ const retailerPosRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => ctrl.listHeld({ auth: getAuth(req) }),
   );
 
+  app.delete(
+    '/sales/:id',
+    { preHandler: requirePermission('pos.sell'), schema: { params: IdParam } },
+    async (req) => ctrl.discardHeld({ auth: getAuth(req), id: req.params.id }),
+  );
+
   app.get(
     '/customers',
     { preHandler: requirePermission('pos.sell'), schema: { querystring: CustomersQuery } },

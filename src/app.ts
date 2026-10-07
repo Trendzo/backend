@@ -428,6 +428,7 @@ export function buildApp() {
       // Native OS push device tokens (FCM/APNs) for targeted mobile push
       await api.register(deviceTokenRoutes('driver', 'delivery_agent'), { prefix: '/driver/push' });
       await api.register(deviceTokenRoutes('consumer', 'consumer'), { prefix: '/consumer/push' });
+      await api.register(deviceTokenRoutes('retailer', 'retailer'), { prefix: '/retailer/push' });
       // §22 Banners
       await api.register(adminBannersRoutes, { prefix: '/admin/banners' });
       await api.register(retailerBannersRoutes, { prefix: '/retailer/banners' });

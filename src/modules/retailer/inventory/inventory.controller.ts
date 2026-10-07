@@ -33,7 +33,9 @@ import {
   type RawImportRow,
   type VariantCreatePlan,
 } from './import-classifier.js';
+import { ADJUST_REASONS } from './inventory.validators.js';
 import type {
+  AdjustBody,
   AdjustmentsQuery,
   BestSellersQuery,
   ExportQuery,
@@ -162,6 +164,85 @@ export async function patchSettings(input: { auth: Auth; body: z.infer<typeof Se
     .where(eq(retailerStores.id, store.id))
     .returning({ lowStockThreshold: retailerStores.lowStockThreshold });
   return ok(updated);
+}
+
+/** Retailer-facing adjust reasons -> the inventory_adjustment_reason enum. */
+const ADJUST_REASON_MAP: Record<
+  (typeof ADJUST_REASONS)[number],
+  'manual_edit' | 'damage_writeoff' | 'return_restock' | 'audit_correction'
+> = {
+  manual_edit: 'manual_edit',
+  damaged: 'damage_writeoff',
+  returned: 'return_restock',
+  recount: 'audit_correction',
+  other: 'manual_edit',
+};
+
+/**
+ * POST /retailer/inventory/:variantId/adjust — floor-staff stock correction (gated by
+ * `inventory.adjust`, which staff hold; `listings.edit` is NOT required). Locks the variant
+ * row so it serialises with order reservations, refuses to take stock below what is
+ * currently reserved (409), and records an `inventory_adjustments` row like PATCH /variants.
+ */
+export async function adjustStock(input: {
+  auth: Auth;
+  variantId: string;
+  body: z.infer<typeof AdjustBody>;
+}) {
+  const retailer = await loadRetailer(input.auth.sub);
+  const store = await loadOwnedStore(retailer.storeId);
+  const { delta, newStock, reason } = input.body;
+
+  // A named reason maps onto the enum; anything else is a free-text explanation kept as the note.
+  const key = reason.toLowerCase();
+  const namedReason = (ADJUST_REASONS as readonly string[]).includes(key)
+    ? (key as (typeof ADJUST_REASONS)[number])
+    : null;
+  const dbReason = namedReason ? ADJUST_REASON_MAP[namedReason] : 'manual_edit';
+  const note = namedReason ? null : reason;
+
+  return await db.transaction(async (tx) => {
+    // Store-scoped lookup: another store's variant is indistinguishable from a missing one.
+    const [row] = await tx
+      .select()
+      .from(variants)
+      .where(and(eq(variants.id, input.variantId), eq(variants.storeId, store.id)))
+      .for('update');
+    if (!row) throw new AppError(404, ErrorCode.NotFound, 'Variant not found');
+
+    const target = newStock ?? row.stock + (delta ?? 0);
+    if (target > 2_147_483_647) {
+      throw new AppError(422, ErrorCode.ValidationError, 'Resulting stock is too large');
+    }
+    if (target < row.reserved) {
+      throw new AppError(
+        409,
+        ErrorCode.InvalidState,
+        `Cannot set stock below currently reserved (${row.reserved})`,
+      );
+    }
+    if (target === row.stock) return ok({ ...row, adjustment: null });
+
+    const [updated] = await tx
+      .update(variants)
+      .set({ stock: target })
+      .where(eq(variants.id, row.id))
+      .returning();
+    const [adjustment] = await tx
+      .insert(inventoryAdjustments)
+      .values({
+        id: newId(IdPrefix.InventoryAdjustment),
+        variantId: row.id,
+        delta: target - row.stock,
+        newStock: target,
+        reason: dbReason,
+        actorKind: 'retailer',
+        actorId: input.auth.sub,
+        note,
+      })
+      .returning();
+    return ok({ ...updated!, adjustment: adjustment! });
+  });
 }
 
 export async function listReservations(input: {

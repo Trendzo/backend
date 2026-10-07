@@ -15,7 +15,8 @@ export const deviceTokens = pgTable(
   'device_tokens',
   {
     id: text('id').primaryKey(),
-    // 'consumer' | 'delivery_agent' (from the actor_type enum).
+    // 'consumer' | 'delivery_agent' | 'retailer' (from the actor_type enum). For retailers the
+    // recipient_id is the retailer ACCOUNT id, not the store.
     recipientKind: actorType('recipient_kind').notNull(),
     recipientId: text('recipient_id').notNull(),
     token: text('token').notNull(),

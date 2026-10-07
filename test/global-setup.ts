@@ -21,6 +21,9 @@ export default async function setup() {
     password: 'test',
     port: PORT,
     persistent: false,
+    // Production is UTF8. Without this a Windows host initdb's the cluster as WIN1252, which
+    // cannot store the rupee sign (U+20B9) that notification / invoice text carries.
+    initdbFlags: ['--encoding=UTF8'],
   });
 
   await pg.initialise();

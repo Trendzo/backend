@@ -363,17 +363,56 @@ export async function getPayoutDeductions(input: { auth: Auth; id: string }) {
   });
 }
 
-/** §18 — Closed monthly billing statement PDF (retailer-scoped). */
+/**
+ * §18 — Billing statement PDF (retailer-scoped).
+ *
+ * `GET /billing-statements` lists PAYOUT ids (one row per payout cycle) while the rendered PDFs
+ * live on the monthly `billing_statements` rows, so this accepts either id:
+ *   1. a `billing_statements` id (original behaviour, unchanged);
+ *   2. a payout id (what the list returns): the payout's own `statementUrl` when it has one,
+ *      otherwise the monthly statement for the month the payout cycle ended in (the same
+ *      UTC-month grouping `runMonthlyClose` uses).
+ * 404 unknown id (or another store's); 409 while no PDF has been rendered yet.
+ */
 export async function getBillingStatementPdf(input: { auth: Auth; id: string }) {
   const storeId = await getStoreId(input.auth.sub);
   const row = await db.query.billingStatements.findFirst({
     where: and(eq(billingStatements.id, input.id), eq(billingStatements.storeId, storeId)),
   });
-  if (!row) throw new AppError(404, ErrorCode.NotFound, 'Statement not found');
-  if (!row.pdfUrl) {
+  if (row) {
+    if (!row.pdfUrl) {
+      throw new AppError(409, ErrorCode.InvalidState, 'Statement PDF not yet rendered');
+    }
+    return ok({ statementId: row.id, period: row.period, pdfUrl: row.pdfUrl });
+  }
+
+  const payout = await db.query.payouts.findFirst({
+    where: and(eq(payouts.id, input.id), eq(payouts.storeId, storeId)),
+  });
+  if (!payout) throw new AppError(404, ErrorCode.NotFound, 'Statement not found');
+
+  if (payout.statementUrl) {
+    return ok({
+      statementId: payout.id,
+      payoutId: payout.id,
+      period: formatPeriod(payout.cycleStart, payout.cycleEnd),
+      pdfUrl: payout.statementUrl,
+    });
+  }
+
+  const period = `${payout.cycleEnd.getUTCFullYear()}-${String(payout.cycleEnd.getUTCMonth() + 1).padStart(2, '0')}`;
+  const monthly = await db.query.billingStatements.findFirst({
+    where: and(eq(billingStatements.storeId, storeId), eq(billingStatements.period, period)),
+  });
+  if (!monthly?.pdfUrl) {
     throw new AppError(409, ErrorCode.InvalidState, 'Statement PDF not yet rendered');
   }
-  return ok({ statementId: row.id, period: row.period, pdfUrl: row.pdfUrl });
+  return ok({
+    statementId: monthly.id,
+    payoutId: payout.id,
+    period: monthly.period,
+    pdfUrl: monthly.pdfUrl,
+  });
 }
 
 void invoices;

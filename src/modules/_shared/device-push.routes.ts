@@ -1,7 +1,9 @@
 /**
  * Shared native-push device-token route factory. Each app kind mounts its own copy to
  * register/revoke its FCM (or APNs) device token for TARGETED push. The auth token kind
- * ('driver' | 'consumer') maps to the stored recipient kind ('delivery_agent' | 'consumer').
+ * ('driver' | 'consumer' | 'retailer') maps to the stored recipient kind ('delivery_agent' |
+ * 'consumer' | 'retailer'). For retailers the recipient is the ACCOUNT id (req.auth.sub), not the
+ * store: staff sign in as separate accounts and each has their own device.
  */
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -10,6 +12,7 @@ import { ok } from '@/shared/http/envelope.js';
 import {
   registerDeviceToken,
   revokeDeviceToken,
+  type RecipientKind,
 } from '@/shared/notifications/device-tokens.js';
 
 const RegisterBody = z.object({
@@ -21,8 +24,8 @@ const RegisterBody = z.object({
 const RevokeBody = z.object({ token: z.string().min(1).max(4096) });
 
 export function deviceTokenRoutes(
-  tokenKind: 'driver' | 'consumer',
-  recipientKind: 'delivery_agent' | 'consumer',
+  tokenKind: 'driver' | 'consumer' | 'retailer',
+  recipientKind: RecipientKind,
 ): FastifyPluginAsyncZod {
   return async (app) => {
     app.addHook('preHandler', requireAuth(tokenKind));
