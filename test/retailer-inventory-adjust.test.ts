@@ -70,17 +70,17 @@ describe('POST /retailer/inventory/:variantId/adjust — access', () => {
     const anon = await app.inject({
       method: 'POST',
       url: `/api/v1/retailer/inventory/${variantId}/adjust`,
-      payload: { delta: 1, reason: 'recount' },
+      payload: { delta: 1, reason: 'audit_correction' },
     });
     expect(anon.statusCode).toBe(401);
-    const denied = await adjust(variantId, { delta: 1, reason: 'recount' }, tokenWithoutSubRole(ownerId));
+    const denied = await adjust(variantId, { delta: 1, reason: 'audit_correction' }, tokenWithoutSubRole(ownerId));
     expect(denied.statusCode).toBe(403);
     expect((await row(variantId)).stock).toBe(10);
   });
 
   it('floor staff can adjust although they cannot edit listings (PATCH /variants/:id is 403)', async () => {
     const { variantId } = await makeVariant(storeId, { stock: 10 });
-    const res = await adjust(variantId, { delta: 3, reason: 'returned' }, staffToken);
+    const res = await adjust(variantId, { delta: 3, reason: 'manual_edit' }, staffToken);
     expect(res.statusCode).toBe(200);
     expect(data(res).stock).toBe(13);
 
@@ -97,15 +97,17 @@ describe('POST /retailer/inventory/:variantId/adjust — access', () => {
 
 describe('POST /retailer/inventory/:variantId/adjust — validation (422)', () => {
   it.each([
-    ['neither delta nor newStock', { reason: 'recount' }],
-    ['both delta and newStock', { delta: 1, newStock: 5, reason: 'recount' }],
-    ['no reason', { delta: 1 }],
-    ['empty reason', { delta: 1, reason: '   ' }],
-    ['reason longer than 200 chars', { delta: 1, reason: 'x'.repeat(201) }],
-    ['fractional delta', { delta: 1.5, reason: 'recount' }],
-    ['non-numeric delta', { delta: 'two', reason: 'recount' }],
-    ['negative newStock', { newStock: -1, reason: 'recount' }],
-    ['newStock beyond int4', { newStock: 2_147_483_648, reason: 'recount' }],
+    ['neither delta nor newStock', { reason: 'audit_correction' }],
+    ['both delta and newStock', { delta: 1, newStock: 5, reason: 'audit_correction' }],
+    ['unknown reason', { delta: 1, reason: 'damaged' }],
+    ['free-text reason (belongs in note)', { delta: 1, reason: 'Found behind the counter' }],
+    ['reason of a system-written kind', { delta: 1, reason: 'pos_sale' }],
+    ['note longer than 200 chars', { delta: 1, reason: 'manual_edit', note: 'x'.repeat(201) }],
+    ['non-string note', { delta: 1, note: 5 }],
+    ['fractional delta', { delta: 1.5, reason: 'audit_correction' }],
+    ['non-numeric delta', { delta: 'two', reason: 'audit_correction' }],
+    ['negative newStock', { newStock: -1, reason: 'audit_correction' }],
+    ['newStock beyond int4', { newStock: 2_147_483_648, reason: 'audit_correction' }],
   ])('rejects %s', async (_label, payload) => {
     const { variantId } = await makeVariant(storeId, { stock: 10 });
     const res = await adjust(variantId, payload);
@@ -116,7 +118,7 @@ describe('POST /retailer/inventory/:variantId/adjust — validation (422)', () =
 
   it('422 when the resulting stock would overflow int4', async () => {
     const { variantId } = await makeVariant(storeId, { stock: 10 });
-    const res = await adjust(variantId, { delta: 2_147_483_647, reason: 'recount' });
+    const res = await adjust(variantId, { delta: 2_147_483_647, reason: 'audit_correction' });
     expect(res.statusCode).toBe(422);
   });
 });
@@ -125,25 +127,25 @@ describe('POST /retailer/inventory/:variantId/adjust — 404 and 409', () => {
   it('404 for an unknown variant and for another store\'s variant (untouched)', async () => {
     const otherStore = await makeStore();
     const { variantId: foreign } = await makeVariant(otherStore, { stock: 10 });
-    const res = await adjust(foreign, { delta: 5, reason: 'recount' });
+    const res = await adjust(foreign, { delta: 5, reason: 'audit_correction' });
     expect(res.statusCode).toBe(404);
     expect((await row(foreign)).stock).toBe(10);
-    expect((await adjust('var_does_not_exist', { delta: 5, reason: 'recount' })).statusCode).toBe(404);
+    expect((await adjust('var_does_not_exist', { delta: 5, reason: 'audit_correction' })).statusCode).toBe(404);
   });
 
   it('409 when the result would drop below what is reserved (delta and newStock)', async () => {
     const { variantId } = await makeVariant(storeId, { stock: 10, reserved: 4 });
-    const byDelta = await adjust(variantId, { delta: -7, reason: 'damaged' });
+    const byDelta = await adjust(variantId, { delta: -7, reason: 'damage_writeoff' });
     expect(byDelta.statusCode).toBe(409);
     expect(err(byDelta).code).toBe('invalid_state');
     expect(err(byDelta).message).toMatch(/reserved \(4\)/);
-    const byAbsolute = await adjust(variantId, { newStock: 3, reason: 'recount' });
+    const byAbsolute = await adjust(variantId, { newStock: 3, reason: 'audit_correction' });
     expect(byAbsolute.statusCode).toBe(409);
     expect(await row(variantId)).toEqual({ stock: 10, reserved: 4 });
     expect(await adjustmentCount(variantId)).toBe(0);
 
     // exactly down to the reserved floor is allowed
-    const atFloor = await adjust(variantId, { newStock: 4, reason: 'recount' });
+    const atFloor = await adjust(variantId, { newStock: 4, reason: 'audit_correction' });
     expect(atFloor.statusCode).toBe(200);
     expect(await row(variantId)).toEqual({ stock: 4, reserved: 4 });
   });
@@ -152,12 +154,12 @@ describe('POST /retailer/inventory/:variantId/adjust — 404 and 409', () => {
 describe('POST /retailer/inventory/:variantId/adjust — happy paths', () => {
   it('delta adjusts relative to current stock and records the adjustment', async () => {
     const { variantId } = await makeVariant(storeId, { stock: 10 });
-    const up = await adjust(variantId, { delta: 5, reason: 'returned' });
+    const up = await adjust(variantId, { delta: 5, reason: 'manual_edit' });
     expect(up.statusCode).toBe(200);
     expect(data(up)).toMatchObject({ id: variantId, stock: 15, reserved: 0 });
-    expect(data(up).adjustment).toMatchObject({ delta: 5, newStock: 15, reason: 'return_restock' });
+    expect(data(up).adjustment).toMatchObject({ delta: 5, newStock: 15, reason: 'manual_edit' });
 
-    const down = await adjust(variantId, { delta: -2, reason: 'damaged' });
+    const down = await adjust(variantId, { delta: -2, reason: 'damage_writeoff', note: 'dropped in the stockroom' });
     expect(data(down)).toMatchObject({ stock: 13 });
 
     const last = await lastAdjustment(variantId);
@@ -167,14 +169,14 @@ describe('POST /retailer/inventory/:variantId/adjust — happy paths', () => {
       reason: 'damage_writeoff',
       actorKind: 'retailer',
       actorId: ownerId,
-      note: null,
+      note: 'dropped in the stockroom',
     });
     expect((await row(variantId)).stock).toBe(13);
   });
 
   it('newStock sets an absolute count; delta is derived', async () => {
     const { variantId } = await makeVariant(storeId, { stock: 10 });
-    const res = await adjust(variantId, { newStock: 4, reason: 'recount' });
+    const res = await adjust(variantId, { newStock: 4, reason: 'audit_correction' });
     expect(res.statusCode).toBe(200);
     expect(data(res).stock).toBe(4);
     expect(await lastAdjustment(variantId)).toMatchObject({
@@ -182,30 +184,31 @@ describe('POST /retailer/inventory/:variantId/adjust — happy paths', () => {
       newStock: 4,
       reason: 'audit_correction',
     });
-    const zero = await adjust(variantId, { newStock: 0, reason: 'other' });
+    const zero = await adjust(variantId, { newStock: 0, reason: 'manual_edit' });
     expect(zero.statusCode).toBe(200);
     expect(await lastAdjustment(variantId)).toMatchObject({ delta: -4, newStock: 0, reason: 'manual_edit', note: null });
   });
 
-  it('free-text reasons are kept as the note under the manual_edit reason', async () => {
+  it('reason defaults to manual_edit; note is optional free text (blank note stored as null)', async () => {
     const { variantId } = await makeVariant(storeId, { stock: 10 });
-    const res = await adjust(variantId, { delta: 1, reason: 'Found behind the counter' });
+    const res = await adjust(variantId, { delta: 1, note: '  Found behind the counter  ' });
     expect(res.statusCode).toBe(200);
     expect(await lastAdjustment(variantId)).toMatchObject({
       reason: 'manual_edit',
       note: 'Found behind the counter',
     });
-    // a named reason is matched case-insensitively and leaves no note
-    await adjust(variantId, { delta: 1, reason: 'Damaged' });
+    expect(data(res).adjustment).toMatchObject({ reason: 'manual_edit' });
+
+    await adjust(variantId, { delta: 1, reason: 'damage_writeoff', note: '   ' });
     expect(await lastAdjustment(variantId)).toMatchObject({ reason: 'damage_writeoff', note: null });
   });
 
   it('a no-op (result equals current stock) returns the row and writes nothing', async () => {
     const { variantId } = await makeVariant(storeId, { stock: 10 });
-    const same = await adjust(variantId, { newStock: 10, reason: 'recount' });
+    const same = await adjust(variantId, { newStock: 10, reason: 'audit_correction' });
     expect(same.statusCode).toBe(200);
     expect(data(same).stock).toBe(10);
-    const zero = await adjust(variantId, { delta: 0, reason: 'recount' });
+    const zero = await adjust(variantId, { delta: 0, reason: 'audit_correction' });
     expect(zero.statusCode).toBe(200);
     expect(await adjustmentCount(variantId)).toBe(0);
   });
@@ -213,7 +216,7 @@ describe('POST /retailer/inventory/:variantId/adjust — happy paths', () => {
   it('concurrent adjustments serialise (no lost update, floor respected)', async () => {
     const { variantId } = await makeVariant(storeId, { stock: 10 });
     const results = await Promise.all(
-      Array.from({ length: 5 }, () => adjust(variantId, { delta: -3, reason: 'damaged' })),
+      Array.from({ length: 5 }, () => adjust(variantId, { delta: -3, reason: 'damage_writeoff' })),
     );
     const okCount = results.filter((r) => r.statusCode === 200).length;
     const conflicts = results.filter((r) => r.statusCode === 409).length;
@@ -224,7 +227,7 @@ describe('POST /retailer/inventory/:variantId/adjust — happy paths', () => {
 
   it('shows up in GET /retailer/inventory/adjustments', async () => {
     const { variantId } = await makeVariant(storeId, { stock: 10 });
-    await adjust(variantId, { delta: 2, reason: 'recount' });
+    await adjust(variantId, { delta: 2, reason: 'audit_correction' });
     const res = await app.inject({
       method: 'GET',
       url: `/api/v1/retailer/inventory/adjustments?variantId=${variantId}`,

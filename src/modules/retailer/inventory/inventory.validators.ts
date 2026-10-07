@@ -14,16 +14,18 @@ export const ListQuery = z.object({
 
 /**
  * Stock adjustment. Exactly one of `delta` (signed change) or `newStock` (absolute count).
- * `reason` is one of the named reasons below (mapped onto the adjustment-reason enum) or a
- * free-text explanation (<= 200 chars) which is recorded as the adjustment note.
+ * `reason` is written straight to inventory_adjustments.reason, so it is limited to the
+ * hand-adjust values of the `inventory_adjustment_reason` enum (default `manual_edit`);
+ * `note` is an optional free-text explanation stored on the same row.
  */
-export const ADJUST_REASONS = ['manual_edit', 'damaged', 'returned', 'recount', 'other'] as const;
+export const ADJUST_REASONS = ['manual_edit', 'audit_correction', 'damage_writeoff'] as const;
 const INT4_MAX = 2_147_483_647;
 export const AdjustBody = z
   .object({
     delta: z.number().int().min(-INT4_MAX).max(INT4_MAX).optional(),
     newStock: StockSchema.optional(),
-    reason: z.string().trim().min(1).max(200),
+    reason: z.enum(ADJUST_REASONS).default('manual_edit'),
+    note: z.string().trim().max(200).optional(),
   })
   .refine((v) => (v.delta === undefined) !== (v.newStock === undefined), {
     message: 'Provide exactly one of delta or newStock',
