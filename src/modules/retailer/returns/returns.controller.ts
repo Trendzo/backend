@@ -13,6 +13,7 @@ import {
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
+import { ORDER_PROOF_SECRETS_OMITTED } from '@/shared/orders/proof-secrets.js';
 import {
   cashRefundDueByOrder,
   cashRefundDueForOrder,
@@ -83,7 +84,7 @@ export async function listReturns(input: {
     where: and(...conds),
     orderBy: desc(returns.openedAt),
     limit: input.query.limit,
-    with: { orderItem: { with: { order: true } } },
+    with: { orderItem: { with: { order: { columns: ORDER_PROOF_SECRETS_OMITTED } } } },
   });
   // Cash the store still owes on each of these orders, so the list can badge the
   // obligation without opening every return. One batched lookup for the whole page.
@@ -219,7 +220,7 @@ export async function listHeldItems(input: {
     orderBy: desc(heldItems.holdingWindowExpiresAt),
     limit: input.query.limit,
     with: {
-      return: { with: { orderItem: { with: { order: true } } } },
+      return: { with: { orderItem: { with: { order: { columns: ORDER_PROOF_SECRETS_OMITTED } } } } },
     },
   });
   return ok(rows);
@@ -296,7 +297,7 @@ export async function getReturn(input: { auth: Auth; id: string }) {
   const storeId = await getOwnStoreId(input.auth);
   const row = await db.query.returns.findFirst({
     where: eq(returns.id, input.id),
-    with: { orderItem: { with: { order: true } }, heldItems: true },
+    with: { orderItem: { with: { order: { columns: ORDER_PROOF_SECRETS_OMITTED } } }, heldItems: true },
   });
   if (!row) throw new AppError(404, ErrorCode.ReturnNotFound, 'Return not found');
   if (row.orderItem.order.storeId !== storeId) {

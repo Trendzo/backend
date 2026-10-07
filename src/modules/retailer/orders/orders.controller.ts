@@ -26,6 +26,7 @@ import { assertDeliveryOtp } from '@/shared/orders/delivery-otp.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { logTransitionMarker, transitionOrder } from '@/shared/orders/transition.js';
 import { rerouteOrder } from '@/shared/orders/routing.js';
+import { ORDER_PROOF_SECRETS_OMITTED } from '@/shared/orders/proof-secrets.js';
 import { notifyOffersChanged } from '@/shared/orders/offers-bus.js';
 import { arriveOrderAtStore } from '@/shared/orders/arrive-at-store.js';
 import { settleCodPaymentOnDelivery } from '@/shared/payments/settle-cod.js';
@@ -196,6 +197,8 @@ export async function getOrder(input: { auth: Auth; id: string }) {
   const storeId = await getOwnStoreId(input.auth);
   const order = await db.query.orders.findFirst({
     where: and(eq(orders.id, input.id), eq(orders.storeId, storeId)),
+    // Proof-of-delivery secrets (customer's door OTP, driver's handoff code) are never loaded.
+    columns: ORDER_PROOF_SECRETS_OMITTED,
     with: {
       group: true,
       items: true,
@@ -285,11 +288,11 @@ export async function getOrder(input: { auth: Auth; id: string }) {
   const open = disputes.find((d) => (OPEN_ISSUE_STATUSES as readonly string[]).includes(d.status));
   const openDispute = open ? { id: open.id, status: open.status } : null;
 
-  // Never expose the store→agent handoff code to the retailer — it must be read off
-  // the assigned agent's app at the physical handover (that is the whole point of it).
-  const { agentHandoffCode: _agentHandoffCode, ...orderSafe } = order;
+  // `deliveryOtp` / `agentHandoffCode` are excluded at query time (columns above): the OTP is
+  // told to the driver by the customer at the door and the handoff code is read off the agent's
+  // app at the physical handover — neither may ever travel through the retailer API.
   return ok({
-    ...orderSafe,
+    ...order,
     returns: returnsRows,
     refunds: refundsRows,
     heldItems: heldRows,
