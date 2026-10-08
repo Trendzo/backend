@@ -110,9 +110,13 @@ async function fetchInventoryRows(
     .where(and(...conditions))
     .orderBy(productListings.name, variants.attributesLabel);
 
-  if (filters.flag === 'out') return rows.filter((r) => r.stock === 0);
+  // Flags are judged on AVAILABLE stock (stock − reserved), matching what the app's
+  // InventoryRowCard badges. Judging `out`/`low` on raw `stock` (as this once did) put a
+  // fully-reserved variant under a different chip than the badge the row showed.
+  if (filters.flag === 'out') return rows.filter((r) => r.stock - r.reserved <= 0);
   if (filters.flag === 'oversold') return rows.filter((r) => r.stock - r.reserved < 0);
-  if (filters.flag === 'low') return rows.filter((r) => r.stock > 0 && r.stock <= lowStockThreshold);
+  if (filters.flag === 'low')
+    return rows.filter((r) => r.stock - r.reserved > 0 && r.stock - r.reserved <= lowStockThreshold);
   if (filters.flag === 'in_stock') return rows.filter((r) => r.stock - r.reserved > 0);
   return rows;
 }
