@@ -8,13 +8,14 @@
  * home page changes.
  */
 
-import { asc, eq, sql } from 'drizzle-orm';
+import { asc, desc, eq, sql } from 'drizzle-orm';
 import { db } from '@/db/client.js';
 import { cmsAssets, cmsItems, cmsPublications, cmsSections } from '@/db/schema/cms.js';
 import type { AccessTokenPayload } from '@/shared/auth/jwt.js';
 import { recordAudit } from '@/shared/audit.js';
 import { invalidateCmsPublication, latestPublication } from '@/shared/cms/published.js';
 import { asSnapshot, filterPayload, renderPayload } from '@/shared/cms/render.js';
+import type { SnapshotItem, SnapshotSection } from '@/shared/cms/render.js';
 import { getSectionSpec, railsOf, schemaPayload } from '@/shared/cms/schema.js';
 import {
   validateItemContent,
@@ -419,6 +420,123 @@ export async function publish(input: { note?: string | undefined; actor: Actor }
     publishedAt: created?.publishedAt ?? null,
     sectionCount: snapshot.sections.length,
     itemCount: snapshot.sections.reduce((n, s) => n + s.items.length, 0),
+  });
+}
+
+// ─── Publish status (draft vs live diff) ───────────────────────────────────────
+
+/**
+ * How the DRAFT differs from the live published snapshot, per section and per item, so the admin
+ * can see — on every tab — exactly what Publish would change. An item is `new` (not in the live
+ * snapshot), `changed` (present but any rendered field differs) or `live` (identical). With
+ * nothing ever published, everything reads as `new`.
+ */
+type ItemStatus = 'new' | 'changed' | 'live';
+
+/** Order-independent value identity: sort object keys at every depth before serialising. */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((k) => [k, canonical((value as Record<string, unknown>)[k])]),
+    );
+  }
+  return value;
+}
+const sameValue = (a: unknown, b: unknown) =>
+  JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
+function itemDiffers(a: SnapshotItem, b: SnapshotItem): boolean {
+  return !sameValue(
+    [a.assetKey, a.imageUrl, a.videoUrl, a.link, a.content, a.gender, a.sortOrder, a.isEnabled, a.startsAt, a.endsAt, a.cities],
+    [b.assetKey, b.imageUrl, b.videoUrl, b.link, b.content, b.gender, b.sortOrder, b.isEnabled, b.startsAt, b.endsAt, b.cities],
+  );
+}
+
+function sectionDiffers(a: SnapshotSection, b: SnapshotSection): boolean {
+  return !sameValue(
+    [a.title, a.subtitle, a.kicker, a.ctaLabel, a.config, a.isEnabled, a.sortOrder],
+    [b.title, b.subtitle, b.kicker, b.ctaLabel, b.config, b.isEnabled, b.sortOrder],
+  );
+}
+
+export async function publishStatus() {
+  const [sections, items, pubRows] = await Promise.all([
+    db.query.cmsSections.findMany(),
+    db.query.cmsItems.findMany(),
+    db
+      .select({
+        version: cmsPublications.version,
+        publishedAt: cmsPublications.publishedAt,
+        payload: cmsPublications.payload,
+      })
+      .from(cmsPublications)
+      .orderBy(desc(cmsPublications.version))
+      .limit(1),
+  ]);
+
+  const draft = renderPayload(sections, items);
+  const pub = pubRows[0];
+  const liveVersion = pub?.version ?? null;
+  const live = pub ? asSnapshot(pub.payload) : asSnapshot(null);
+  const liveSectionByKey = new Map(live.sections.map((s) => [s.key, s]));
+  const draftSectionKeys = new Set(draft.sections.map((s) => s.key));
+
+  const perSection: Record<
+    string,
+    {
+      changed: boolean;
+      items: Record<string, ItemStatus>;
+      removed: string[];
+      counts: { new: number; changed: number; removed: number };
+    }
+  > = {};
+  let tNew = 0;
+  let tChanged = 0;
+  let tRemoved = 0;
+  let tSections = 0;
+
+  for (const ds of draft.sections) {
+    const ls = liveSectionByKey.get(ds.key);
+    const changed = liveVersion === null || !ls ? true : sectionDiffers(ds, ls);
+    const liveItems = new Map((ls?.items ?? []).map((i) => [i.key, i]));
+    const draftItemKeys = new Set(ds.items.map((i) => i.key));
+
+    const itemStatus: Record<string, ItemStatus> = {};
+    let nNew = 0;
+    let nChanged = 0;
+    for (const di of ds.items) {
+      const li = liveItems.get(di.key);
+      const st: ItemStatus = liveVersion === null || !li ? 'new' : itemDiffers(di, li) ? 'changed' : 'live';
+      itemStatus[di.key] = st;
+      if (st === 'new') nNew += 1;
+      else if (st === 'changed') nChanged += 1;
+    }
+    const removed = [...liveItems.keys()].filter((k) => !draftItemKeys.has(k));
+
+    perSection[ds.key] = {
+      changed,
+      items: itemStatus,
+      removed,
+      counts: { new: nNew, changed: nChanged, removed: removed.length },
+    };
+    tNew += nNew;
+    tChanged += nChanged;
+    tRemoved += removed.length;
+    if (changed) tSections += 1;
+  }
+
+  const removedSections = [...liveSectionByKey.keys()].filter((k) => !draftSectionKeys.has(k));
+
+  return ok({
+    liveVersion,
+    livePublishedAt: pub?.publishedAt ?? null,
+    hasChanges: liveVersion === null || tNew + tChanged + tRemoved + tSections + removedSections.length > 0,
+    totals: { new: tNew, changed: tChanged, removed: tRemoved, sectionsChanged: tSections },
+    removedSections,
+    sections: perSection,
   });
 }
 
