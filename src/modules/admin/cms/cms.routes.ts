@@ -46,6 +46,12 @@ const adminCmsRoutes: FastifyPluginAsyncZod = async (app) => {
     ctrl.listPublications(),
   );
 
+  // Draft-vs-live diff: per-section and per-item publish status, plus totals. Powers the
+  // always-visible "Publish" summary and the per-item status chips in the editor.
+  app.get('/status', { preHandler: requirePermission('cms.view') }, async () =>
+    ctrl.publishStatus(),
+  );
+
   app.get('/sections', { preHandler: requirePermission('cms.view') }, async () =>
     ctrl.listSections(),
   );
