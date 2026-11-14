@@ -42,6 +42,10 @@ const authRoutes: FastifyPluginAsyncZod = async (app) => {
     );
   }
 
+  app.post('/retailer/onboarding-session', { schema: { body: OtpLoginBody } }, async (req) =>
+    ctrl.retailerOnboardingSession({ body: req.body }),
+  );
+
   for (const path of ['/driver/otp/login', '/driver/otp/msg91']) {
     app.post(path, { schema: { body: OtpLoginBody } }, async (req) =>
       ctrl.driverOtpLogin({ body: req.body }),

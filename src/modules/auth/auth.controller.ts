@@ -363,6 +363,10 @@ export async function retailerOtpLogin(input: { body: z.infer<typeof OtpLoginBod
     provider: input.body.provider,
   });
 
+  // A verified applicant can upload review documents without gaining access to
+  // any signed-in retailer endpoint. The upload route accepts only this scope.
+  const onboardingToken = signAccessToken({ sub: phone, kind: 'onboarding' }, { expiresIn: '7d' });
+
   const retailer = await db.query.retailerAccounts.findFirst({
     where: eq(retailerAccounts.phone, phone),
   });
@@ -383,20 +387,21 @@ export async function retailerOtpLogin(input: { body: z.infer<typeof OtpLoginBod
           403,
           ErrorCode.ApplicationRejected,
           'Your application was not approved. Contact support for details.',
-          { applicationId: application.id, ownerEmail: application.ownerEmail },
+          { applicationId: application.id, ownerEmail: application.ownerEmail, onboardingToken },
         );
       }
       throw new AppError(
         403,
         ErrorCode.ApplicationPending,
         'Your application is under review. You will be able to log in once ClosetX approves it.',
-        { applicationId: application.id, ownerEmail: application.ownerEmail },
+        { applicationId: application.id, ownerEmail: application.ownerEmail, onboardingToken },
       );
     }
     throw new AppError(
       401,
       ErrorCode.InvalidCredentials,
       'No retailer account is linked to this phone number',
+      { onboardingToken },
     );
   }
   assertRetailerNotDeleted(retailer.suspendReason);
@@ -420,6 +425,16 @@ export async function retailerOtpLogin(input: { body: z.infer<typeof OtpLoginBod
       subRole: retailer.subRole,
     },
   });
+}
+
+/** Exchange a retailer-phone OTP proof for a document-upload-only session. */
+export async function retailerOnboardingSession(input: { body: z.infer<typeof OtpLoginBody> }) {
+  const phone = await verifyOtpPhone(input.body.accessToken, {
+    audience: 'retailer',
+    format: 'e164',
+    provider: input.body.provider,
+  });
+  return ok({ token: signAccessToken({ sub: phone, kind: 'onboarding' }, { expiresIn: '7d' }) });
 }
 
 function assertRetailerNotDeleted(suspendReason: string | null): void {

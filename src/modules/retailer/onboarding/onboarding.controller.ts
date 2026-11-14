@@ -11,6 +11,7 @@ import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
 import { ok } from '@/shared/http/envelope.js';
 import { newId } from '@/shared/ids.js';
 import { hashPassword, verifyPassword } from '@/shared/auth/password.js';
+import { signAccessToken } from '@/shared/auth/jwt.js';
 import { notifyAllAdmins } from '@/shared/notify-admins.js';
 import { recordAudit } from '@/shared/audit.js';
 import { serializeApplicationMessage } from '@/shared/onboarding/messages.js';
@@ -437,6 +438,10 @@ export async function fetchForResubmit(input: {
   return ok({
     application: safe,
     documents: documents.map((d) => ({ kind: d.kind, url: d.url })),
+    onboardingToken: signAccessToken(
+      { sub: application.ownerPhone, kind: 'onboarding' },
+      { expiresIn: '7d' },
+    ),
   });
 }
 

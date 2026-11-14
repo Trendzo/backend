@@ -59,3 +59,41 @@ export async function uploadMedia(req: FastifyRequest) {
     filename: file.filename,
   });
 }
+
+/** Fixed destination and strict file signatures for applicants who verified their phone. */
+export async function uploadOnboardingDocument(req: FastifyRequest) {
+  const file = await req.file();
+  if (!file) {
+    throw AppError.validation('Choose a document photo to upload');
+  }
+  const buffer = await file.toBuffer();
+  assertNotTruncated(file.file.truncated);
+  if (buffer.length > 10 * 1024 * 1024) {
+    throw AppError.validation('Document photos must be smaller than 10 MB');
+  }
+
+  const jpeg = buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  const png = buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const webp = buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP';
+  const mimetype = jpeg ? 'image/jpeg' : png ? 'image/png' : webp ? 'image/webp' : null;
+  if (!mimetype) {
+    throw AppError.validation('Upload a JPEG, PNG, or WebP document photo');
+  }
+
+  const result = await uploadObject(buffer, {
+    folder: 'closetx/onboarding',
+    contentType: mimetype,
+    filename: `document.${mimetype.split('/')[1]}`,
+  });
+  return ok({
+    url: result.url,
+    publicId: result.publicId,
+    width: result.width,
+    height: result.height,
+    format: result.format,
+    bytes: result.bytes,
+    resourceType: result.resourceType,
+    mimetype,
+    filename: file.filename,
+  });
+}

@@ -11,7 +11,7 @@ import { env } from '@/config/env.js';
  * check therefore lives in the CRM module (`requireSalesAuth`) rather than in the generic
  * `requireAuth` below, which only knows about Postgres-backed principals.
  */
-export type TokenKind = 'admin' | 'retailer' | 'consumer' | 'driver' | 'crm';
+export type TokenKind = 'admin' | 'retailer' | 'consumer' | 'driver' | 'crm' | 'onboarding';
 
 export type AccessTokenPayload = {
   sub: string;
