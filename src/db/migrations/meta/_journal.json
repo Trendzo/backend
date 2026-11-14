@@ -575,6 +575,20 @@
       "when": 1787300000000,
       "tag": "0080_ai_product_copy",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1794650400000,
+      "tag": "0081_partial_product_drafts",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1794650401000,
+      "tag": "0082_product_chat_sessions",
+      "breakpoints": true
     }
   ]
 }

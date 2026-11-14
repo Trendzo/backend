@@ -32,6 +32,43 @@ export const ListingIdParam = z.object({ listingId: z.string() });
 export const GroupParam = z.object({ listingId: z.string(), groupId: z.string() });
 
 export const VariantModeEnum = z.enum(['single', 'color_size', 'custom']);
+const WebVariantDraft = z.object({
+  id: z.string().optional(),
+  attributes: z.record(z.string(), z.string()),
+  attributesLabel: z.string().max(120),
+  sku: z.string().max(64),
+  pricePaise: z.number().int().nullable(),
+  compareAtPrice: z.number().int().nullable(),
+  stock: z.number().int().nullable(),
+  imageUrls: z.array(z.string().url()).max(20),
+  isActive: z.boolean(),
+});
+const DraftVariantData = z.object({
+  basePrice: z.string().max(40).optional(),
+  baseMrp: z.string().max(40).optional(),
+  single: z.object({
+    sku: z.string().max(64).optional(), size: z.string().max(40).optional(),
+    stock: z.string().max(20).optional(), imageUrls: z.array(z.string().url()).max(20).optional(),
+  }).optional(),
+  colors: z.array(z.object({
+    name: z.string().max(60), colorHex: z.string().max(7).optional(),
+    sizes: z.array(z.object({ size: z.string().max(40), sku: z.string().max(64),
+      price: z.string().max(40), mrp: z.string().max(40).optional(), stock: z.string().max(20),
+      serverVariantId: z.string().optional(),
+      imageUrls: z.array(z.string().url()).max(20),
+    })).max(100),
+  })).max(50).optional(),
+  web: z.object({
+    mode: VariantModeEnum,
+    variants: z.array(WebVariantDraft).max(100),
+    groups: z.array(z.object({
+      id: z.string().optional(), name: z.string().max(60),
+      colorHex: z.string().max(20).nullable(), sortOrder: z.number().int(),
+      isNoColor: z.boolean().optional(),
+      sizes: z.array(WebVariantDraft.extend({ size: z.string().max(40) })).max(100),
+    })).max(50),
+  }).optional(),
+}).strict();
 
 /** System age ranges a product can target (multi-select; [] = unspecified). */
 export const AGE_RANGES = ['0-2', '3-7', '8-12', '13-17', '18-24', '25-40', '40+'] as const;
@@ -49,7 +86,7 @@ export const ListingsExportQuery = z.object({
 });
 
 export const CreateListingBody = z.object({
-  name: z.string().trim().min(1).max(200),
+  name: z.string().trim().max(200).default(''),
   description: z.string().trim().max(2_000).optional(),
   // Rich HTML — sanitized server-side in the controller before persisting.
   // Raw cap is slightly above the post-sanitize byte cap (LONG_DESC_MAX_BYTES).
@@ -57,8 +94,8 @@ export const CreateListingBody = z.object({
   // Optional so a draft can be saved before a brand is picked (brand_id is
   // nullable in the DB). Publishing still requires a complete listing.
   brandId: z.string().min(1).optional(),
-  categoryId: z.string().min(1),
-  gender: GenderEnum,
+  categoryId: z.string().min(1).optional(),
+  gender: GenderEnum.optional(),
   listingPolicy: z.enum(['return', 'replace', 'final_sale']).default('return'),
   galleryUrls: z.array(z.string().url()).max(20).default([]),
   occasion: z.array(z.string().trim().min(1).max(40)).max(10).default([]),
@@ -67,17 +104,19 @@ export const CreateListingBody = z.object({
   templateId: z.string().optional(),
   // Defaults in the controller: 'custom' when templateId is set, else 'single'.
   variantMode: VariantModeEnum.optional(),
+  draftVariantData: DraftVariantData.optional(),
 });
 
 export const PatchListingBody = z
   .object({
-    name: z.string().trim().min(1).max(200).optional(),
+    name: z.string().trim().max(200).optional(),
     description: z.string().trim().max(2_000).optional(),
     // null clears the long description; sanitized in the controller.
     descriptionLong: z.string().max(110_000).nullable().optional(),
-    brandId: z.string().min(1).optional(),
-    categoryId: z.string().min(1).optional(),
-    gender: GenderEnum.optional(),
+    brandId: z.string().min(1).nullable().optional(),
+    categoryId: z.string().min(1).nullable().optional(),
+    gender: GenderEnum.nullable().optional(),
+    draftVariantData: DraftVariantData.nullable().optional(),
     listingPolicy: z.enum(['return', 'replace', 'final_sale']).optional(),
     galleryUrls: z.array(z.string().url()).max(20).optional(),
     occasion: z.array(z.string().trim().min(1).max(40)).max(10).optional(),

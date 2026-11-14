@@ -81,7 +81,7 @@ export async function fixImages(database: typeof Db): Promise<void> {
   });
   let galleryFixed = 0;
   for (const [i, l] of listings.entries()) {
-    const pool = poolFor(slugById.get(l.categoryId));
+    const pool = poolFor(l.categoryId ? slugById.get(l.categoryId) : undefined);
     const lead = pool[i % pool.length]!;
     const second = pool[(i + 1) % pool.length]!;
     const hasBroken = l.galleryUrls.some(isBroken) || l.galleryUrls.length === 0;
