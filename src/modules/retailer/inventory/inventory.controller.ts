@@ -415,11 +415,11 @@ export async function importInventory(input: { auth: Auth; body: z.infer<typeof 
       reserved: v.reserved,
       pricePaise: v.pricePaise,
     })),
-    listings: ownedListings.map((l) => ({
+    listings: ownedListings.filter((l) => l.categoryId && l.gender).map((l) => ({
       id: l.id,
       name: l.name,
       brandId: l.brandId,
-      categoryId: l.categoryId,
+      categoryId: l.categoryId!,
       gender: l.gender as 'her' | 'him' | 'unisex',
     })),
     brands: allBrands,

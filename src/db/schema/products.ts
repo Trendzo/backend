@@ -40,16 +40,14 @@ export const productListings = pgTable(
     // Existing products keep their commerce flow (price, stock, gallery, orders);
     // they just render as "Unbranded" until the retailer assigns a new brand.
     brandId: text('brand_id').references(() => brands.id, { onDelete: 'set null' }),
-    categoryId: text('category_id')
-      .notNull()
-      .references(() => categories.id),
-    name: text('name').notNull(),
+    categoryId: text('category_id').references(() => categories.id),
+    name: text('name').notNull().default(''),
     description: text('description'),
     // Rich-text long description: sanitized HTML (see shared/sanitize/rich-text.ts).
     // Sanitize-on-write — anything stored here is safe to render verbatim.
     descriptionLong: text('description_long'),
     hsn: text('hsn'), // GST HSN code
-    gender: gender('gender').notNull(),
+    gender: gender('gender'),
     listingPolicy: listingPolicy('listing_policy').notNull().default('return'),
     galleryUrls: jsonb('gallery_urls').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     occasion: jsonb('occasion').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
@@ -59,6 +57,8 @@ export const productListings = pgTable(
     status: listingStatus('status').notNull().default('draft'),
     // How variants are structured (see variant_mode enum). 'custom' ⇔ templateId set.
     variantMode: variantMode('variant_mode').notNull().default('single'),
+    // Editable values that cannot yet form a priced variant row. Never served to shoppers.
+    draftVariantData: jsonb('draft_variant_data').$type<Record<string, unknown>>(),
     // US-5.7.2: when admin takes a listing down, the previous status is saved here
     // so US-5.7.3 restore can revert to the right state (active vs draft).
     statusBeforeTakedown: listingStatus('status_before_takedown'),

@@ -20,6 +20,7 @@ import {
   variants,
 } from '@/db/schema/index.js';
 import { AppError, ErrorCode } from '@/shared/errors/app-error.js';
+import { evaluateProductReadiness } from './product-readiness.js';
 import { ok } from '@/shared/http/envelope.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { assertTermsAcceptedForGoLive } from '@/shared/terms.js';
@@ -244,24 +245,6 @@ function assertCanPublish(retailerStatus: string, storeStatus: string): void {
   }
 }
 
-/**
- * A variant is publishable when it carries everything a shopper needs: a price,
- * a SKU, a stock figure, and at least one image (its own, or it inherits the
- * listing cover). Mirrored client-side in the wizard.
- */
-function isVariantComplete(
-  v: { pricePaise: number; sku: string | null; stock: number; imageUrls: string[] },
-  galleryLength: number,
-): boolean {
-  return (
-    v.pricePaise > 0 &&
-    !!v.sku &&
-    v.stock !== null &&
-    v.stock !== undefined &&
-    (v.imageUrls.length > 0 || galleryLength > 0)
-  );
-}
-
 function assertVariantComplete(
   v: { pricePaise: number; sku: string | null; stock: number; imageUrls: string[] },
   galleryLength: number,
@@ -281,11 +264,15 @@ function assertVariantComplete(
 }
 
 type ListingPublishFields = {
+  status?: string | null;
   name: string;
+  categoryId: string | null;
+  gender: string | null;
   description: string | null;
   descriptionLong: string | null;
   galleryUrls: string[];
   listingPolicy: string | null;
+  draftVariantData?: Record<string, unknown> | null;
 };
 
 /**
@@ -297,23 +284,45 @@ function assertListingPublishable(
   l: ListingPublishFields,
   variantRows: { pricePaise: number; sku: string | null; stock: number; imageUrls: string[]; isActive: boolean }[],
 ): void {
-  const missing: string[] = [];
-  if (!l.name?.trim()) missing.push('a product name');
-  if (!l.description?.trim()) missing.push('a short description');
-  if (!l.descriptionLong?.trim()) missing.push('a full description');
-  if (l.galleryUrls.length < 1) missing.push('at least one image');
-  if (!l.listingPolicy) missing.push('a return policy');
-  const hasLive = variantRows.some(
-    (v) => v.isActive && isVariantComplete(v, l.galleryUrls.length),
-  );
-  if (!hasLive) missing.push('at least one complete, active variant (price, SKU, stock, image)');
-  if (missing.length > 0) {
+  const readiness = evaluateProductReadiness(l, variantRows);
+  if (!readiness.canPublish) {
     throw new AppError(
       409,
       ErrorCode.CannotPublishIncomplete,
-      `Cannot publish — needs ${missing.join(', ')}.`,
+      'Complete the listed product details before publishing.',
+      { issues: readiness.publishIssues },
     );
   }
+}
+
+export async function getListingReadiness(input: { auth: Auth; id: string }) {
+  const retailer = await loadRetailer(input.auth.sub);
+  const store = await loadOwnedStore(retailer.storeId);
+  const listing = await db.query.productListings.findFirst({
+    where: and(eq(productListings.id, input.id), eq(productListings.storeId, store.id)),
+  });
+  if (!listing) throw new AppError(404, ErrorCode.NotFound, 'Listing not found');
+  const rows = await loadVariantPublishRows(listing.id);
+  const readiness = evaluateProductReadiness(listing, rows);
+  if (retailer.status !== 'active' || !['active', 'onboarding'].includes(store.status)) {
+    readiness.publishIssues.push({
+      code: 'store_unavailable', field: 'store',
+      message: 'Your account or store must be active before publishing',
+    });
+    readiness.canPublish = false;
+  }
+  if (store.status === 'onboarding') {
+    try {
+      await assertTermsAcceptedForGoLive(db, store.id);
+    } catch (error) {
+      if (!(error instanceof AppError)) throw error;
+      readiness.publishIssues.push({
+        code: 'terms_required', field: 'store', message: error.message,
+      });
+      readiness.canPublish = false;
+    }
+  }
+  return ok(readiness);
 }
 
 /**
@@ -325,6 +334,7 @@ async function loadVariantPublishRows(listingId: string) {
     where: eq(variants.listingId, listingId),
     columns: {
       id: true,
+      groupId: true,
       sku: true,
       pricePaise: true,
       stock: true,
@@ -373,11 +383,13 @@ export async function createListing(input: {
     body.brandId
       ? db.query.brands.findFirst({ where: eq(brands.id, body.brandId) })
       : Promise.resolve(null),
-    db.query.categories.findFirst({ where: eq(categories.id, body.categoryId) }),
+    body.categoryId
+      ? db.query.categories.findFirst({ where: eq(categories.id, body.categoryId) })
+      : Promise.resolve(null),
   ]);
   if (body.brandId && !brand)
     throw new AppError(404, ErrorCode.NotFound, `Brand ${body.brandId} not found`);
-  if (!category) throw new AppError(404, ErrorCode.NotFound, `Category ${body.categoryId} not found`);
+  if (body.categoryId && !category) throw new AppError(404, ErrorCode.NotFound, `Category ${body.categoryId} not found`);
   if (body.templateId) {
     const tpl = await db.query.attributeTemplates.findFirst({
       where: eq(attributeTemplates.id, body.templateId),
@@ -407,20 +419,21 @@ export async function createListing(input: {
         id,
         storeId: store.id,
         brandId: body.brandId ?? null,
-        categoryId: body.categoryId,
+        categoryId: body.categoryId ?? null,
         name: body.name,
         ...(body.description !== undefined && { description: body.description }),
         ...(descriptionLong !== undefined && { descriptionLong }),
         // Auto-fill HSN from the category when the retailer leaves it blank (advisory default,
         // nullable, overridable). Keeps GST invoices labelled without per-product data entry.
-        hsn: body.hsn?.trim() || categoryDefaultHsn(category.slug),
+        hsn: body.hsn?.trim() || (category ? categoryDefaultHsn(category.slug) : null),
         ...(body.templateId !== undefined && { templateId: body.templateId }),
-        gender: body.gender,
+        gender: body.gender ?? null,
         listingPolicy: body.listingPolicy,
         galleryUrls: body.galleryUrls,
         occasion: body.occasion,
         ageGroups: body.ageGroups,
         variantMode: variantModeResolved,
+        draftVariantData: body.draftVariantData ?? null,
         status: 'draft',
       })
       .returning();
@@ -600,7 +613,7 @@ export async function patchListing(input: {
     }
   }
 
-  if (body.status === 'active') {
+  if (body.status === 'active' || (existing.status === 'active' && body.status === undefined)) {
     assertCanPublish(retailer.status, store.status);
 
     // Validate against the listing as it WILL be after this patch (fields in the
@@ -608,7 +621,10 @@ export async function patchListing(input: {
     const variantRows = await loadVariantPublishRows(existing.id);
     assertListingPublishable(
       {
+        status: existing.status,
         name: body.name ?? existing.name,
+        categoryId: body.categoryId !== undefined ? body.categoryId : existing.categoryId,
+        gender: body.gender !== undefined ? body.gender : existing.gender,
         description: body.description ?? existing.description,
         descriptionLong:
           body.descriptionLong !== undefined
@@ -616,6 +632,7 @@ export async function patchListing(input: {
             : existing.descriptionLong,
         galleryUrls: body.galleryUrls ?? existing.galleryUrls,
         listingPolicy: body.listingPolicy ?? existing.listingPolicy,
+        draftVariantData: body.draftVariantData !== undefined ? body.draftVariantData : existing.draftVariantData,
       },
       variantRows,
     );
@@ -1076,6 +1093,22 @@ export async function patchVariant(input: {
     if (merged.length !== existing.listing.galleryUrls.length) newGallery = merged;
   }
 
+  if (existing.listing.status === 'active') {
+    const rows = await loadVariantPublishRows(existing.listingId);
+    const effectiveGroup = targetGroupId
+      ? await db.query.variantGroups.findFirst({ where: eq(variantGroups.id, targetGroupId) })
+      : existing.group;
+    const projected = rows.map((row) => row.id === existing.id ? {
+      ...row,
+      pricePaise: input.body.pricePaise ?? row.pricePaise,
+      sku: input.body.sku !== undefined ? input.body.sku : row.sku,
+      stock: input.body.stock ?? row.stock,
+      imageUrls: input.body.imageUrls ?? row.imageUrls,
+      isActive: (input.body.isActive ?? existing.isActive) && !!effectiveGroup?.isActive,
+    } : row);
+    assertListingPublishable(existing.listing, projected);
+  }
+
   try {
     const {
       size: _size,
@@ -1206,11 +1239,15 @@ export async function publishVariant(input: { auth: Auth; listingId: string; vid
     );
     assertListingPublishable(
       {
+        status: listing.status,
         name: listing.name,
+        categoryId: listing.categoryId,
+        gender: listing.gender,
         description: listing.description,
         descriptionLong: listing.descriptionLong,
         galleryUrls: listing.galleryUrls,
         listingPolicy: listing.listingPolicy,
+        draftVariantData: listing.draftVariantData,
       },
       projected,
     );
@@ -1295,19 +1332,7 @@ export async function deleteVariant(input: { auth: Auth; id: string }) {
   // effectively-active variant. (Draft listings may go to zero.)
   if (existing.listing.status === 'active') {
     const rows = await loadVariantPublishRows(existing.listingId);
-    const liveOthers = rows.filter(
-      (v) =>
-        v.id !== existing.id &&
-        v.isActive &&
-        isVariantComplete(v, existing.listing.galleryUrls.length),
-    );
-    if (liveOthers.length === 0) {
-      throw new AppError(
-        409,
-        ErrorCode.InvalidState,
-        'Cannot delete the last live variant of a published product — unpublish the product first or deactivate the variant instead.',
-      );
-    }
+    assertListingPublishable(existing.listing, rows.filter((v) => v.id !== existing.id));
   }
 
   await db.transaction(async (tx) => {
@@ -1360,11 +1385,15 @@ export async function bulkStatus(input: { auth: Auth; body: z.infer<typeof BulkS
         try {
           assertListingPublishable(
             {
+              status: listing.status,
               name: listing.name,
+              categoryId: listing.categoryId,
+              gender: listing.gender,
               description: listing.description,
               descriptionLong: listing.descriptionLong,
               galleryUrls: listing.galleryUrls,
               listingPolicy: listing.listingPolicy,
+              draftVariantData: listing.draftVariantData,
             },
             variantRows,
           );
@@ -1559,6 +1588,15 @@ export async function patchGroup(input: {
   body: z.infer<typeof PatchGroupBody>;
 }) {
   const { group } = await loadOwnedGroup(input.auth, input.id);
+
+  if (group.isActive && input.body.isActive === false) {
+    const listing = await db.query.productListings.findFirst({ where: eq(productListings.id, group.listingId) });
+    if (listing?.status === 'active') {
+      const rows = await loadVariantPublishRows(listing.id);
+      assertListingPublishable(listing, rows.map(row => row.groupId === group.id
+        ? { ...row, isActive: false } : row));
+    }
+  }
 
   if (input.body.name !== undefined && group.isDefault) {
     throw new AppError(

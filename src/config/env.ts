@@ -146,6 +146,7 @@ const EnvSchema = z
 
     // Google Gemini API key (AI Studio). Required when AI_IMAGE_PROVIDER=gemini.
     GEMINI_API_KEY: z.string().min(20).optional(),
+    PRODUCT_CHAT_MODEL: z.string().min(1).default('gemini-3.6-flash'),
 
     // Vertex AI path — same Gemini image model, billed via Google Cloud (used when
     // the AI Studio / OpenRouter free tiers are exhausted). Required when
