@@ -15,6 +15,7 @@ import { fail, ok } from '@/shared/http/envelope.js';
 import authRoutes from '@/modules/auth/auth.routes.js';
 import retailerProfileRoutes from '@/modules/retailer/profile/profile.routes.js';
 import retailerListingsRoutes from '@/modules/retailer/listings/listings.routes.js';
+import retailerProductChatRoutes from '@/modules/retailer/product-chat/product-chat.routes.js';
 import retailerBrandsRoutes from '@/modules/retailer/brands/brands.routes.js';
 import adminRetailersRoutes from '@/modules/admin/retailers/retailers.routes.js';
 import adminStoresRoutes from '@/modules/admin/stores/stores.routes.js';
@@ -267,6 +268,7 @@ export function buildApp() {
       await api.register(consumerRewardsRoutes, { prefix: '/consumer/rewards' });
       await api.register(retailerProfileRoutes, { prefix: '/retailer' });
       await api.register(retailerListingsRoutes, { prefix: '/retailer' });
+      await api.register(retailerProductChatRoutes, { prefix: '/retailer' });
       await api.register(retailerBrandsRoutes, { prefix: '/retailer/brands' });
       await api.register(retailerPromotionRoutes, { prefix: '/retailer/promotions' });
       await api.register(adminRetailersRoutes, { prefix: '/admin/retailers' });

@@ -65,10 +65,26 @@ const retailerListingsRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => ctrl.getListing({ auth: getAuth(req), id: req.params.id }),
   );
 
+  app.get(
+    '/listings/:id/readiness',
+    {
+      preHandler: requirePermission('listings.view'),
+      schema: { params: IdParam },
+    },
+    async (req) => ctrl.getListingReadiness({ auth: getAuth(req), id: req.params.id }),
+  );
+
   app.patch(
     '/listings/:id',
     {
-      preHandler: requirePermission('listings.edit'),
+      preHandler: [
+        requirePermission('listings.edit'),
+        async (req, reply) => {
+          if ((req.body as { status?: string } | undefined)?.status === 'active') {
+            await requirePermission('listings.publish').call(app, req, reply);
+          }
+        },
+      ],
       schema: { params: IdParam, body: PatchListingBody },
     },
     async (req) =>
