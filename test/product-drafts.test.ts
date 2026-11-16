@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { env } from '@/config/env.js';
 import { eq } from 'drizzle-orm';
 import { db, pool } from '@/db/client.js';
-import { bulkMockupJobs, categories, retailerAccounts, retailerStores } from '@/db/schema/index.js';
+import { bulkMockupJobs, categories, productChatSessions, productListings, retailerAccounts, retailerStores } from '@/db/schema/index.js';
 import { signAccessToken } from '@/shared/auth/jwt.js';
 import { IdPrefix, newId } from '@/shared/ids.js';
 import { buildApp } from '@/app.js';
@@ -21,6 +21,8 @@ vi.mock('@langchain/google', () => ({
         };
         if (latest === 'price 999') return { priceRupees: 999 };
         if (latest === 'generate mockups') return { generateMockups: true };
+        if (latest === 'Red kurta with mockups') return { name: 'Red kurta', generateMockups: true };
+        if (latest === 'Slow product') { await new Promise(r => setTimeout(r, 150)); return { name: 'Slow product' }; }
         return {};
       } };
     }
@@ -230,5 +232,53 @@ describe('partial product draft API', () => {
     expect(discarded.statusCode).toBe(200);
     expect(data(discarded).mockupJob).toBeNull();
     expect(data(discarded).readiness).not.toBeNull();
+  });
+
+  it('keeps the draft linked to the chat when a later step of the same turn fails', async () => {
+    const sessionId = data(await app.inject({ method: 'POST', url: '/api/v1/retailer/product-chat/sessions', headers: headers() })).id;
+    const turn = async (text: string) => app.inject({ method: 'POST',
+      url: `/api/v1/retailer/product-chat/sessions/${sessionId}/messages`, headers: headers(), payload: { text } });
+    // Mockups need a photo, so this turn creates the draft and then fails at the mockup step.
+    const first = await turn('Red kurta with mockups');
+    expect(first.statusCode).toBe(200);
+    expect(data(first).lastTurnSucceeded).toBe(false);
+    expect(data(first).listingId).toBeTruthy();
+    const draftId = data(first).listingId;
+    const again = await turn('Red kurta with mockups');
+    expect(data(again).listingId).toBe(draftId);
+    const [row] = await db.select().from(productChatSessions).where(eq(productChatSessions.id, sessionId));
+    expect(row?.listingId).toBe(draftId);
+    expect(row?.turnLockedUntil).toBeNull();
+    const drafts = await db.select({ id: productListings.id }).from(productListings)
+      .where(eq(productListings.name, 'Red kurta'));
+    expect(drafts.length).toBe(1);
+  });
+
+  it('rejects a second message and draft-changing actions while a turn is running', async () => {
+    const sessionId = data(await app.inject({ method: 'POST', url: '/api/v1/retailer/product-chat/sessions', headers: headers() })).id;
+    const first = app.inject({ method: 'POST', url: `/api/v1/retailer/product-chat/sessions/${sessionId}/messages`,
+      headers: headers(), payload: { text: 'Slow product' } });
+    await new Promise(r => setTimeout(r, 60));
+    const second = await app.inject({ method: 'POST', url: `/api/v1/retailer/product-chat/sessions/${sessionId}/messages`,
+      headers: headers(), payload: { text: 'price 999' } });
+    expect(second.statusCode).toBe(409);
+    expect(JSON.parse(second.body).error.message).toMatch(/still being processed/i);
+    const publish = await app.inject({ method: 'POST',
+      url: `/api/v1/retailer/product-chat/sessions/${sessionId}/publish`, headers: headers() });
+    expect(publish.statusCode).toBe(409);
+    expect((await first).statusCode).toBe(200);
+    // The lease is released, so the next message goes through.
+    const third = await app.inject({ method: 'POST', url: `/api/v1/retailer/product-chat/sessions/${sessionId}/messages`,
+      headers: headers(), payload: { text: 'price 999' } });
+    expect(third.statusCode).toBe(200);
+  });
+
+  it('lets an expired turn lease be taken over', async () => {
+    const sessionId = data(await app.inject({ method: 'POST', url: '/api/v1/retailer/product-chat/sessions', headers: headers() })).id;
+    await db.update(productChatSessions).set({ turnLockedUntil: new Date(Date.now() - 1000) })
+      .where(eq(productChatSessions.id, sessionId));
+    const response = await app.inject({ method: 'POST', url: `/api/v1/retailer/product-chat/sessions/${sessionId}/messages`,
+      headers: headers(), payload: { text: 'Blue linen dress' } });
+    expect(response.statusCode).toBe(200);
   });
 });

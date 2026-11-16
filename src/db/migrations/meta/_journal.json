@@ -589,6 +589,13 @@
       "when": 1794650401000,
       "tag": "0082_product_chat_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1794650402000,
+      "tag": "0083_product_chat_turn_lock",
+      "breakpoints": true
     }
   ]
 }

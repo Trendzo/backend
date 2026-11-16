@@ -4,8 +4,6 @@ coverage/
 *.tsbuildinfo
 
 # env
-.env
-.env.local
 .env.*.local
 
 # embedded-postgres dev data dir (real DB files, not for git)
@@ -18,7 +16,6 @@ npm-debug.log*
 pnpm-debug.log*
 
 # editor
-.vscode/
 .idea/
 *.swp
 *.swo
@@ -29,3 +26,4 @@ Thumbs.db
 
 # drizzle
 drizzle/
+config.bat
